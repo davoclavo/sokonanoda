@@ -1,10 +1,10 @@
 
 [package]
-name = "sokonanoda"
+name = "sokonanodazo"
 version = "0.5.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/intgrah/sokonanoda"
+repository = "https://github.com/davoclavo/sokonanodazo"
 description = "A type checker for the Lean 4 programming language and theorem prover"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -55,6 +55,6 @@ too_many_lines = "allow"
 top-byte-ignore = []
 
 [[bin]]
-name = "sokonanoda"
+name = "sokonanodazo"
 path = "src/main.rs"
 bench = false

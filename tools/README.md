@@ -17,7 +17,7 @@ result scores nothing, so the harness counts it as a failure.
 ## Use
 
 ```
-devbox run build                  # the harness needs target/release/sokonanoda
+devbox run build                  # the harness needs target/release/sokonanodazo
 devbox run arena-fetch            # 196 small tests, about 3.6 MB
 devbox run arena                  # run every export file present
 ```
@@ -69,9 +69,9 @@ small tests, the expected outcomes, and every export file the tooling builds.
   arena/_build/   the export files the tooling builds
 ```
 
-Set `ARENA_CACHE` to move the cache. Set `SOKONANODA` to point at a different
+Set `ARENA_CACHE` to move the cache. Set `SOKONANODAZO` to point at a different
 binary, which is how you compare two builds.
 
 ```
-SOKONANODA=/tmp/sokonanoda-baseline devbox run arena
+SOKONANODAZO=/tmp/sokonanodazo-baseline devbox run arena
 ```

@@ -3,7 +3,7 @@
 
 use bumpalo::Bump;
 use clap::{ArgGroup, Parser};
-use sokonanoda::{AxiomPolicy, CheckError, Config, Decline, DisallowedAxiom, Output, Rejection};
+use sokonanodazo::{AxiomPolicy, CheckError, Config, Decline, DisallowedAxiom, Output, Rejection};
 use std::io::{IsTerminal, Write};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;

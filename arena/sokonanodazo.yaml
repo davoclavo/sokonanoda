@@ -1,0 +1,54 @@
+# Submit this to leanprover/lean-kernel-arena as checkers/sokonanodazo.yaml.
+# It mirrors the parent's checkers/sokonanoda.yaml: same PGO build, same
+# extensions, same exit-code convention, so the pair reads as one measurement
+# of the same checker with and without this fork's changes.
+#
+# It differs from the parent in one line of the run command. The parent passes
+# `--threads 4`; this fork passes no thread flag, so it uses every core the
+# arena machine offers.
+#
+# `rev` must be repinned on each release.
+description: |
+  **sokonanodazo** is based on Jeremy Chen's
+  [sokonanoda](https://github.com/intgrah/sokonanoda), itself part of the
+  nanoda-family lineage. Nearly all of the engineering belongs to the parent:
+  the closure-based conversion algorithm, the packed term representation, the
+  session caches, and the parallel driver are all sokonanoda's work.
+
+  This fork stays close to the parent. It is not an independent rewrite, and no
+  such claim is intended. The diff is about 200 lines of checker code.
+
+  It adds one correctness change and two performance changes.
+
+  It judges `unsafe` and `partial` declarations rather than declining the
+  export. Such a declaration is registered, its type is checked, its value is
+  never checked, and it never unfolds. A safe declaration that names one is
+  rejected, which is the check the Lean kernel makes in
+  `type_checker::infer_constant`, reported with the kernel's own messages.
+
+  The session arena budget drops from 16 MiB to 2 MiB, which keeps the working
+  set in cache. Measured with interleaved repeated runs, this is worth about 10
+  percent on the large corpora, and no corpus prefers the larger value. The
+  thread count also no longer caps itself at four, so the default uses every
+  core.
+
+  Several ideas were measured and rejected: `target-cpu=native` beyond the PGO
+  build, the parent's `top-byte-ignore` feature on aarch64, newer dependency
+  versions, mimalloc tuning, and a larger `prune_dm` cache. The last of these
+  is markedly worse, because that table is cleared on every session reset.
+
+  A larger architectural change is future work rather than something this
+  submission claims.
+version: "0.5.0"
+url: https://github.com/davoclavo/sokonanodazo
+ref: main
+rev: REPLACE_WITH_RELEASE_COMMIT
+build: |
+  ROOT=$(cd ../../../.. && pwd)
+  "$ROOT/lka.py" build-test init-prelude
+  RUSTFLAGS="-C target-cpu=native -Cprofile-generate=$PWD/pgo" cargo build --release
+  target/release/sokonanodazo --stdin --nat-extension --string-extension --axiom-allow-all < "$ROOT/_build/tests/init-prelude.ndjson" >/dev/null
+  llvm-profdata merge -o "$PWD/pgo/merged.profdata" "$PWD/pgo"
+  RUSTFLAGS="-C target-cpu=native -Cprofile-use=$PWD/pgo/merged.profdata" cargo build --release
+run: |
+  target/release/sokonanodazo --stdin --nat-extension --string-extension --axiom-allow-all < "$IN"

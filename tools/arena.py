@@ -17,7 +17,7 @@ can take hours for mathlib. Everything lands in the cache directory, so a
 second run of the same command costs nothing.
 
 Set ARENA_CACHE to move the cache. The default is ~/.cache/lean-kernel-arena.
-Set SOKONANODA to name a binary other than target/release/sokonanoda.
+Set SOKONANODAZO to name a binary other than target/release/sokonanodazo.
 """
 
 import argparse
@@ -36,7 +36,7 @@ ARENA_REPO = "https://github.com/leanprover/lean-kernel-arena"
 TESTS_TARBALL = f"{ARENA_URL}/lean-arena-tests.tar.gz"
 RESULTS_JSON = f"{ARENA_URL}/results.json"
 
-# The flags the arena uses for this checker; see checkers/sokonanoda.yaml.
+# The flags the arena uses for the parent checker; see checkers/sokonanoda.yaml.
 CHECKER_FLAGS = [
     "--stdin",
     "--nat-extension",
@@ -57,7 +57,7 @@ STATUS = {0: "accept", 1: "reject", 2: "declined"}
 
 
 def binary() -> Path:
-    path = Path(os.environ.get("SOKONANODA", REPO_ROOT / "target/release/sokonanoda"))
+    path = Path(os.environ.get("SOKONANODAZO", REPO_ROOT / "target/release/sokonanodazo"))
     if not path.exists():
         sys.exit(f"no checker binary at {path}; run `devbox run build` first")
     return path
