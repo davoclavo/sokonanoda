@@ -7,8 +7,12 @@
 
 Each build runs on each corpus `--reps` times, in round-robin order, so
 machine load drifts across all builds instead of landing on one. The report
-shows the best and the median time for each pair. The best time is the most
-stable number on a loaded machine, because noise only ever adds time.
+ranks by the median and also prints the best.
+
+Trust the median. The best time looks attractive because noise only ever adds
+time, but with few repetitions one lucky run moves it by 10 percent. Two
+changes that measured as 8 percent wins on best times turned out to be noise
+once the medians were compared over 9 repetitions.
 
 The corpora come from the arena cache that tools/arena.py fills. Pick them
 with --tests; the default is a spread of sizes.
@@ -104,13 +108,13 @@ def main() -> int:
                 )
         size = path.stat().st_size / 1e6
         print(f"{test}  {size:.0f} MB")
-        baseline = min(times[next(iter(builds))])
+        baseline = statistics.median(times[next(iter(builds))])
         for label in builds:
             best = min(times[label])
             median = statistics.median(times[label])
-            delta = (best / baseline - 1) * 100
+            delta = (median / baseline - 1) * 100
             print(
-                f"  {label:14s} best={best:8.3f}s  median={median:8.3f}s"
+                f"  {label:14s} median={median:8.3f}s  best={best:8.3f}s"
                 f"  {delta:+6.1f}%"
             )
         print()
