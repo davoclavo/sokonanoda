@@ -70,12 +70,37 @@ def Level.is_succ(l: Level) -> Bool:
     case LPar{i}:
       False{}
 
-# The smart constructor for max. A zero side vanishes.
+# Structural equality of two levels, without fuel. The recursion is on both
+# sides at once, so it is bounded by the smaller one.
+def Level.same(a: Level, b: Level) -> Bool:
+  match a b:
+    case LZero{} LZero{}:
+      True{}
+    case LSucc{x} LSucc{y}:
+      Level.same(x, y)
+    case LMax{x1, y1} LMax{x2, y2}:
+      Bool.and(Level.same(x1, x2), Level.same(y1, y2))
+    case LIMax{x1, y1} LIMax{x2, y2}:
+      Bool.and(Level.same(x1, x2), Level.same(y1, y2))
+    case LPar{i} LPar{j}:
+      Nat.is_eq(i, j)
+    case x y:
+      False{}
+
+# The smart constructor for max. A zero side vanishes, and `max l l` is `l`.
+#
+# The idempotent case is not decoration. Without it the type of `Prop -> Prop`
+# comes out as `Sort (max 1 1)` where the export declares `Sort 1`, and the
+# conversion check compares the two as syntax and rejects a correct
+# declaration. The arena's `003_arrowType` is exactly that.
 def Level.mk_max(+a: Level, +b: Level) -> Level:
   Level.pick(
     Level.is_zero(a),
     b,
-    Level.pick(Level.is_zero(b), a, LMax{a, b}))
+    Level.pick(
+      Level.is_zero(b),
+      a,
+      Level.pick(Level.same(a, b), a, LMax{a, b})))
 
 # The smart constructor for imax. It collapses to zero when the right side is
 # zero, to max when the right side is a successor, and otherwise stays an imax

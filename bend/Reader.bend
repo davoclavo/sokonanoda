@@ -113,6 +113,10 @@ def Reader.line_rest(l: Line) -> List<&2, U32>:
     case LEnd{}:
       Nil{}
 
+# The bytes of a key, as it appears in the file: quoted and followed by a colon.
+def Reader.keybytes(+key: String) -> List<&2, U32>:
+  B.Bytes.of_string("\"" ++ key ++ "\":")
+
 # Does this line start with the given key, right after the opening brace?
 def Reader.heads(+key: String, +line: List<&2, U32>) -> Bool:
   B.Bytes.is_hit(B.Bytes.of_string("{\"" ++ key ++ "\":"), line)
@@ -204,6 +208,99 @@ def Reader.num_of(s: B.Scan) -> Nat:
       v
     case B.SBad{}:
       0n
+
+# Is this key present anywhere in the line? A field that is absent and a field
+# whose value is zero both read as zero, so the two need telling apart.
+def Reader.has(+key: String, +line: List<&2, U32>) -> Bool:
+  B.Bytes.pos_ok(
+    B.Bytes.find(
+      Reader.line_fuel(),
+      B.Bytes.is_hit(Reader.keybytes(key), line),
+      Reader.keybytes(key),
+      line))
+
+# The bytes after `key`, or empty when the key is absent.
+def Reader.after(+key: String, +line: List<&2, U32>) -> List<&2, U32>:
+  Reader.pos_of(
+    B.Bytes.find(
+      Reader.line_fuel(),
+      B.Bytes.is_hit(Reader.keybytes(key), line),
+      Reader.keybytes(key),
+      line))
+
+# Take bytes up to, but not including, `b`. `stop` says the head is `b`.
+def Reader.upto(fuel: Nat, stop: Bool, +acc: List<&2, U32>, +b: U32, xs: List<&2, U32>) -> List<&2, U32>:
+  match fuel:
+    case 0n:
+      Reader.rev(Reader.line_fuel(), Nil{}, acc)
+    case 1n+f:
+      match stop:
+        case True{}:
+          Reader.rev(Reader.line_fuel(), Nil{}, acc)
+        case False{}:
+          match xs:
+            case Nil{}:
+              Reader.rev(Reader.line_fuel(), Nil{}, acc)
+            case Con{c, +r}:
+              Reader.upto(f, B.Bytes.starts_with(r, b), Con{c, acc}, b, r)
+
+# Reverse a list of numbers with a tail accumulator.
+def Reader.rev_nats(fuel: Nat, +acc: List<&2, Nat>, xs: List<&2, Nat>) -> List<&2, Nat>:
+  match fuel:
+    case 0n:
+      acc
+    case 1n+f:
+      match xs:
+        case Nil{}:
+          acc
+        case Con{c, r}:
+          Reader.rev_nats(f, Con{c, acc}, r)
+
+# The bytes a scan left behind.
+def Reader.rest_of(s: B.Scan) -> List<&2, U32>:
+  match s:
+    case B.SOk{v, rest}:
+      rest
+    case B.SBad{}:
+      Nil{}
+
+# What follows a number at the head of the stream.
+def Reader.skip_num(fuel: Nat, +xs: List<&2, U32>) -> List<&2, U32>:
+  Reader.rest_of(B.Bytes.number(fuel, xs))
+
+# Every number in a byte range, in order. Non-digits are skipped, so this reads
+# a JSON array of numbers such as `[1,2,3]` once the brackets are stripped.
+def Reader.nums(fuel: Nat, dig: Bool, +acc: List<&2, Nat>, +xs: List<&2, U32>) -> List<&2, Nat>:
+  match fuel:
+    case 0n:
+      Reader.rev_nats(Reader.line_fuel(), Nil{}, acc)
+    case 1n+f:
+      match dig:
+        case True{}:
+          Reader.nums(
+            f,
+            B.Bytes.starts_digit(Reader.skip_num(Reader.line_fuel(), xs)),
+            Con{Reader.num_of(B.Bytes.number(Reader.line_fuel(), xs)), acc},
+            Reader.skip_num(Reader.line_fuel(), xs))
+        case False{}:
+          match xs:
+            case Nil{}:
+              Reader.rev_nats(Reader.line_fuel(), Nil{}, acc)
+            case Con{c, +r}:
+              Reader.nums(f, B.Bytes.starts_digit(r), acc, r)
+
+# Every number in the JSON array that follows `key`.
+def Reader.num_list(+key: String, +line: List<&2, U32>) -> List<&2, Nat>:
+  Reader.nums(
+    Reader.line_fuel(),
+    False{},
+    Nil{},
+    Reader.upto(
+      Reader.line_fuel(),
+      False{},
+      Nil{},
+      93,
+      Reader.after(key, line)))
 
 # The number that follows `key` in this line, or zero.
 def Reader.field(+key: String, +line: List<&2, U32>) -> Nat:

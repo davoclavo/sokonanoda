@@ -19,6 +19,7 @@ import ./Term.bend as T
 type Decl is Data:
   DAxiom{id: Nat, nps: Nat, ty: T.Term}
   DDef{id: Nat, nps: Nat, ty: T.Term, val: T.Term}
+  DThm{id: Nat, nps: Nat, ty: T.Term, val: T.Term}
 
 type Lookup is Data:
   LFound{d: Decl}
@@ -39,6 +40,18 @@ def Decl.id(d: Decl) -> Nat:
       id
     case DDef{id, nps, ty, val}:
       id
+    case DThm{id, nps, ty, val}:
+      id
+
+# True when this declaration is a theorem, whose type must be a Prop.
+def Decl.is_thm(d: Decl) -> Bool:
+  match d:
+    case DAxiom{id, nps, ty}:
+      False{}
+    case DDef{id, nps, ty, val}:
+      False{}
+    case DThm{id, nps, ty, val}:
+      True{}
 
 # True when this declaration has a value, so delta reduction can unfold it.
 def Decl.is_def(d: Decl) -> Bool:
@@ -46,6 +59,8 @@ def Decl.is_def(d: Decl) -> Bool:
     case DAxiom{id, nps, ty}:
       False{}
     case DDef{id, nps, ty, val}:
+      True{}
+    case DThm{id, nps, ty, val}:
       True{}
 
 # How many level parameters a declaration takes.
@@ -55,6 +70,8 @@ def Decl.num_params(d: Decl) -> Nat:
       nps
     case DDef{id, nps, ty, val}:
       nps
+    case DThm{id, nps, ty, val}:
+      nps
 
 # The declared type of a declaration, with its level parameters replaced.
 def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
@@ -62,6 +79,8 @@ def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
     case DAxiom{id, nps, ty}:
       T.Term.subst_levels(ty, ls)
     case DDef{id, nps, ty, val}:
+      T.Term.subst_levels(ty, ls)
+    case DThm{id, nps, ty, val}:
       T.Term.subst_levels(ty, ls)
 
 # The value of a definition, with its level parameters replaced. An axiom has
@@ -71,6 +90,8 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
     case DAxiom{id, nps, ty}:
       None{}
     case DDef{id, nps, ty, val}:
+      Some{T.Term.subst_levels(val, ls)}
+    case DThm{id, nps, ty, val}:
       Some{T.Term.subst_levels(val, ls)}
 
 # Find a declaration by id.
