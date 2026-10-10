@@ -66,6 +66,13 @@ def Shape.is_pi(t: T.Term) -> Bool:
     case x:
       False{}
 
+def Shape.pi_dom(t: T.Term) -> T.Term:
+  match t:
+    case T.TPi{ty, bd}:
+      ty
+    case x:
+      Shape.dummy()
+
 def Shape.pi_bd(t: T.Term) -> T.Term:
   match t:
     case T.TPi{ty, bd}:
@@ -105,6 +112,106 @@ def Shape.const_type(lk: E.Lookup, +ls: List<&2, L.Level>) -> Shp:
     case E.LMissing{}:
       SBad{}
 
+# Typing a projection
+# -------------------
+#
+# The type of `s.idx` comes from the constructor's telescope. The structure's
+# type gives the inductive and its parameters, the constructor's type is taken
+# at those parameters, and then one binder is stepped over for each earlier
+# field, with that field's own projection put in its place. The domain of the
+# next binder is the answer.
+#
+# The structure's type is passed in rather than inferred here, because
+# inferring it is the caller's job and Bend will not let these two call each
+# other.
+
+# Step over `i` binders, putting the j-th projection in place of each.
+def Shape.proj_walk(
+  +fuel: Nat, +env: List<&2, E.Decl>, i: Nat, +j: Nat, r: T.Term,
+  +tn: Nat, +s: T.Term
+) -> T.Term:
+  match fuel:
+    case 0n:
+      T.TUnk{}
+    case 1n+f:
+      match i:
+        case 0n:
+          r
+        case 1n+k:
+          Shape.proj_walk(
+            f, env, k, 1n+j,
+            T.Term.inst(
+              Shape.pi_bd(V.Eval.whnf(f, env, r, Nil{})),
+              T.TProj{tn, j, s}),
+            tn, s)
+
+# Is this structure's type one this kernel can project from?
+def Shape.proj_ok(+env: List<&2, E.Decl>, +sty: T.Term) -> Bool:
+  Bool.and(
+    E.Decl.is_ind(
+      E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
+    E.Decl.is_one(
+      E.Decl.ind_ctors(
+        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))
+
+# Put the structure's parameters into the constructor's type.
+#
+# This has to instantiate, one binder at a time, and not apply. A pi applied
+# to an argument is not a beta-redex, so reduction leaves it exactly as it is
+# and the next step looks for a binder and finds an application. A structure
+# with no parameters hides the mistake completely, which is why the first
+# hand-written test passed and every real one failed.
+def Shape.proj_params(
+  +fuel: Nat, +env: List<&2, E.Decl>, ps: List<&2, T.Term>, r: T.Term
+) -> T.Term:
+  match fuel:
+    case 0n:
+      T.TUnk{}
+    case 1n+f:
+      match ps:
+        case Nil{}:
+          r
+        case Con{h, t}:
+          Shape.proj_params(
+            f, env, t,
+            T.Term.inst(Shape.pi_bd(V.Eval.whnf(f, env, r, Nil{})), h))
+
+# The constructor's type, at the structure's parameters.
+def Shape.proj_base(+fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term) -> T.Term:
+  Shape.proj_params(
+    fuel, env,
+    V.Eval.take(
+      V.Eval.spine(sty, Nil{}),
+      E.Decl.ind_np(
+        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))),
+    E.Decl.type_at(
+      E.Lookup.get(
+        E.Env.find(
+          env,
+          E.Decl.only(
+            E.Decl.ind_ctors(
+              E.Lookup.get(
+                E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))),
+      V.Eval.head_levels(V.Eval.head(sty))))
+
+# The type of `s.idx`, given the structure's own type.
+def Shape.proj_from(
+  +fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
+) -> Shp:
+  Shape.if_ok(
+    Bool.and(
+      Shape.proj_ok(env, sty),
+      Shape.is_pi(
+        V.Eval.whnf(
+          fuel, env,
+          Shape.proj_walk(fuel, env, idx, 0n, Shape.proj_base(fuel, env, sty), tn, s),
+          Nil{}))),
+    Shape.pi_dom(
+      V.Eval.whnf(
+        fuel, env,
+        Shape.proj_walk(fuel, env, idx, 0n, Shape.proj_base(fuel, env, sty), tn, s),
+        Nil{})))
+
 # The type `t` would have in the context `ctx`.
 def Shape.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T.Term) -> Shp:
   match fuel:
@@ -138,6 +245,11 @@ def Shape.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
           Shape.infer(f, env, ctx, T.Term.inst(bd, v))
         case T.TUnk{}:
           SBad{}
+        case T.TProj{tn, +idx, +st}:
+          Shape.proj_from(
+            f, env,
+            V.Eval.whnf(f, env, Shape.ty(Shape.infer(f, env, ctx, st)), Nil{}),
+            tn, idx, st)
 
 # Does the type `ty` itself have type `Sort 0`?
 def Shape.prop_sort(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, ty: T.Term) -> Bool:

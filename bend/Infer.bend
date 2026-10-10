@@ -191,6 +191,100 @@ def Infer.const_type(lk: E.Lookup, +ls: List<&2, L.Level>) -> T.Term:
     case E.LMissing{}:
       Infer.dummy()
 
+# Typing a projection
+# -------------------
+#
+# The type of `s.idx` comes from the constructor's telescope. The structure's
+# type gives the inductive and its parameters, the constructor's type is taken
+# at those parameters, and then one binder is stepped over for each earlier
+# field, with that field's own projection put in its place. The domain of the
+# next binder is the answer.
+#
+# The structure's type is passed in rather than inferred here, because
+# inferring it is the caller's job and Bend will not let these two call each
+# other.
+
+# Step over `i` binders, putting the j-th projection in place of each.
+def Infer.proj_walk(
+  +fuel: Nat, +env: List<&2, E.Decl>, i: Nat, +j: Nat, r: T.Term,
+  +tn: Nat, +s: T.Term
+) -> T.Term:
+  match fuel:
+    case 0n:
+      T.TUnk{}
+    case 1n+f:
+      match i:
+        case 0n:
+          r
+        case 1n+k:
+          Infer.proj_walk(
+            f, env, k, 1n+j,
+            T.Term.inst(
+              Infer.pi_bd(V.Eval.whnf(f, env, r, Nil{})),
+              T.TProj{tn, j, s}),
+            tn, s)
+
+# Is this structure's type one this kernel can project from?
+def Infer.proj_ok(+env: List<&2, E.Decl>, +sty: T.Term) -> Bool:
+  Bool.and(
+    E.Decl.is_ind(
+      E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
+    E.Decl.is_one(
+      E.Decl.ind_ctors(
+        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))
+
+# Put the structure's parameters into the constructor's type.
+#
+# This has to instantiate, one binder at a time, and not apply. A pi applied
+# to an argument is not a beta-redex, so reduction leaves it exactly as it is
+# and the next step looks for a binder and finds an application. A structure
+# with no parameters hides the mistake completely, which is why the first
+# hand-written test passed and every real one failed.
+def Infer.proj_params(
+  +fuel: Nat, +env: List<&2, E.Decl>, ps: List<&2, T.Term>, r: T.Term
+) -> T.Term:
+  match fuel:
+    case 0n:
+      T.TUnk{}
+    case 1n+f:
+      match ps:
+        case Nil{}:
+          r
+        case Con{h, t}:
+          Infer.proj_params(
+            f, env, t,
+            T.Term.inst(Infer.pi_bd(V.Eval.whnf(f, env, r, Nil{})), h))
+
+# The constructor's type, at the structure's parameters.
+def Infer.proj_base(+fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term) -> T.Term:
+  Infer.proj_params(
+    fuel, env,
+    V.Eval.take(
+      V.Eval.spine(sty, Nil{}),
+      E.Decl.ind_np(
+        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))),
+    E.Decl.type_at(
+      E.Lookup.get(
+        E.Env.find(
+          env,
+          E.Decl.only(
+            E.Decl.ind_ctors(
+              E.Lookup.get(
+                E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))),
+      V.Eval.head_levels(V.Eval.head(sty))))
+
+# The type of `s.idx`, given the structure's own type.
+def Infer.proj_from(
+  +fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
+) -> Res:
+  +w = V.Eval.whnf(
+    fuel, env,
+    Infer.proj_walk(fuel, env, idx, 0n, Infer.proj_base(fuel, env, sty), tn, s),
+    Nil{})
+  Infer.res_of(
+    A.Ans.and(A.Ans.of(Infer.proj_ok(env, sty)), Infer.pi_ans(w)),
+    Infer.pi_dom(w))
+
 # Infer the type of `t` in the context `ctx`.
 def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T.Term) -> Res:
   match fuel:
@@ -233,6 +327,11 @@ def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
             T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
         case T.TUnk{}:
           RUnk{}
+        case T.TProj{tn, +idx, +st}:
+          Infer.proj_from(
+            f, env,
+            V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{}),
+            tn, idx, st)
         case T.TLet{ty, +v, bd}:
           +vt = Infer.infer(f, env, ctx, v)
           +br = Infer.infer(f, env, ctx, T.Term.inst(bd, v))

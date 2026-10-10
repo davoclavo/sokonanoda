@@ -245,6 +245,21 @@ def Parse.ex_natval(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
         case False{}:
           T.TVar{0n}
 
+def Parse.ex_proj(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+      match h:
+        case True{}:
+          T.TProj{
+            R.Reader.field("typeName", line),
+            R.Reader.field("idx", line),
+            Parse.exp(ex, ne, R.Reader.field("struct", line))}
+        case False{}:
+          Parse.ex_natval(
+            MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+            R.Reader.has("natVal", line),
+            line)
+
 def Parse.ex_letE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:

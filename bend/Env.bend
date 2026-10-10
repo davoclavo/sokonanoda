@@ -265,6 +265,13 @@ def Decl.is_ind(d: Decl) -> Bool:
     case o:
       False{}
 
+def Decl.ind_np(d: Decl) -> Nat:
+  match d:
+    case DInd{id, ps, ty, np, ni, ctors}:
+      np
+    case o:
+      0n
+
 def Decl.ind_ni(d: Decl) -> Nat:
   match d:
     case DInd{id, ps, ty, np, ni, ctors}:

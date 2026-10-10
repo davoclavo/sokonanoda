@@ -102,6 +102,20 @@ def Conv.levels_eq(+fuel: Nat, xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> 
     case x y:
       False{}
 
+# Two projections are equal when they take the same field of the same
+# structure type from structures that are equal. Without this case two
+# projections fall through to a definite no, and every declaration whose type
+# mentions one is rejected. That is what happened: the projection machinery
+# was right and conversion never got to use it.
+def Conv.proj_step(
+  same_field: Bool, +ctx: List<&2, T.Term>, s1: T.Term, s2: T.Term
+) -> Step:
+  match same_field:
+    case True{}:
+      SMore{[MkPair{ctx, s1, s2}]}
+    case False{}:
+      SNo{}
+
 # Take the two sides apart. Both are already in weak head normal form. A pair
 # pushed from under a binder carries the extended context.
 #
@@ -125,6 +139,10 @@ def Conv.structural(
       SMore{[MkPair{ctx, t1, t2}, MkPair{Con{t1, ctx}, b1, b2}]}
     case T.TPi{+t1, b1} T.TPi{t2, b2}:
       SMore{[MkPair{ctx, t1, t2}, MkPair{Con{t1, ctx}, b1, b2}]}
+    case T.TProj{n1, i1, s1} T.TProj{n2, i2, s2}:
+      Conv.proj_step(
+        Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)),
+        ctx, s1, s2)
     case T.TLam{+t1, b1} y:
       SMore{[MkPair{Con{t1, ctx}, b1, T.TApp{T.Term.lift(y, 1n, 0n), T.TVar{0n}}}]}
     case x T.TLam{+t2, b2}:

@@ -17,6 +17,9 @@ type Term is Data:
   TLam{ty: Term, bd: Term}
   TPi{ty: Term, bd: Term}
   TLet{ty: Term, v: Term, bd: Term}
+  # The `idx`-th field of a structure. `tn` is the inductive's name, which the
+  # export carries and which the type of the field is read from.
+  TProj{tn: Nat, idx: Nat, s: Term}
   # The term reduction gives back when it runs out of budget.
   #
   # Running out is not an answer. A kernel that treats it as one reports
@@ -69,6 +72,10 @@ def Term.same(a: Term, b: Term) -> Bool:
       Bool.and(Term.same(t1, t2), Term.same(b1, b2))
     case TPi{t1, b1} TPi{t2, b2}:
       Bool.and(Term.same(t1, t2), Term.same(b1, b2))
+    case TProj{n1, i1, s1} TProj{n2, i2, s2}:
+      Bool.and(
+        Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)),
+        Term.same(s1, s2))
     case TLet{t1, v1, b1} TLet{t2, v2, b2}:
       Bool.and(
         Term.same(t1, t2),
@@ -95,6 +102,8 @@ def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
       TLet{Term.lift(ty, d, cut), Term.lift(v, d, cut), Term.lift(bd, d, 1n+cut)}
     case TUnk{}:
       TUnk{}
+    case TProj{tn, idx, st}:
+      TProj{tn, idx, Term.lift(st, d, cut)}
 
 # Replace the variable at depth `cut` with `v`, and shift the ones above it
 # down by one. This is the de Bruijn instantiation a beta step needs.
@@ -119,6 +128,8 @@ def Term.subst(t: Term, +v: Term, +cut: Nat) -> Term:
       TLet{Term.subst(ty, v, cut), Term.subst(vl, v, cut), Term.subst(bd, v, 1n+cut)}
     case TUnk{}:
       TUnk{}
+    case TProj{tn, idx, st}:
+      TProj{tn, idx, Term.subst(st, v, cut)}
 
 # Instantiate the body of a binder with `v`, which is the common case of
 # `Term.subst` at depth zero.
@@ -162,6 +173,8 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TLet{Term.remap_levels(ty, ps), Term.remap_levels(v, ps), Term.remap_levels(bd, ps)}
     case TUnk{}:
       TUnk{}
+    case TProj{tn, idx, st}:
+      TProj{tn, idx, Term.remap_levels(st, ps)}
 
 # Substitute a declaration's level parameters throughout a term.
 def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
@@ -182,3 +195,5 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TLet{Term.subst_levels(ty, vs), Term.subst_levels(v, vs), Term.subst_levels(bd, vs)}
     case TUnk{}:
       TUnk{}
+    case TProj{tn, idx, st}:
+      TProj{tn, idx, Term.subst_levels(st, vs)}

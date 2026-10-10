@@ -241,6 +241,42 @@ def Eval.iota_term(
           E.Decl.rec_nmin(d))),
       T.Term.subst_levels(E.RecRule.rhs(rule), ls)))
 
+# The level arguments of a head constant.
+def Eval.head_levels(t: T.Term) -> List<&2, L.Level>:
+  match t:
+    case T.TConst{n, ls}:
+      ls
+    case x:
+      Nil{}
+
+# Projections
+# -----------
+#
+# A projection of a structure reduces when the structure does. If `s` reduces
+# to its constructor applied to the parameters and then the fields, the
+# `idx`-th field is the answer. The constructor's own parameters come first
+# and are skipped.
+
+# Is this reduced structure a constructor application with the field present?
+def Eval.proj_ready(+env: List<&2, E.Decl>, +idx: Nat, +sw: T.Term) -> Bool:
+  Bool.and(
+    E.Decl.is_ctor(E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(sw))))),
+    Nat.is_lt(
+      Nat.add(
+        E.Decl.ctor_np(
+          E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(sw))))),
+        idx),
+      Eval.len(Eval.spine(sw, Nil{}), 0n)))
+
+# The field itself. Guard with `Eval.proj_ready`.
+def Eval.proj_field(+env: List<&2, E.Decl>, +idx: Nat, +sw: T.Term) -> T.Term:
+  Eval.nth(
+    Eval.spine(sw, Nil{}),
+    Nat.add(
+      E.Decl.ctor_np(
+        E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(sw))))),
+      idx))
+
 # Reduce `t` applied to `sp` to weak head normal form.
 def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
@@ -276,3 +312,12 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
           Eval.whnf(f, env, T.Term.inst(bd, v), sp)
         case T.TUnk{}:
           T.TUnk{}
+        case T.TProj{tn, +idx, st}:
+          +sw = Eval.whnf(f, env, st, Nil{})
+          Eval.pick_t(
+            T.Term.is_unk(sw),
+            T.TUnk{},
+            Eval.pick_t(
+              Eval.proj_ready(env, idx, sw),
+              Eval.whnf(f, env, Eval.proj_field(env, idx, sw), sp),
+              Eval.rebuild(sp, T.TProj{tn, idx, sw})))

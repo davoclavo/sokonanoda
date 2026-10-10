@@ -134,10 +134,12 @@ def Kernel.why(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> String:
     case E.DAxiom{id, ps, ty}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty))
-    case E.DDef{id, ps, +ty, val}:
+    case E.DDef{id, ps, +ty, +val}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
-      Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
+      Kernel.flag("infer", I.Infer.res_ans(I.Infer.infer(fuel, env, Nil{}, val))) ++
+      Kernel.flag("conv", C.Conv.eq(fuel, env,
+        I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty))
     case E.DThm{id, ps, +ty, +val}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
