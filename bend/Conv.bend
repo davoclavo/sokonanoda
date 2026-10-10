@@ -208,6 +208,141 @@ def Conv.irrel(
     Conv.irrel_go(fuel, env, ctx, a, b),
     Conv.structural(fuel, ctx, a, b))
 
+# Choose between two terms on a computed Bool.
+def Conv.pick_t(b: Bool, x: T.Term, y: T.Term) -> T.Term:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# K-like reduction
+# ----------------
+#
+# A recursor marked `k` belongs to an inductive with one constructor that
+# takes no fields, so its major premise can only be that constructor and the
+# rule may fire even when the premise is not written as one.
+#
+# It may not fire unguarded. The Lean kernel infers the major premise's type
+# first and requires it to be an application of the recursor's own inductive;
+# without that, the rule fires on a premise of the wrong type and the arena's
+# `100_ruleKbad` passes. Reduction cannot infer a type, because that would
+# make reduction and inference call each other, which Bend forbids.
+#
+# So the rule lives here instead. Conversion already depends on `Shape`, so it
+# can ask for a type, and it already depends on `Eval`, so it can reduce the
+# result. The premise is replaced by the constructor applied to the type's
+# parameters, and ordinary iota does the rest.
+
+# The arguments of an application, in order.
+def Conv.args(t: T.Term) -> List<&2, T.Term>:
+  V.Eval.spine(t, Nil{})
+
+# The level arguments of a head constant, or none.
+def Conv.head_levels(t: T.Term) -> List<&2, L.Level>:
+  match t:
+    case T.TConst{n, ls}:
+      ls
+    case x:
+      Nil{}
+
+# Replace the `i`-th argument of a list.
+def Conv.put(+xs: List<&2, T.Term>, +i: Nat, +v: T.Term) -> List<&2, T.Term>:
+  List.append(&2, T.Term,
+    V.Eval.take(xs, i),
+    Con{v, V.Eval.drop(xs, 1n+i)})
+
+# Does this type head the recursor's own inductive?
+def Conv.k_type_ok(+d: E.Decl, +ty: T.Term) -> Bool:
+  Nat.is_eq(Conv.head_name(Conv.head(ty)), E.Decl.only(E.Decl.rec_inds(d)))
+
+# The constructor, applied to the parameters the major premise's type carries.
+def Conv.k_ctor(+env: List<&2, E.Decl>, +d: E.Decl, +ty: T.Term) -> T.Term:
+  V.Eval.rebuild(
+    V.Eval.take(Conv.args(ty), E.Decl.rec_np(d)),
+    T.TConst{
+      E.Decl.only(
+        E.Decl.ind_ctors(
+          E.Lookup.get(E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))),
+      Conv.head_levels(Conv.head(ty))})
+
+# Is putting the constructor in place of the major premise type correct?
+#
+# This is the guard. The arena states the rule as "the recursor reduces even
+# if the major argument is not a constructor, as long as replacing the major
+# argument with a constructor is type correct", and the two tests are the two
+# sides of it. With `h : true = true` the premise's type is `Eq Bool true
+# true` and the constructor's is the same, so the rule fires. With `h : true =
+# false` the premise's type is `Eq Bool true false` while the constructor's is
+# still `Eq Bool true true`, so it must not. The comparison is syntactic,
+# which tells those two apart and can only ever be too strict.
+def Conv.k_fits(
+  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>,
+  +d: E.Decl, +ty: T.Term
+) -> Bool:
+  T.Term.same(
+    V.Eval.whnf(
+      fuel, env,
+      S.Shape.ty(S.Shape.infer(fuel, env, ctx, Conv.k_ctor(env, d, ty))),
+      Nil{}),
+    ty)
+
+# Is the K rule allowed on this application? The declaration must be a
+# recursor with the flag set and enough arguments, its inductive must have one
+# constructor, and the major premise's type must head that inductive.
+def Conv.k_ok(
+  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>,
+  +d: E.Decl, +args: List<&2, T.Term>, +ty: T.Term
+) -> Bool:
+  Bool.and(
+    Bool.and(
+      Bool.and(E.Decl.is_rec(d), E.Decl.rec_k(d)),
+      Nat.is_lt(V.Eval.major_idx(d), V.Eval.len(args, 0n))),
+    Bool.and(
+      Bool.and(
+        E.Decl.is_one(
+          E.Decl.ind_ctors(
+            E.Lookup.get(E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))),
+        Conv.k_type_ok(d, ty)),
+      Conv.k_fits(fuel, env, ctx, d, ty)))
+
+# The application with its major premise replaced by the constructor.
+def Conv.k_rebuilt(
+  +env: List<&2, E.Decl>, +d: E.Decl, +t: T.Term, +args: List<&2, T.Term>, +ty: T.Term
+) -> T.Term:
+  V.Eval.rebuild(
+    Conv.put(args, V.Eval.major_idx(d), Conv.k_ctor(env, d, ty)),
+    Conv.head(t))
+
+# Fire it, or leave the term alone.
+def Conv.k_go(
+  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +t: T.Term,
+  +d: E.Decl, +args: List<&2, T.Term>, +ty: T.Term
+) -> T.Term:
+  Conv.pick_t(
+    Conv.k_ok(fuel, env, ctx, d, args, ty),
+    V.Eval.whnf(fuel, env, Conv.k_rebuilt(env, d, t, args, ty), Nil{}),
+    t)
+
+# Apply the K rule to a term already in weak head normal form, if it applies.
+def Conv.k_fix(
+  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +t: T.Term
+) -> T.Term:
+  Conv.k_go(
+    fuel, env, ctx, t,
+    E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))),
+    Conv.args(t),
+    V.Eval.whnf(
+      fuel, env,
+      S.Shape.ty(
+        S.Shape.infer(
+          fuel, env, ctx,
+          V.Eval.nth(
+            Conv.args(t),
+            V.Eval.major_idx(
+              E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))))))),
+      Nil{}))
+
 # Reduce the two sides of a pair, then try proof irrelevance before taking
 # them apart.
 def Conv.classify_pair(+fuel: Nat, +env: List<&2, E.Decl>, p: TPair) -> Step:
@@ -217,8 +352,8 @@ def Conv.classify_pair(+fuel: Nat, +env: List<&2, E.Decl>, p: TPair) -> Step:
         fuel,
         env,
         ctx,
-        V.Eval.whnf(fuel, env, a, Nil{}),
-        V.Eval.whnf(fuel, env, b, Nil{}))
+        Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, a, Nil{})),
+        Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, b, Nil{})))
 
 # Work the queue. It empties exactly when every pair in it is equal.
 def Conv.eq_all(+fuel: Nat, +env: List<&2, E.Decl>, work: List<&2, TPair>) -> Bool:

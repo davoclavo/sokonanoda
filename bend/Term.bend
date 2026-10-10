@@ -26,6 +26,41 @@ def Term.pick(b: Bool, x: Term, y: Term) -> Term:
     case False{}:
       y
 
+# Structural equality of two level lists.
+def Term.same_levels(xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> Bool:
+  match xs ys:
+    case Nil{} Nil{}:
+      True{}
+    case Con{x, xr} Con{y, yr}:
+      Bool.and(L.Level.same(x, y), Term.same_levels(xr, yr))
+    case x y:
+      False{}
+
+# Structural equality of two terms, without fuel. The recursion is on both
+# sides at once, so it is bounded by the smaller one. This is equality of
+# syntax, not of meaning, and that is what it is for: a guard that must never
+# say yes to two terms that differ.
+def Term.same(a: Term, b: Term) -> Bool:
+  match a b:
+    case TVar{i} TVar{j}:
+      Nat.is_eq(i, j)
+    case TSort{x} TSort{y}:
+      L.Level.same(x, y)
+    case TConst{n1, l1} TConst{n2, l2}:
+      Bool.and(Nat.is_eq(n1, n2), Term.same_levels(l1, l2))
+    case TApp{f1, a1} TApp{f2, a2}:
+      Bool.and(Term.same(f1, f2), Term.same(a1, a2))
+    case TLam{t1, b1} TLam{t2, b2}:
+      Bool.and(Term.same(t1, t2), Term.same(b1, b2))
+    case TPi{t1, b1} TPi{t2, b2}:
+      Bool.and(Term.same(t1, t2), Term.same(b1, b2))
+    case TLet{t1, v1, b1} TLet{t2, v2, b2}:
+      Bool.and(
+        Term.same(t1, t2),
+        Bool.and(Term.same(v1, v2), Term.same(b1, b2)))
+    case x y:
+      False{}
+
 # Add `d` to every free variable whose index is at least `cut`.
 def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
   match t:
