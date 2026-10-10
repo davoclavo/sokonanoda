@@ -461,6 +461,11 @@ def Reader.obj_list(+key: String, +line: List<&2, U32>) -> List<&2, List<&2, U32
   +inner = Reader.inside(key, line)
   Reader.objects(Reader.line_fuel(), Reader.more_objs(inner), Nil{}, inner)
 
+# The number that follows `key` when the value is quoted, as a `natVal` is.
+def Reader.field_q(+key: String, +line: List<&2, U32>) -> Nat:
+  Reader.num_of(
+    B.Bytes.number(Reader.line_fuel(), Reader.drop1(Reader.after(key, line))))
+
 # Is the value of `key` the word `true`? The export writes a flag that way.
 def Reader.is_true(+key: String, +line: List<&2, U32>) -> Bool:
   B.Bytes.is_hit(B.Bytes.of_string("true"), Reader.after(key, line))
