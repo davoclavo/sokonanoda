@@ -1,0 +1,218 @@
+# Reading a Lean export, line by line.
+#
+# An export is NDJSON: one JSON object per line, each assigning an index in the
+# name table, the level table, or the expression table, or declaring a constant.
+# A line is short, a file is not, so the walk over the file is tail recursive
+# and the work inside a line need not be.
+#
+# The keys inside an object are not in a fixed order across line kinds. In one
+# line `"ie"` comes first and in another it comes last, so a field is found by
+# searching the line for its key rather than by position. `Bytes.find` does
+# that search.
+#
+# Every function that walks the file keeps its recursive call in tail position,
+# for the reason `Bytes.bend` explains.
+
+import Base
+import ./Bytes.bend as B
+
+# A line and the bytes after it.
+type Line is Data:
+  LLine{line: List<&2, U32>, rest: List<&2, U32>}
+  LEnd{}
+
+# What kind of line this is. The reader dispatches on it.
+type LineKind is Data:
+  KMeta{}
+  KName{}
+  KLevel{}
+  KExpr{}
+  KAxiom{}
+  KDef{}
+  KThm{}
+  KInductive{}
+  KQuot{}
+  KOpaque{}
+  KOther{}
+
+# Fuel for one line. A line of an export is well under this.
+def Reader.line_fuel() -> Nat:
+  65536n
+
+# Peek: is the stream empty, or does it start with a newline?
+def Reader.at_stop(+xs: List<&2, U32>) -> Bool:
+  Bool.or(B.Bytes.is_empty(xs), B.Bytes.starts_with(xs, B.Bytes.newline()))
+
+# Reverse a list with a tail accumulator. Base's reverse is fine for a line,
+# but this keeps the file's one idiom everywhere.
+def Reader.rev(fuel: Nat, +acc: List<&2, U32>, xs: List<&2, U32>) -> List<&2, U32>:
+  match fuel:
+    case 0n:
+      acc
+    case 1n+f:
+      match xs:
+        case Nil{}:
+          acc
+        case Con{c, r}:
+          Reader.rev(f, Con{c, acc}, r)
+
+# Drop a leading newline, so the next line starts clean.
+def Reader.drop_nl(xs: List<&2, U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{c, r}:
+      r
+
+# Finish a line: put its bytes back in order and step past the newline.
+def Reader.finish(+acc: List<&2, U32>, xs: List<&2, U32>) -> Line:
+  LLine{Reader.rev(Reader.line_fuel(), Nil{}, acc), Reader.drop_nl(xs)}
+
+# Take one line. `stop` says the head ends the line, which the caller
+# establishes with `Reader.at_stop`.
+def Reader.line_go(fuel: Nat, stop: Bool, +acc: List<&2, U32>, xs: List<&2, U32>) -> Line:
+  match fuel:
+    case 0n:
+      LEnd{}
+    case 1n+f:
+      match stop:
+        case True{}:
+          Reader.finish(acc, xs)
+        case False{}:
+          match xs:
+            case Nil{}:
+              Reader.finish(acc, Nil{})
+            case Con{c, +r}:
+              Reader.line_go(f, Reader.at_stop(r), Con{c, acc}, r)
+
+# Choose between the end of the file and one more line.
+def Reader.line_pick(done: Bool, fuel: Nat, +xs: List<&2, U32>) -> Line:
+  match done:
+    case True{}:
+      LEnd{}
+    case False{}:
+      Reader.line_go(fuel, Reader.at_stop(xs), Nil{}, xs)
+
+# Take one line from the stream. An empty stream answers `LEnd`.
+def Reader.line(fuel: Nat, +xs: List<&2, U32>) -> Line:
+  Reader.line_pick(B.Bytes.is_empty(xs), fuel, xs)
+
+# The bytes of a line, or empty at the end of the file.
+def Reader.line_bytes(l: Line) -> List<&2, U32>:
+  match l:
+    case LLine{line, rest}:
+      line
+    case LEnd{}:
+      Nil{}
+
+# What follows a line, or empty at the end of the file.
+def Reader.line_rest(l: Line) -> List<&2, U32>:
+  match l:
+    case LLine{line, rest}:
+      rest
+    case LEnd{}:
+      Nil{}
+
+# Does this line start with the given key, right after the opening brace?
+def Reader.heads(+key: String, +line: List<&2, U32>) -> Bool:
+  B.Bytes.is_hit(B.Bytes.of_string("{\"" ++ key ++ "\":"), line)
+
+# An expression line opens with `"ie"` or with one of the node keys.
+def Reader.line_kind_expr(+line: List<&2, U32>) -> Bool:
+  Bool.or(
+    Bool.or(
+      Bool.or(Reader.heads("ie", line), Reader.heads("app", line)),
+      Bool.or(Reader.heads("bvar", line), Reader.heads("const", line))),
+    Bool.or(
+      Bool.or(Reader.heads("lam", line), Reader.heads("forallE", line)),
+      Bool.or(Reader.heads("letE", line), Reader.heads("proj", line))))
+
+# Pick the first kind whose test came back true.
+
+def Reader.line_kind_of(
+  meta: Bool, name: Bool, level: Bool, expr: Bool,
+  ax: Bool, dfn: Bool, thm: Bool, ind: Bool, quot: Bool, opq: Bool
+) -> LineKind:
+  match meta:
+    case True{}:
+      KMeta{}
+    case False{}:
+      match name:
+        case True{}:
+          KName{}
+        case False{}:
+          match level:
+            case True{}:
+              KLevel{}
+            case False{}:
+              match expr:
+                case True{}:
+                  KExpr{}
+                case False{}:
+                  match ax:
+                    case True{}:
+                      KAxiom{}
+                    case False{}:
+                      match dfn:
+                        case True{}:
+                          KDef{}
+                        case False{}:
+                          match thm:
+                            case True{}:
+                              KThm{}
+                            case False{}:
+                              match ind:
+                                case True{}:
+                                  KInductive{}
+                                case False{}:
+                                  match quot:
+                                    case True{}:
+                                      KQuot{}
+                                    case False{}:
+                                      match opq:
+                                        case True{}:
+                                          KOpaque{}
+                                        case False{}:
+                                          KOther{}
+
+# Classify a line by the key it opens with.
+def Reader.line_kind(+line: List<&2, U32>) -> LineKind:
+  Reader.line_kind_of(
+    Reader.heads("meta", line),
+    Reader.heads("in", line),
+    Reader.heads("il", line),
+    Reader.line_kind_expr(line),
+    Reader.heads("axiom", line),
+    Reader.heads("def", line),
+    Reader.heads("thm", line),
+    Reader.heads("inductive", line),
+    Reader.heads("quot", line),
+    Reader.heads("opaque", line))
+
+# The stream a position left, or empty.
+def Reader.pos_of(p: B.Pos) -> List<&2, U32>:
+  match p:
+    case B.POk{rest}:
+      rest
+    case B.PBad{}:
+      Nil{}
+
+# The number a scan found, or zero.
+def Reader.num_of(s: B.Scan) -> Nat:
+  match s:
+    case B.SOk{v, rest}:
+      v
+    case B.SBad{}:
+      0n
+
+# The number that follows `key` in this line, or zero.
+def Reader.field(+key: String, +line: List<&2, U32>) -> Nat:
+  Reader.num_of(
+    B.Bytes.number(
+      Reader.line_fuel(),
+      Reader.pos_of(
+        B.Bytes.find(
+          Reader.line_fuel(),
+          B.Bytes.is_hit(B.Bytes.of_string("\"" ++ key ++ "\":"), line),
+          B.Bytes.of_string("\"" ++ key ++ "\":"),
+          line))))

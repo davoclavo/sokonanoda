@@ -49,7 +49,9 @@ refuse.
 | `Conv.bend` | definitional equality, as a worklist |
 | `Infer.bend` | type inference for the core |
 | `Bytes.bend` | a tail-recursive byte scanner, the base of a reader |
+| `Reader.bend` | line splitting, line classification, field lookup by key |
 | `scan.bend` | reads a real export and reports what the scanner found |
+| `read.bend` | classifies every line of a real export and tallies the kinds |
 | `main.bend` | the driver and its three test environments |
 | `LAWS.bend` | the laws the kernel must obey |
 | `PROOF.bend` | their proofs |
@@ -107,11 +109,12 @@ nested inductives, recursor rules, iota reduction, large elimination, and K-like
 reduction. None of it is here. What is here is the dependently typed core that
 the rest is built on.
 
-**The parser.** Started, not finished. `Bytes.bend` and `scan.bend` are the
-groundwork, and the measurements below say the approach holds. What is missing
-is the reader proper: the node kinds of the export format, and building an
-environment from them. Until that exists the driver checks environments written
-in Bend, and this kernel scores nothing on the arena.
+**The parser.** Half done. The scanner and the line reader work on real
+exports, and `read.bend` classifies every line of the smallest arena test with
+nothing left over. What is missing is building the three tables, which needs
+`Array` rather than a list because a table is indexed, and then assembling
+declarations. Until that exists the driver checks environments written in Bend,
+and this kernel scores nothing on the arena.
 
 **Eta, proof irrelevance, and the imax case split.** Proof irrelevance is the
 interesting omission: it needs the type of a term, so adding it makes
@@ -145,6 +148,26 @@ says compile to loops. That works. `scan.bend` on the smallest arena test:
 file into 2106 declarations in 0.004 s, so this is roughly thirty times slower
 while doing far less. That is the right trade for this folder.
 
+`read.bend` then classifies every line of the same file. Each count matches
+`grep`, and the 54799 expression lines are the exact sum of the eight node
+keys `ie`, `app`, `bvar`, `const`, `lam`, `forallE`, `letE` and `proj`:
+
+| kind | Bend | grep |
+|---|---|---|
+| meta | 1 | 1 |
+| name | 7373 | 7373 |
+| level | 113 | 113 |
+| expr | 54799 | 54799 |
+| axiom | 3 | 3 |
+| def | 1527 | 1527 |
+| thm | 154 | 154 |
+| inductive | 126 | 126 |
+| quot | 4 | 4 |
+| opaque | 10 | 10 |
+| unclassified | 0 | — |
+
+The total is 64110, which is `wc -l`. It takes 0.51 s.
+
 The idiom that made it work, and that every function in `Bytes.bend` follows:
 
 1. peek at the head with a small non-recursive helper,
@@ -154,6 +177,18 @@ The idiom that made it work, and that every function in `Bytes.bend` follows:
 Bend will not let a `match` look at a computed value and will not let two defs
 call each other, so a conditional cannot sit between the recursion and the tail
 position. Carrying the decision forward in a parameter is the way around both.
+
+### The memory ceiling
+
+A byte list is expensive. Peak resident memory is 798 MB for the 3.7 MB file
+and 388 MB for a 1.2 MB one, so roughly 200 to 300 bytes of memory per byte of
+input. On a 96 GiB machine that caps the input at a few hundred megabytes, and
+mathlib at 6 GB would want more than a terabyte.
+
+So holding the whole file as a cons list is a dead end for the large corpora.
+The fix is to stop holding it: read in chunks with `File.read_at`, or keep the
+bytes in an `Array<U32>`, which is one owner and compact. That is the same
+change the index tables need, so it is one step rather than two.
 
 A bug worth recording: the first search skipped to the key's first byte and
 required the whole key there, with no retry. The first `"` in an export belongs
