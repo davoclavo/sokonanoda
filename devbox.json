@@ -10,7 +10,8 @@
     "uv@0.12.5",
     "curl@latest",
     "gnutar@latest",
-    "python@3.13"
+    "python@3.13",
+    "samply@0.13.1"
   ],
   "env": {
     "CARGO_HOME": "$PWD/.devbox/cargo",
