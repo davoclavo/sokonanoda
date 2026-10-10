@@ -81,6 +81,32 @@ def Term.subst_level_list(ls: List<&2, L.Level>, +vs: List<&2, L.Level>) -> List
     case Con{h, t}:
       Con{L.Level.subst(h, vs), Term.subst_level_list(t, vs)}
 
+# Renumber the level parameters in a list of levels.
+def Term.remap_level_list(ls: List<&2, L.Level>, +ps: List<&2, Nat>) -> List<&2, L.Level>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case Con{h, t}:
+      Con{L.Level.remap(h, ps), Term.remap_level_list(t, ps)}
+
+# Renumber every level parameter in a term from name index to position.
+def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
+  match t:
+    case TVar{i}:
+      TVar{i}
+    case TSort{l}:
+      TSort{L.Level.remap(l, ps)}
+    case TConst{n, ls}:
+      TConst{n, Term.remap_level_list(ls, ps)}
+    case TApp{f, a}:
+      TApp{Term.remap_levels(f, ps), Term.remap_levels(a, ps)}
+    case TLam{ty, bd}:
+      TLam{Term.remap_levels(ty, ps), Term.remap_levels(bd, ps)}
+    case TPi{ty, bd}:
+      TPi{Term.remap_levels(ty, ps), Term.remap_levels(bd, ps)}
+    case TLet{ty, v, bd}:
+      TLet{Term.remap_levels(ty, ps), Term.remap_levels(v, ps), Term.remap_levels(bd, ps)}
+
 # Substitute a declaration's level parameters throughout a term.
 def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
   match t:

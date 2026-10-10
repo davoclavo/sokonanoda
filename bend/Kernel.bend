@@ -72,6 +72,39 @@ def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -
           Kernel.check_decl(fuel, acc, h)),
         Kernel.check_all(t, fuel, Con{h, acc}))
 
+# The kind of a declaration, for the report.
+def Kernel.kind_name(d: E.Decl) -> String:
+  match d:
+    case E.DAxiom{id, nps, ty}:
+      "axiom"
+    case E.DDef{id, nps, ty, val}:
+      "def  "
+    case E.DThm{id, nps, ty, val}:
+      "thm  "
+
+# One line of the report.
+def Kernel.mark(ok: Bool, +id: Nat, +kind: String) -> String:
+  match ok:
+    case True{}:
+      "  ok     " ++ kind ++ " " ++ Nat.show(id) ++ "\n"
+    case False{}:
+      "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ "\n"
+
+# Which declaration failed? Reports one line per declaration, in order, so a
+# rejection can be traced to the declaration that caused it rather than
+# guessed at. The id is the export's own name index.
+def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> String:
+  match ds:
+    case Nil{}:
+      ""
+    case Con{+h, t}:
+      Kernel.mark(
+        Bool.and(
+          Kernel.is_fresh(acc, E.Decl.id(h)),
+          Kernel.check_decl(fuel, acc, h)),
+        E.Decl.id(h),
+        Kernel.kind_name(h)) ++ Kernel.report(t, fuel, Con{h, acc})
+
 # How many declarations are there?
 def Kernel.count(ds: List<&2, E.Decl>, +acc: Nat) -> Nat:
   match ds:

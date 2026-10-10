@@ -249,24 +249,36 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
           E.DAxiom{
             R.Reader.field("name", line),
             Parse.nat_len(R.Reader.num_list("levelParams", line)),
-            Parse.exp(ex, ne, R.Reader.field("type", line))}
+            T.Term.remap_levels(
+              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              R.Reader.num_list("levelParams", line))}
         case R.KDef{}:
           E.DDef{
             R.Reader.field("name", line),
             Parse.nat_len(R.Reader.num_list("levelParams", line)),
-            Parse.exp(ex, ne, R.Reader.field("type", line)),
-            Parse.exp(ex, ne, R.Reader.field("value", line))}
+            T.Term.remap_levels(
+              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              R.Reader.num_list("levelParams", line)),
+            T.Term.remap_levels(
+              Parse.exp(ex, ne, R.Reader.field("value", line)),
+              R.Reader.num_list("levelParams", line))}
         case R.KThm{}:
           E.DThm{
             R.Reader.field("name", line),
             Parse.nat_len(R.Reader.num_list("levelParams", line)),
-            Parse.exp(ex, ne, R.Reader.field("type", line)),
-            Parse.exp(ex, ne, R.Reader.field("value", line))}
+            T.Term.remap_levels(
+              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              R.Reader.num_list("levelParams", line)),
+            T.Term.remap_levels(
+              Parse.exp(ex, ne, R.Reader.field("value", line)),
+              R.Reader.num_list("levelParams", line))}
         case R.KOpaque{}:
           E.DAxiom{
             R.Reader.field("name", line),
             Parse.nat_len(R.Reader.num_list("levelParams", line)),
-            Parse.exp(ex, ne, R.Reader.field("type", line))}
+            T.Term.remap_levels(
+              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              R.Reader.num_list("levelParams", line))}
         case R.KMeta{}:
           E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
         case R.KName{}:

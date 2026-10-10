@@ -103,13 +103,23 @@ def Level.mk_max(+a: Level, +b: Level) -> Level:
       Level.pick(Level.same(a, b), a, LMax{a, b})))
 
 # The smart constructor for imax. It collapses to zero when the right side is
-# zero, to max when the right side is a successor, and otherwise stays an imax
+# zero, to max when the right side is a successor, and to the side itself when
+# both sides agree, since `imax u u` is zero when `u` is zero and `max u u` as
+# `u` otherwise, which is `u` either way. Only then does it stay an imax,
 # because the answer depends on an assignment this kernel does not have.
+#
+# The idempotent case is what types a Church numeral. `Pi (_: a), a` at
+# `a : Sort u` has type `Sort (imax u u)`, and without the collapse that never
+# matches the `Sort u` the export declares. The arena's `030_peano1` and its
+# two siblings are exactly that.
 def Level.mk_imax(+a: Level, +b: Level) -> Level:
   Level.pick(
     Level.is_zero(b),
     LZero{},
-    Level.pick(Level.is_succ(b), Level.mk_max(a, b), LIMax{a, b}))
+    Level.pick(
+      Level.is_succ(b),
+      Level.mk_max(a, b),
+      Level.pick(Level.same(a, b), a, LIMax{a, b})))
 
 # Normalize bottom up, with the smart constructors.
 def Level.norm(l: Level) -> Level:
@@ -161,6 +171,35 @@ def Level.nth(vs: List<&2, Level>, i: Nat) -> Level:
           h
         case 1n+p:
           Level.nth(t, p)
+
+# The position of name index `j` among `ps`, as a level, or `LPar{j}` when `j`
+# is not one of them. The search is over the declaration's level parameters,
+# which number a handful, so it needs no table and no fuel.
+def Level.param_pos(ps: List<&2, Nat>, +j: Nat, +k: Nat) -> Level:
+  match ps:
+    case Nil{}:
+      LPar{j}
+    case Con{+h, t}:
+      Level.pick(Nat.is_eq(h, j), LPar{k}, Level.param_pos(t, j, 1n+k))
+
+# Renumber a level's parameters from name index to position.
+#
+# A level line writes `LPar{j}` with `j` the export's name index, because that
+# is what the line carries. A stored declaration has to name its parameters by
+# position instead, since that is what a use site supplies. This is the
+# translation.
+def Level.remap(l: Level, +ps: List<&2, Nat>) -> Level:
+  match l:
+    case LZero{}:
+      LZero{}
+    case LSucc{x}:
+      LSucc{Level.remap(x, ps)}
+    case LMax{a, b}:
+      LMax{Level.remap(a, ps), Level.remap(b, ps)}
+    case LIMax{a, b}:
+      LIMax{Level.remap(a, ps), Level.remap(b, ps)}
+    case LPar{i}:
+      Level.param_pos(ps, i, 0n)
 
 # Substitute the parameters of a level. `LPar{i}` becomes the i-th entry of
 # `vs`, and an index past the end of `vs` stays as it was.

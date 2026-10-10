@@ -10,14 +10,16 @@ you read the code.
 ## Run it
 
 ```
-bend bend/main.bend     # check three environments and print the verdicts
-bend bend/PROOF.bend    # check the laws
+SOKO_EXPORT=<a .ndjson export> bend bend/check.bend   # check a real export
+bend bend/main.bend                                   # check three built-in environments
+bend bend/PROOF.bend                                  # check the laws
 ```
 
 From the repository root, with Bend on PATH:
 
 ```
-devbox run bend          # the driver
+devbox run bend-check    # a real export, named by SOKO_EXPORT
+devbox run bend          # the three built-in environments
 devbox run bend-proof    # the laws
 devbox run bend-verdict  # the laws again, through Bend's Lean-proven kernel
 ```
@@ -48,10 +50,13 @@ refuse.
 | `Eval.bend` | weak head normal form: beta, delta, zeta |
 | `Conv.bend` | definitional equality, as a worklist |
 | `Infer.bend` | type inference for the core |
-| `Bytes.bend` | a tail-recursive byte scanner, the base of a reader |
+| `Bytes.bend` | a tail-recursive byte scanner, the base of the reader |
 | `Reader.bend` | line splitting, line classification, field lookup by key |
 | `scan.bend` | reads a real export and reports what the scanner found |
+| `Parse.bend` | builds the level and expression tables and the declarations |
+| `Kernel.bend` | checks an environment, with a per-declaration report |
 | `read.bend` | classifies every line of a real export and tallies the kinds |
+| `check.bend` | reads a real export and gives a verdict |
 | `main.bend` | the driver and its three test environments |
 | `LAWS.bend` | the laws the kernel must obey |
 | `PROOF.bend` | their proofs |
@@ -109,12 +114,9 @@ nested inductives, recursor rules, iota reduction, large elimination, and K-like
 reduction. None of it is here. What is here is the dependently typed core that
 the rest is built on.
 
-**The parser.** Half done. The scanner and the line reader work on real
-exports, and `read.bend` classifies every line of the smallest arena test with
-nothing left over. What is missing is building the three tables, which needs
-`Array` rather than a list because a table is indexed, and then assembling
-declarations. Until that exists the driver checks environments written in Bend,
-and this kernel scores nothing on the arena.
+**Scale.** The reader works, but its tables are lists, so a lookup is linear
+and a file with fifty thousand expressions is far too slow. `Array` is the
+answer, and it is the same change the memory ceiling below needs.
 
 **Eta, proof irrelevance, and the imax case split.** Proof irrelevance is the
 interesting omission: it needs the type of a term, so adding it makes
@@ -125,6 +127,59 @@ cycle is the next real design problem here, not a matter of writing more code.
 hash-consed terms cannot be carried over, and the environment is a list
 searched linearly where the parent resolves a constant in one load. The point
 of this folder is the proofs, not the clock.
+
+## Checking a real export
+
+`check.bend` reads an export, builds its environment, and gives a verdict. It
+also prints one line per declaration, so a rejection names the declaration
+that caused it.
+
+```
+$ SOKO_EXPORT=.../tutorial/030_peano1.ndjson bend bend/check.bend
+declarations 7
+  ok     def   1
+  ok     def   9
+  ok     def   13
+  ok     def   14
+  ok     def   15
+  ok     def   16
+  ok     thm   17
+verdict accept
+```
+
+Against the arena's tutorial tests, taking only those inside this fragment,
+that is 37 tests and **29 correct**. The eight that are wrong fall into three
+groups.
+
+| Group | Tests | Why |
+|---|---|---|
+| the level order | 017, 023, 024, 025, 027 | `Level.eq` compares syntax after normalization, so it misses that max is commutative, associative and absorbing |
+| missing rejections | 009, 019 | under investigation |
+| proof irrelevance | 107 | needs a term's type during conversion |
+
+Three real bugs turned up while getting here, and all three were found by
+reading a failing declaration rather than by guessing.
+
+**`max l l` never collapsed.** The comment on `Level.mk_max` claimed it did and
+the code did not. So `Prop -> Prop` typed as `Sort (max 1 1)` where the export
+declares `Sort 1`, and a correct declaration was rejected.
+
+**`imax u u` never collapsed.** It is `u` either way, since it is zero when `u`
+is zero and `max u u` otherwise. Without it a Church numeral cannot be typed,
+which cost the three `peano` tests.
+
+**Level parameters were numbered by name, not by position.** A level line
+writes `LPar{j}` with `j` the export's name index, but a use site supplies
+levels by position. The simplest tests passed regardless, because the identity
+is correct when a declaration is used at its own parameter. `Term.remap_levels`
+is the translation.
+
+There is also a limit worth stating. The fuel cannot be large.
+`Conv.eq_all` works a queue and its recursive call sits in an argument rather
+than in tail position, because the verdict has to be read before the queue can
+be shortened. So its depth is bounded by the fuel, and Bend's host stack gives
+out near ten thousand frames. A fuel of 100000 overflows on a `let` that needs
+real conversion work.
 
 ## Reading an export
 
