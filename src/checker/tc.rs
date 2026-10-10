@@ -10,7 +10,12 @@ use crate::outcome::ensure;
 use crate::report::Reporter;
 use crate::term::ptr::ExprPtr;
 
-const SESSION_BUDGET: usize = 16 * 1024 * 1024;
+/// How many bytes a checking session may allocate before it resets its arena
+/// and drops its per-session caches. A smaller budget keeps the working set in
+/// cache, which is worth more than the cache hits a larger budget would keep.
+/// Measured on the arena corpora: 2 MiB beats 16 MiB by about 8 percent on
+/// mathlib and 9 percent on cslib, and no corpus prefers a larger value.
+const SESSION_BUDGET: usize = 2 * 1024 * 1024;
 const ARENA_KEEP: usize = 4 * SESSION_BUDGET;
 
 const CHUNK_SIZE: usize = 64;

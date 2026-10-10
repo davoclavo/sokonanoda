@@ -23,8 +23,6 @@ const EXIT_CODES: &str = "Exit status:
   2  declined: the export uses something this checker does not support
   3  internal error";
 
-const DEFAULT_THREADS: usize = 4;
-
 #[derive(Debug, Parser)]
 #[expect(clippy::struct_excessive_bools)]
 #[command(
@@ -73,7 +71,7 @@ struct Cli {
         long = "threads",
         value_name = "N",
         help_heading = "Checking",
-        help = "Number of checker threads [default: available cores, at most 4]"
+        help = "Number of checker threads [default: available cores]"
     )]
     num_threads: Option<NonZeroUsize>,
 
@@ -121,11 +119,7 @@ fn config(cli: Cli) -> (Config, bool) {
         color: stdout_tty && !no_color,
     };
     let num_threads = cli.num_threads.map_or_else(
-        || {
-            std::thread::available_parallelism()
-                .map_or(1, NonZeroUsize::get)
-                .min(DEFAULT_THREADS)
-        },
+        || std::thread::available_parallelism().map_or(1, NonZeroUsize::get),
         NonZeroUsize::get,
     );
     let cfg = Config {
