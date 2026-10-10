@@ -49,6 +49,7 @@ refuse.
 | `Env.bend` | declarations and the environment |
 | `Eval.bend` | weak head normal form: beta, delta, zeta |
 | `Shape.bend` | the type of a term, without checking it |
+| `ind.bend` | dumps an inductive block, to show the reader handles it |
 | `Conv.bend` | definitional equality, as a worklist |
 | `Infer.bend` | type inference for the core |
 | `Bytes.bend` | a tail-recursive byte scanner, the base of the reader |
@@ -109,11 +110,20 @@ be stated and then mechanically proven, in the same language as the code.
 
 Honestly and in order of size.
 
-**Inductive types, constructors, recursors, projections, and quotients.** This
-is most of the Lean kernel by volume, and all of its hard parts: positivity,
-nested inductives, recursor rules, iota reduction, large elimination, and K-like
-reduction. None of it is here. What is here is the dependently typed core that
-the rest is built on.
+**The checks on an inductive block.** The block is read, every type in it is
+checked, and iota reduction works, so a recursor applied to a constructor
+computes. What is not here is the part that makes a verdict trustworthy:
+nothing derives the recursor from the inductive specification and compares the
+two, and nothing checks positivity or the universe of a constructor's fields.
+So such a file answers `declined`, never `accept`. The arena's `BogusRecursor`,
+`indNeg` and `typeWithTooHighTypeField` are exactly the attacks that check
+would stop, and all three currently decline rather than reject.
+
+**Eta for structures, K-like reduction, and literals.** Function eta is here;
+eta for a structure is not, nor is the K-like reduction a singleton eliminator
+needs, nor the `Nat` and `String` literals the arena enables. Those are the
+nine tests this kernel still gets wrong, and every one of them is a wrong
+rejection rather than a wrong acceptance.
 
 **Scale.** The reader works, but its tables are lists, so a lookup is linear
 and a file with fifty thousand expressions is far too slow. `Array` is the
@@ -147,8 +157,22 @@ declarations 7
 verdict accept
 ```
 
-Against the arena's tutorial tests, taking only those inside this fragment,
-that is **37 tests and 37 correct**.
+Against the arena's tutorial tests, with quotients, projections and literals
+left out, that is 119 tests:
+
+| | count |
+|---|---|
+| correct accept | 29 |
+| correct reject | 25 |
+| honest decline, an inductive block was trusted | 56 |
+| wrongly rejected, a feature this kernel lacks | 9 |
+| **wrongly accepted** | **0** |
+
+A decline is the arena's exit code 2 and scores nothing, so 54 of 119 are
+verdicts and the rest is work still to do. The number that matters for a
+kernel is the last row: it never accepted a file it should have rejected.
+
+On the 37 tests that need no inductive block, it is 37 correct.
 
 Six real bugs turned up on the way, and every one was found by reading a
 failing declaration or the code, not by guessing.
