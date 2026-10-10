@@ -306,21 +306,33 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
 # a block may not name an expression written after it.
 
 # One computation rule.
-def Parse.rule_of(+o: List<&2, U32>, +st: PState) -> E.RecRule:
+#
+# The right-hand side is renumbered with the recursor's own level parameters,
+# exactly as the recursor's type is. Forgetting that is a silent error: the
+# stored side keeps naming its parameters by name index while
+# `Term.subst_levels` reads them as positions, so firing the rule produces a
+# term at the wrong universe and the conversion that follows fails for no
+# visible reason. Only a recursor with a level parameter is affected, which is
+# why a hand-written test over `Bool` does not catch it.
+def Parse.rule_of(+o: List<&2, U32>, +st: PState, +ps: List<&2, Nat>) -> E.RecRule:
   match st:
     case MkPS{nl, lv, ne, ex, ds}:
       E.MkRule{
         R.Reader.field("ctor", o),
         R.Reader.field("nfields", o),
-        Parse.exp(ex, ne, R.Reader.field("rhs", o))}
+        T.Term.remap_levels(
+          Parse.exp(ex, ne, R.Reader.field("rhs", o)),
+          ps)}
 
 # Every rule of one recursor.
-def Parse.rules_of(os: List<&2, List<&2, U32>>, +st: PState) -> List<&2, E.RecRule>:
+def Parse.rules_of(
+  os: List<&2, List<&2, U32>>, +st: PState, +ps: List<&2, Nat>
+) -> List<&2, E.RecRule>:
   match os:
     case Nil{}:
       Nil{}
     case Con{o, t}:
-      Con{Parse.rule_of(o, st), Parse.rules_of(t, st)}
+      Con{Parse.rule_of(o, st, ps), Parse.rules_of(t, st, ps)}
 
 # One inductive type.
 def Parse.ind_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
@@ -368,7 +380,8 @@ def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.is_true("k", o),
         Parse.rules_of(
           R.Reader.obj_list("rules", o),
-          MkPS{nl, lv, ne, ex, ds}),
+          MkPS{nl, lv, ne, ex, ds},
+          R.Reader.num_list("levelParams", o)),
         R.Reader.num_list("all", o)}
 
 # Add every object of an array, in order, to the declarations.

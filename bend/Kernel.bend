@@ -113,13 +113,40 @@ def Kernel.kind_name(d: E.Decl) -> String:
     case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       "rec  "
 
+# One check, named, with a tick or a cross.
+def Kernel.flag(+name: String, ok: Bool) -> String:
+  match ok:
+    case True{}:
+      " " ++ name ++ "=ok"
+    case False{}:
+      " " ++ name ++ "=BAD"
+
+# Which of the checks on a declaration passed? A rejection says little on its
+# own, and the three parts fail for very different reasons.
+def Kernel.why(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> String:
+  match d:
+    case E.DAxiom{id, ps, ty}:
+      Kernel.flag("params", E.Decl.no_dupes(ps)) ++
+      Kernel.flag("type", Kernel.is_type(fuel, env, ty))
+    case E.DDef{id, ps, +ty, val}:
+      Kernel.flag("params", E.Decl.no_dupes(ps)) ++
+      Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
+      Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
+    case E.DThm{id, ps, +ty, +val}:
+      Kernel.flag("params", E.Decl.no_dupes(ps)) ++
+      Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
+      Kernel.flag("prop", Kernel.is_prop(fuel, env, ty)) ++
+      Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
+    case o:
+      ""
+
 # One line of the report.
-def Kernel.mark(ok: Bool, +id: Nat, +kind: String) -> String:
+def Kernel.mark(ok: Bool, +id: Nat, +kind: String, +why: String) -> String:
   match ok:
     case True{}:
       "  ok     " ++ kind ++ " " ++ Nat.show(id) ++ "\n"
     case False{}:
-      "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ "\n"
+      "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ why ++ "\n"
 
 # Which declaration failed? Reports one line per declaration, in order, so a
 # rejection can be traced to the declaration that caused it rather than
@@ -134,7 +161,8 @@ def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> S
           Kernel.is_fresh(acc, E.Decl.id(h)),
           Kernel.check_decl(fuel, acc, h)),
         E.Decl.id(h),
-        Kernel.kind_name(h)) ++ Kernel.report(t, fuel, Con{h, acc})
+        Kernel.kind_name(h),
+        Kernel.why(fuel, acc, h)) ++ Kernel.report(t, fuel, Con{h, acc})
 
 # Is this declaration one whose contents are not checked?
 def Kernel.is_trusted(d: E.Decl) -> Bool:
