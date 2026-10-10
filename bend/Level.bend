@@ -316,6 +316,40 @@ def Level.atoms_eq(xs: List<&2, Atom>, ys: List<&2, Atom>) -> Bool:
     case x y:
       False{}
 
+# Is atom `a` no greater than atom `b` under every assignment?
+#
+# A zero atom is a literal, and every base is at least zero, so `(zero, j)` is
+# no greater than any atom whose count reaches `j`. Two atoms on one base
+# compare by their counts. Anything else is not decided here, and the answer
+# is no, which is sound and may be incomplete.
+def Level.atom_le(+a: Atom, +b: Atom) -> Bool:
+  Bool.and(
+    Bool.or(
+      Level.is_zero(Level.base(a)),
+      Level.same(Level.base(a), Level.base(b))),
+    Nat.is_le(Level.off(a), Level.off(b)))
+
+# Is some atom of `ys` at least as large as `a`?
+def Level.atom_le_any(ys: List<&2, Atom>, +a: Atom) -> Bool:
+  match ys:
+    case Nil{}:
+      False{}
+    case Con{h, t}:
+      Bool.or(Level.atom_le(a, h), Level.atom_le_any(t, a))
+
+# Is every atom of `xs` dominated by one of `ys`? A max is no greater than
+# another max exactly when each of its parts is.
+def Level.nf_le(xs: List<&2, Atom>, +ys: List<&2, Atom>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case Con{+h, t}:
+      Bool.and(Level.atom_le_any(ys, h), Level.nf_le(t, ys))
+
+# Is `a` no greater than `b` under every assignment of their parameters?
+def Level.leq(+fuel: Nat, a: Level, b: Level) -> Bool:
+  Level.nf_le(Level.nf(fuel, a), Level.nf(fuel, b))
+
 # Are these two levels equal under every assignment of their parameters?
 #
 # This decides the question for everything except an imax whose right side is
