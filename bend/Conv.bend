@@ -219,9 +219,17 @@ def Conv.pick_t(b: Bool, x: T.Term, y: T.Term) -> T.Term:
 # K-like reduction
 # ----------------
 #
-# A recursor marked `k` belongs to an inductive with one constructor that
-# takes no fields, so its major premise can only be that constructor and the
-# rule may fire even when the premise is not written as one.
+# A recursor whose inductive has one constructor that takes no fields may fire
+# even when the major premise is not written as that constructor, because that
+# is the only thing it could be. The Lean kernel reaches this two ways, as the
+# K rule for something like `Eq` and as eta for a structure for something like
+# a one-element type, and both land in the same place here.
+#
+# The flag the export carries is not the condition. The arena's
+# `075_typeSingletonRecReduction` has `k` unset and still reduces, because its
+# inductive is a structure; its `101_ruleKAcc` has one constructor that does
+# carry data, so it must not reduce. What decides it is the shape of the
+# constructor and the type check below.
 #
 # It may not fire unguarded. The Lean kernel infers the major premise's type
 # first and requires it to be an application of the recursor's own inductive;
@@ -287,6 +295,28 @@ def Conv.k_fits(
       Nil{}),
     ty)
 
+# Does this recursor's inductive have exactly one constructor, and does that
+# constructor take no fields?
+#
+# No fields is what lets the constructor be written without projections. A
+# constructor that carries data needs them, so `Acc`, whose one constructor
+# does carry data, is left alone. That is the arena's `101_ruleKAcc`.
+def Conv.k_single(+env: List<&2, E.Decl>, +d: E.Decl) -> Bool:
+  Bool.and(
+    E.Decl.is_one(
+      E.Decl.ind_ctors(
+        E.Lookup.get(E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))),
+    Nat.is_eq(
+      E.Decl.ctor_nf(
+        E.Lookup.get(
+          E.Env.find(
+            env,
+            E.Decl.only(
+              E.Decl.ind_ctors(
+                E.Lookup.get(
+                  E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d))))))))),
+      0n))
+
 # Is the K rule allowed on this application? The declaration must be a
 # recursor with the flag set and enough arguments, its inductive must have one
 # constructor, and the major premise's type must head that inductive.
@@ -296,14 +326,10 @@ def Conv.k_ok(
 ) -> Bool:
   Bool.and(
     Bool.and(
-      Bool.and(E.Decl.is_rec(d), E.Decl.rec_k(d)),
+      E.Decl.is_rec(d),
       Nat.is_lt(V.Eval.major_idx(d), V.Eval.len(args, 0n))),
     Bool.and(
-      Bool.and(
-        E.Decl.is_one(
-          E.Decl.ind_ctors(
-            E.Lookup.get(E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))),
-        Conv.k_type_ok(d, ty)),
+      Bool.and(Conv.k_single(env, d), Conv.k_type_ok(d, ty)),
       Conv.k_fits(fuel, env, ctx, d, ty)))
 
 # The application with its major premise replaced by the constructor.
