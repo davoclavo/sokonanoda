@@ -125,7 +125,20 @@ written as that constructor, which covers both the K rule and eta for a
 one-element structure. A constructor that does carry data needs projections to
 write, and those are not here.
 
-**Projections and quotients.** Not read at all.
+**Projections.** Written and working, but not yet on the arena's cases. The
+term, its reduction and its type are all in, and four regression tests in
+`main.bend` cover a structure with and without parameters, in both directions.
+Every arena projection test still rejects, and the cause is narrowed to
+conversion on a projection that is stuck because its structure is not a
+constructor application.
+
+Writing those tests caught a real bug in the typing: `proj_base` applied the
+constructor's type to the structure's parameters, where it had to instantiate
+them. A pi applied to an argument is not a beta-redex, so reduction left it
+untouched and the next step looked for a binder and found an application. The
+first hand-written test had no parameters, so it could not see the mistake.
+
+**Quotients.** Not read at all.
 
 **A native `Nat`.** A literal is read, by desugaring it into that many
 successors of zero, which needs the ids of `Nat`, `Nat.zero` and `Nat.succ` and
@@ -240,6 +253,40 @@ than in tail position, because the verdict has to be read before the queue can
 be shortened. So its depth is bounded by the fuel, and Bend's host stack gives
 out near ten thousand frames. A fuel of 100000 overflows on a `let` that needs
 real conversion work.
+
+## On the whole small arena set
+
+The tutorial subset is flattering. Across all 196 tests the arena ships in its
+tarball, 195 attempted and one too large to read:
+
+| | count |
+|---|---|
+| correct | 80 |
+| declined | 79 |
+| wrong | 24 |
+| error or timeout | 12 |
+
+Every one of the 24 is a wrong rejection, never a wrong acceptance. They are
+eleven projection tests, six quotient tests, three that need arithmetic on a
+native `Nat`, and four deep `perf` tests.
+
+The seven real-world corpora are not in that tarball and cannot be read at
+all, for the memory reason below. So this kernel is not ready to enter the
+arena, and the gap is not a matter of a few more tests.
+
+## Running out of budget
+
+A kernel has three honest replies, not two: yes, no, and "I ran out of the
+budget I was given". Reporting the third as a rejection is reporting falsely.
+This kernel used to do that. Reduction handed back the term unreduced,
+conversion compared it with something, found a difference, and the declaration
+was rejected for want of budget.
+
+Now reduction hands back `TUnk`, every function that meets it answers that it
+does not know, and `Ans` carries that third value through conversion,
+inference and the kernel. A definite no still wins over not knowing, because a
+declaration that fails one check is wrong whatever the others would have said.
+That turned five wrong answers into honest declines.
 
 ## Reading an export
 
