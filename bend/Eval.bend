@@ -170,14 +170,47 @@ def Eval.rule_get(m: Maybe<&2, E.RecRule>) -> E.RecRule:
     case None{}:
       E.MkRule{0n, 0n, T.TSort{L.LZero{}}}
 
+# A branch of `Eval.pick_t` is evaluated whether or not it is chosen, so a
+# branch that is about to be thrown away must still be cheap. These two
+# functions make that so: each hands back a term that reduces at once unless
+# the branch is the one that matters.
+#
+# This is not a detail. Without it, the branch that unfolds a definition runs
+# on a constant that has no value, where it rebuilds the same constant and
+# calls itself again, and every such constant costs the whole remaining fuel.
+# That alone was enough to stop the recursion-heavy tests from finishing.
+
+# Is this a recursor with enough arguments to reach its major premise? This is
+# the cheap test, and it guards the expensive one. Reducing the major premise
+# for every constant, rather than only for a recursor, is what made the
+# recursion-heavy tests fail to finish.
+def Eval.rec_ready(+d: E.Decl, +sp: List<&2, T.Term>) -> Bool:
+  Bool.and(
+    E.Decl.is_rec(d),
+    Nat.is_lt(Eval.major_idx(d), Eval.len(sp, 0n)))
+
+# The value a declaration unfolds to, or a sort when it has none. The sort is
+# never used: the branch that reads it is only chosen for a definition.
+def Eval.unfold_decl(+d: E.Decl, +ls: List<&2, L.Level>) -> T.Term:
+  Eval.pick_t(
+    E.Decl.is_def(d),
+    Eval.val_or(E.Decl.value_at(d, ls), T.TSort{L.LZero{}}),
+    T.TSort{L.LZero{}})
+
+# The major premise of a recursor, or a sort when this is not a recursor with
+# enough arguments. The sort is never used, for the same reason.
+def Eval.major_or_sort(+d: E.Decl, +sp: List<&2, T.Term>) -> T.Term:
+  Eval.pick_t(
+    Eval.rec_ready(d, sp),
+    Eval.nth(sp, Eval.major_idx(d)),
+    T.TSort{L.LZero{}})
+
 # Can iota fire here? The declaration must be a recursor, the spine must reach
 # the major premise, and the reduced major premise must be a constructor this
 # recursor has a rule for.
 def Eval.can_iota(+d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term) -> Bool:
   Bool.and(
-    Bool.and(
-      E.Decl.is_rec(d),
-      Nat.is_lt(Eval.major_idx(d), Eval.len(sp, 0n))),
+    Eval.rec_ready(d, sp),
     Bool.and(
       Eval.head_is_const(Eval.head(mw)),
       Eval.rule_ok(
@@ -216,10 +249,10 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
           Eval.rebuild(sp, T.TSort{l})
         case T.TConst{+n, +ls}:
           +d = E.Lookup.get(E.Env.find(env, n))
-          +mw = Eval.whnf(f, env, Eval.nth(sp, Eval.major_idx(d)), Nil{})
+          +mw = Eval.whnf(f, env, Eval.major_or_sort(d, sp), Nil{})
           Eval.pick_t(
             E.Decl.is_def(d),
-            Eval.whnf(f, env, Eval.unfold_of(E.Env.find(env, n), ls, T.TConst{n, ls}), sp),
+            Eval.whnf(f, env, Eval.unfold_decl(d, ls), sp),
             Eval.pick_t(
               Eval.can_iota(d, sp, mw),
               Eval.whnf(f, env, Eval.iota_term(d, ls, sp, mw), Nil{}),

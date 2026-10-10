@@ -98,6 +98,11 @@ def Conv.levels_eq(+fuel: Nat, xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> 
 
 # Take the two sides apart. Both are already in weak head normal form. A pair
 # pushed from under a binder carries the extended context.
+#
+# The two mixed lambda cases are eta for functions: `f` and `fun x => f x` are
+# the same function, so a lambda against anything else goes under the binder
+# and compares the body with the other side applied to the new variable. The
+# other side is lifted, because it was written one scope out.
 def Conv.structural(
   +fuel: Nat, +ctx: List<&2, T.Term>, a: T.Term, b: T.Term
 ) -> Step:
@@ -114,22 +119,49 @@ def Conv.structural(
       SMore{[MkPair{ctx, t1, t2}, MkPair{Con{t1, ctx}, b1, b2}]}
     case T.TPi{+t1, b1} T.TPi{t2, b2}:
       SMore{[MkPair{ctx, t1, t2}, MkPair{Con{t1, ctx}, b1, b2}]}
+    case T.TLam{+t1, b1} y:
+      SMore{[MkPair{Con{t1, ctx}, b1, T.TApp{T.Term.lift(y, 1n, 0n), T.TVar{0n}}}]}
+    case x T.TLam{+t2, b2}:
+      SMore{[MkPair{Con{t2, ctx}, T.TApp{T.Term.lift(x, 1n, 0n), T.TVar{0n}}, b2}]}
     case x y:
       SNo{}
 
+# Could this term be a proof? A sort and a pi are types, and the type of a
+# type is never `Prop`, so neither can ever be a proof. The test is syntactic
+# and costs nothing, which matters: without it every pair on the queue pays
+# for an inference pass, and the recursion-heavy tests do not finish.
+def Conv.maybe_proof(t: T.Term) -> Bool:
+  match t:
+    case T.TSort{l}:
+      False{}
+    case T.TPi{ty, bd}:
+      False{}
+    case x:
+      True{}
+
+# Try proof irrelevance in earnest, now that it is worth the inference.
+def Conv.irrel_go(
+  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+) -> Step:
+  +ra = S.Shape.infer(fuel, env, ctx, a)
+  +rb = S.Shape.infer(fuel, env, ctx, b)
+  Conv.pick_step(
+    Bool.and(
+      Bool.and(S.Shape.ok(ra), S.Shape.ok(rb)),
+      S.Shape.prop_sort(fuel, env, ctx, S.Shape.ty(ra))),
+    SMore{[MkPair{ctx, S.Shape.ty(ra), S.Shape.ty(rb)}]},
+    Conv.structural(fuel, ctx, a, b))
+
 # Proof irrelevance: if the left side is a proof, the two sides are equal
 # exactly when their types are, so the types go on the queue instead.
+#
+# The two types are inferred once and bound, not inferred again for each use.
 def Conv.irrel(
   +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> Step:
   Conv.pick_step(
-    Bool.and(
-      S.Shape.is_proof(fuel, env, ctx, a),
-      S.Shape.ok(S.Shape.infer(fuel, env, ctx, b))),
-    SMore{[MkPair{
-      ctx,
-      S.Shape.ty(S.Shape.infer(fuel, env, ctx, a)),
-      S.Shape.ty(S.Shape.infer(fuel, env, ctx, b))}]},
+    Bool.and(Conv.maybe_proof(a), Conv.maybe_proof(b)),
+    Conv.irrel_go(fuel, env, ctx, a, b),
     Conv.structural(fuel, ctx, a, b))
 
 # Reduce the two sides of a pair, then try proof irrelevance before taking
