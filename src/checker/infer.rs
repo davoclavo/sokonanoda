@@ -134,6 +134,11 @@ impl<'t> TypeChecker<'_, 't, '_> {
                     for l in levels.as_ref().iter().copied() {
                         ensure!(l.all_uparams_defined(info.uparams));
                     }
+                    // `leaf_checked` is stamped per declaration, so this check runs once
+                    // for each constant that a declaration names.
+                    if self.ctx.export_file.has_unsafe_declars && !self.allow_unsafe {
+                        self.reject_if_unsafe(name);
+                    }
                     self.ctx.mark_leaf_checked(e);
                 }
                 return self.const_head_type(name, levels);
@@ -461,6 +466,28 @@ impl<'t> TypeChecker<'_, 't, '_> {
                 domain
             }
             _ => reject!("ran out of constructor telescope getting projection field"),
+        }
+    }
+
+    /// A safe declaration must not refer to an `unsafe` or a `partial` declaration.
+    /// The Lean kernel makes this check in `type_checker::infer_constant`.
+    #[cold]
+    #[inline(never)]
+    fn reject_if_unsafe(&mut self, name: NamePtr<'t>) {
+        match self.env.get_declar(name) {
+            Some(Declar::Unsafe {
+                is_partial: false, ..
+            }) => {
+                reject!("invalid declaration, it uses unsafe declaration '{name}'")
+            }
+            Some(Declar::Unsafe {
+                is_partial: true, ..
+            }) => {
+                reject!(
+                    "invalid declaration, safe declaration must not contain partial declaration '{name}'"
+                )
+            }
+            _ => {}
         }
     }
 

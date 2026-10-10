@@ -69,6 +69,10 @@ pub struct TypeChecker<'x, 't, 'p> {
     pub(crate) declar_info: Option<DeclarInfo<'t>>,
     pub(crate) nat_extension: bool,
     pub(crate) ordered_declaration: bool,
+    /// `true` while this type checker checks an `unsafe` or a `partial` declaration.
+    /// Such a declaration can refer to another `unsafe` or `partial` declaration.
+    /// A safe declaration cannot. This mirrors `definition_safety` in the Lean kernel.
+    pub(crate) allow_unsafe: bool,
 }
 
 impl<'p> ExportFile<'p> {
@@ -94,15 +98,20 @@ impl<'p> ExportFile<'p> {
         bump: &'t bumpalo::Bump,
         d: &Declar<'t>,
     ) {
-        use Declar::{Axiom, Constructor, Definition, Inductive, Opaque, Quot, Recursor, Theorem};
+        use Declar::{
+            Axiom, Constructor, Definition, Inductive, Opaque, Quot, Recursor, Theorem, Unsafe,
+        };
         let env = self.new_env(EnvLimit::ByName(d.info().name));
         let mut tc = TypeChecker::new(ctx, &env, bump, Some(*d.info()), cache);
         tc.ordered_declaration = true;
+        tc.allow_unsafe = matches!(d, Unsafe { .. });
         match d {
             Definition { val, .. } | Theorem { val, .. } | Opaque { val, .. } => {
                 tc.check_def_like_v(d, *val);
             }
-            Axiom { .. } | Constructor(..) | Recursor(..) => tc.check_declar_info_v(d),
+            Axiom { .. } | Constructor(..) | Recursor(..) | Unsafe { .. } => {
+                tc.check_declar_info_v(d);
+            }
             Inductive(..) | Quot { .. } => unreachable!(),
         }
         match d {
@@ -290,6 +299,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
             declar_info,
             nat_extension,
             ordered_declaration: false,
+            allow_unsafe: false,
         }
     }
 
@@ -310,5 +320,96 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
 
     pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>) {
         ensure!(self.def_eq_core(u, v), "def_eq failed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+    use crate::frontend::parser::parse_export_file;
+    use crate::outcome::CheckError;
+    use bumpalo::Bump;
+    use std::error::Error;
+
+    /// `False : Prop` with its recursor, followed by a definition of the given
+    /// safety whose value is itself, and a theorem `bad : False` whose value is
+    /// that definition.
+    fn export_with(safety: &str, name: &str) -> String {
+        format!(
+            r#"{{"in":1,"str":{{"pre":0,"str":"False"}}}}
+{{"ie":0,"sort":0}}
+{{"in":2,"str":{{"pre":1,"str":"rec"}}}}
+{{"in":3,"str":{{"pre":0,"str":"u"}}}}
+{{"il":1,"param":3}}
+{{"in":4,"str":{{"pre":0,"str":"motive"}}}}
+{{"in":5,"str":{{"pre":0,"str":"t"}}}}
+{{"const":{{"name":1,"us":[]}},"ie":1}}
+{{"ie":2,"sort":1}}
+{{"forallE":{{"binderInfo":"default","body":2,"name":5,"type":1}},"ie":3}}
+{{"bvar":1,"ie":4}}
+{{"bvar":0,"ie":5}}
+{{"app":{{"arg":5,"fn":4}},"ie":6}}
+{{"forallE":{{"binderInfo":"default","body":6,"name":5,"type":1}},"ie":7}}
+{{"forallE":{{"binderInfo":"default","body":7,"name":4,"type":3}},"ie":8}}
+{{"inductive":{{"ctors":[],"recs":[{{"all":[1],"isUnsafe":false,"k":false,"levelParams":[3],"name":2,"numIndices":0,"numMinors":0,"numMotives":1,"numParams":0,"rules":[],"type":8}}],"types":[{{"all":[1],"ctors":[],"isRec":false,"isReflexive":false,"isUnsafe":false,"levelParams":[],"name":1,"numIndices":0,"numNested":0,"numParams":0,"type":0}}]}}}}
+{{"in":6,"str":{{"pre":0,"str":"{name}"}}}}
+{{"const":{{"name":6,"us":[]}},"ie":9}}
+{{"def":{{"all":[6],"hints":"opaque","levelParams":[],"name":6,"safety":"{safety}","type":1,"value":9}}}}
+{{"in":7,"str":{{"pre":0,"str":"bad"}}}}
+{{"thm":{{"all":[7],"levelParams":[],"name":7,"type":1,"value":9}}}}
+"#
+        )
+    }
+
+    fn check(export: &str) -> Result<Result<(), CheckError>, Box<dyn Error>> {
+        let arena = Bump::new();
+        let input = std::io::Cursor::new(export.as_bytes().to_vec());
+        let export_file = parse_export_file(&arena, input, Config::default())?;
+        Ok(export_file.check_all_declars())
+    }
+
+    fn rejection(export: &str) -> String {
+        match check(export).expect("the export must parse") {
+            Err(CheckError::Rejected(r)) => r.to_string(),
+            other => panic!("expected a rejection, got {other:?}"),
+        }
+    }
+
+    /// A safe declaration must not refer to an `unsafe` declaration. Declining the
+    /// export instead would let a proof of `False` pass unexamined.
+    #[test]
+    fn reject_safe_declar_that_uses_unsafe() {
+        let message = rejection(&export_with("unsafe", "unsafeLoop"));
+        assert!(
+            message.contains("it uses unsafe declaration 'unsafeLoop'"),
+            "unexpected message: {message}"
+        );
+    }
+
+    /// A safe declaration must not refer to a `partial` declaration.
+    #[test]
+    fn reject_safe_declar_that_uses_partial() {
+        let message = rejection(&export_with("partial", "partialLoop"));
+        assert!(
+            message.contains("must not contain partial declaration 'partialLoop'"),
+            "unexpected message: {message}"
+        );
+    }
+
+    /// An `unsafe` declaration on its own is accepted. Its value is never checked,
+    /// so a value that refers to itself does not loop.
+    #[test]
+    fn accept_unsafe_declar_that_nothing_safe_uses() {
+        let export = export_with("unsafe", "unsafeLoop");
+        let without_theorem = export
+            .lines()
+            .filter(|line| !line.contains("\"thm\""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            check(&without_theorem)
+                .expect("the export must parse")
+                .is_ok()
+        );
     }
 }

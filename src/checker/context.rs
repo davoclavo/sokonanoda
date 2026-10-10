@@ -37,6 +37,9 @@ pub struct ExportFile<'p> {
     pub(crate) name_cache: NameCache<'p>,
     pub(crate) config: Config,
     pub(crate) mutual_block_sizes: FxHashMap<NamePtr<'p>, (usize, usize)>,
+    /// `true` once the export file declares an `unsafe` or a `partial` declaration.
+    /// The type checker reads this flag to skip a lookup in the common case.
+    pub(crate) has_unsafe_declars: bool,
 }
 
 impl<'p> ExportFile<'p> {

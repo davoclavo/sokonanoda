@@ -74,6 +74,14 @@ pub enum Declar<'a> {
         info: DeclarInfo<'a>,
         val: ExprPtr<'a>,
     },
+    /// An `unsafe` or `partial` declaration. The kernel checks the type of such a
+    /// declaration, but it never checks the value, and it never unfolds the declaration.
+    /// A safe declaration must not refer to one of these; see `Declar::is_unsafe`.
+    Unsafe {
+        info: DeclarInfo<'a>,
+        /// `true` for `partial`, `false` for `unsafe`. This only selects the message.
+        is_partial: bool,
+    },
     Inductive(InductiveData<'a>),
     Constructor(ConstructorData<'a>),
     Recursor(RecursorData<'a>),
@@ -195,6 +203,12 @@ impl<'a> Declar<'a> {
             Declar::Theorem { .. } => "theorem",
             Declar::Definition { .. } => "def",
             Declar::Opaque { .. } => "opaque",
+            Declar::Unsafe {
+                is_partial: false, ..
+            } => "unsafe",
+            Declar::Unsafe {
+                is_partial: true, ..
+            } => "partial",
             Declar::Inductive(..) => "inductive",
             Declar::Constructor(..) => "ctor",
             Declar::Recursor(..) => "recr",
@@ -202,7 +216,9 @@ impl<'a> Declar<'a> {
     }
 
     pub fn info(&self) -> &DeclarInfo<'a> {
-        use Declar::{Axiom, Constructor, Definition, Inductive, Opaque, Quot, Recursor, Theorem};
+        use Declar::{
+            Axiom, Constructor, Definition, Inductive, Opaque, Quot, Recursor, Theorem, Unsafe,
+        };
         match self {
             Axiom { info, .. }
             | Quot { info, .. }
@@ -211,6 +227,7 @@ impl<'a> Declar<'a> {
             | Inductive(InductiveData { info, .. })
             | Constructor(ConstructorData { info, .. })
             | Recursor(RecursorData { info, .. })
+            | Unsafe { info, .. }
             | Opaque { info, .. } => info,
         }
     }

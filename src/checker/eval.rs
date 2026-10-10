@@ -363,7 +363,9 @@ impl<'t> TypeChecker<'_, 't, '_> {
             Some(Declar::Recursor(_)) => ConstKind::Recursor,
             Some(Declar::Quot { .. }) => ConstKind::Quot,
             Some(Declar::Inductive(_)) => ConstKind::Inductive,
-            Some(Declar::Axiom { .. } | Declar::Opaque { .. }) | None => ConstKind::Axiom,
+            Some(Declar::Axiom { .. } | Declar::Opaque { .. } | Declar::Unsafe { .. }) | None => {
+                ConstKind::Axiom
+            }
         }
     }
 

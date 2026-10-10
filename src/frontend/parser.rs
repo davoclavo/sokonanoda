@@ -53,6 +53,9 @@ pub struct Parser<'a> {
     config: Config,
     mutual_block_sizes: FxHashMap<NamePtr<'a>, (usize, usize)>,
     scratch_idxs: Vec<u32>,
+    /// `true` once the export file declares an `unsafe` or a `partial` declaration.
+    /// The type checker reads this flag to skip a lookup in the common case.
+    has_unsafe_declars: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
@@ -751,6 +754,7 @@ impl<'a> Parser<'a> {
             config,
             mutual_block_sizes: new_fx_hash_map(),
             scratch_idxs: Vec::new(),
+            has_unsafe_declars: false,
         }
     }
 
@@ -894,6 +898,7 @@ impl<'a> Parser<'a> {
             name_cache,
             config: self.config,
             mutual_block_sizes: self.mutual_block_sizes,
+            has_unsafe_declars: self.has_unsafe_declars,
         }
     }
 
@@ -1403,6 +1408,15 @@ impl<'a> Parser<'a> {
         name.as_ref().set_decl_idx(idx);
     }
 
+    /// Register an `unsafe` or a `partial` declaration. The checker checks the type of
+    /// this declaration, but it never checks the value, and it never unfolds the
+    /// declaration. A safe declaration that refers to this name is rejected.
+    fn add_unsafe_declar(&mut self, info: DeclarInfo<'a>, is_partial: bool) {
+        self.has_unsafe_declars = true;
+        let name = info.name;
+        self.add_declar(name, Declar::Unsafe { info, is_partial });
+    }
+
     #[inline]
     fn do_def(&mut self, name: u32, ty: u32, value: u32, uparams: &[u32], hint: ReducibilityHint) {
         let name = self.get_name_ptr(name);
@@ -1473,13 +1487,14 @@ impl<'a> Parser<'a> {
                 uparams,
                 is_unsafe,
             } => {
-                if is_unsafe {
-                    return decline("unsafe declarations are not supported");
-                }
                 let name = self.get_name_ptr(name);
                 let uparams = self.get_uparams_ptr(&uparams);
                 let ty = self.get_expr_ptr(ty);
                 let info = DeclarInfo { name, uparams, ty };
+                if is_unsafe {
+                    self.add_unsafe_declar(info, false);
+                    return Ok(());
+                }
                 let axiom = Declar::Axiom { info };
                 let name_string = name.to_string();
                 match self.config.axiom_policy.decision(&name_string) {
@@ -1499,12 +1514,17 @@ impl<'a> Parser<'a> {
                 value,
                 hint,
                 safety,
-            } => {
-                if matches!(safety, DefinitionSafety::Unsafe | DefinitionSafety::Partial) {
-                    return decline("unsafe and partial definitions are not supported");
+            } => match safety {
+                DefinitionSafety::Safe => self.do_def(name, ty, value, &uparams, hint),
+                DefinitionSafety::Unsafe | DefinitionSafety::Partial => {
+                    let name = self.get_name_ptr(name);
+                    let uparams = self.get_uparams_ptr(&uparams);
+                    let ty = self.get_expr_ptr(ty);
+                    let info = DeclarInfo { name, uparams, ty };
+                    let is_partial = safety == DefinitionSafety::Partial;
+                    self.add_unsafe_declar(info, is_partial);
                 }
-                self.do_def(name, ty, value, &uparams, hint);
-            }
+            },
             Thm {
                 name,
                 ty,
@@ -1518,14 +1538,15 @@ impl<'a> Parser<'a> {
                 value,
                 is_unsafe,
             } => {
-                if is_unsafe {
-                    return decline("unsafe declarations are not supported");
-                }
                 let name = self.get_name_ptr(name);
                 let ty = self.get_expr_ptr(ty);
                 let val = self.get_expr_ptr(value);
                 let uparams = self.get_uparams_ptr(&uparams);
                 let info = DeclarInfo { name, uparams, ty };
+                if is_unsafe {
+                    self.add_unsafe_declar(info, false);
+                    return Ok(());
+                }
                 let definition = Declar::Opaque { info, val };
                 self.add_declar(name, definition);
             }
