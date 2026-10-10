@@ -9,16 +9,17 @@
 #
 # `rev` must be repinned on each release.
 description: |
-  **sokonanodazo** is based on Jeremy Chen's
-  [sokonanoda](https://github.com/intgrah/sokonanoda), itself part of the
-  nanoda-family lineage. Nearly all of the engineering belongs to the parent:
-  the closure-based conversion algorithm, the packed term representation, the
-  session caches, and the parallel driver are all sokonanoda's work.
+  **sokonanodazo** is a fork of
+  [sokonanoda](https://github.com/intgrah/sokonanoda) by Jeremy Chen, which
+  descends in turn from [nanoda](https://github.com/ammkrn/nanoda_lib) by
+  ammkrn.
 
-  This fork stays close to the parent. It is not an independent rewrite, and no
-  such claim is intended. The diff is about 200 lines of checker code.
+  The checker is sokonanoda's. The closure-based conversion algorithm, the
+  packed term representation, the session caches, and the parallel driver are
+  all its work, and so are the cache sizes this fork leaves alone.
 
-  It adds one correctness change and two performance changes.
+  Three changes sit on top, coming to roughly 200 lines: one for correctness
+  and two for speed.
 
   It judges `unsafe` and `partial` declarations rather than declining the
   export. Such a declaration is registered, its type is checked, its value is
@@ -31,9 +32,6 @@ description: |
   percent on the large corpora, and no corpus prefers the larger value. The
   thread count also no longer caps itself at four, so the default uses every
   core.
-
-  A larger architectural change is future work rather than something this
-  submission claims.
 version: "0.5.0"
 url: https://github.com/davoclavo/sokonanodazo
 ref: main

@@ -1,21 +1,17 @@
 # sokonanodazo
 
-`sokonanodazo` is a Lean 4 kernel checker. It is based on Jeremy Chen's
-[sokonanoda](https://github.com/intgrah/sokonanoda), which is itself part of the
-nanoda-family lineage that starts with ammkrn's
-[nanoda](https://github.com/ammkrn/nanoda_lib).
+`sokonanodazo` is a Lean 4 kernel checker. It is a fork of
+[sokonanoda](https://github.com/intgrah/sokonanoda) by Jeremy Chen, which
+descends in turn from [nanoda](https://github.com/ammkrn/nanoda_lib) by ammkrn.
 
-Nearly all of the engineering here belongs to the parent. The closure-based
-conversion algorithm, the packed term representation, the interner, the session
-caches, the parallel driver, and the NDJSON parser are all sokonanoda's work.
-The parent also chose the cache shapes and sizes that this fork leaves alone,
-and several of those choices proved better than the alternatives this fork
-measured.
+The checker is sokonanoda's. Read the parent's source and you have read almost
+all of this one: the closure-based conversion algorithm, the packed term
+representation, the interner, the session caches, the parallel driver, and the
+NDJSON parser are all its work. So are the cache shapes and sizes, which this
+fork leaves alone because measuring the alternatives showed the parent had
+already picked well.
 
-This fork stays close to the parent. It is not an independent rewrite, and no
-such claim is intended. A larger architectural change is future work rather
-than something this revision contains. The diff against the parent is about 200
-lines of checker code.
+Three changes sit on top, and they come to roughly 200 lines.
 
 ## What this fork changes
 
