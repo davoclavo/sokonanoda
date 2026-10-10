@@ -365,7 +365,7 @@ def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.field("numIndices", o),
         R.Reader.field("numMotives", o),
         R.Reader.field("numMinors", o),
-        False{},
+        R.Reader.is_true("k", o),
         Parse.rules_of(
           R.Reader.obj_list("rules", o),
           MkPS{nl, lv, ne, ex, ds}),

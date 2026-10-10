@@ -224,6 +224,32 @@ def Decl.rec_nmin(d: Decl) -> Nat:
     case o:
       0n
 
+# Does this recursor reduce by the K rule? That is set for an inductive with
+# one constructor that takes no fields, where the major premise need not be a
+# literal constructor for the rule to fire.
+#
+# The flag is read from the export and kept, but nothing fires on it yet. An
+# unguarded K rule is unsound: the Lean kernel infers the major premise's type
+# before it fires, and without that check the rule fires on a major premise of
+# the wrong type. Measured here, firing it unguarded turned the arena's
+# `100_ruleKbad`, which is the attack on exactly that, from a correct
+# rejection into a pass. Inferring a type inside reduction would make
+# reduction and inference call each other, which Bend forbids, so this waits
+# for those two to be fused into one def.
+def Decl.rec_k(d: Decl) -> Bool:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      k
+    case o:
+      False{}
+
+def Decl.rec_inds(d: Decl) -> List<&2, Nat>:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      inds
+    case o:
+      Nil{}
+
 def Decl.rec_rules(d: Decl) -> List<&2, RecRule>:
   match d:
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:

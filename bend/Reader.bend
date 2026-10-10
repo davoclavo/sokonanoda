@@ -461,6 +461,10 @@ def Reader.obj_list(+key: String, +line: List<&2, U32>) -> List<&2, List<&2, U32
   +inner = Reader.inside(key, line)
   Reader.objects(Reader.line_fuel(), Reader.more_objs(inner), Nil{}, inner)
 
+# Is the value of `key` the word `true`? The export writes a flag that way.
+def Reader.is_true(+key: String, +line: List<&2, U32>) -> Bool:
+  B.Bytes.is_hit(B.Bytes.of_string("true"), Reader.after(key, line))
+
 # The number that follows `key` in this line, or zero.
 def Reader.field(+key: String, +line: List<&2, U32>) -> Nat:
   Reader.num_of(

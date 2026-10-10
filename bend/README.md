@@ -119,11 +119,24 @@ So such a file answers `declined`, never `accept`. The arena's `BogusRecursor`,
 `indNeg` and `typeWithTooHighTypeField` are exactly the attacks that check
 would stop, and all three currently decline rather than reject.
 
-**Eta for structures, K-like reduction, and literals.** Function eta is here;
-eta for a structure is not, nor is the K-like reduction a singleton eliminator
-needs, nor the `Nat` and `String` literals the arena enables. Those are the
-nine tests this kernel still gets wrong, and every one of them is a wrong
-rejection rather than a wrong acceptance.
+**K-like reduction.** Tried, measured, and taken back out. A recursor marked
+`k` may fire on a major premise that is not a literal constructor, because its
+inductive has one constructor that takes no fields. Firing it unguarded is
+unsound: the Lean kernel infers the major premise's type first, and without
+that check the rule fires on a major premise of the wrong type. The arena's
+`100_ruleKbad` is the attack on exactly that, and firing the rule unguarded
+turned it from a correct rejection into a pass while fixing only `099_ruleK`.
+Trading a soundness test for a completeness test is the wrong way round for a
+kernel, so the flag is read and stored and nothing fires on it. The guard
+needs a type inside reduction, which would make reduction and inference call
+each other, so it waits for those two to be fused into one def.
+
+**Eta for a structure with fields, and literals.** Function eta is here, and so
+is eta for a structure with no fields, which settles any two elements of a unit
+type. Eta for a structure that has fields needs projections. The `Nat` literals
+the arena enables are not read: a `natVal` node names the real `Nat`, so
+handling one needs the name table and a comparison against the characters
+`Nat`, where everything else here identifies a constant by its index.
 
 **Scale.** The reader works, but its tables are lists, so a lookup is linear
 and a file with fifty thousand expressions is far too slow. `Array` is the
