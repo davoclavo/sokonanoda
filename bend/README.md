@@ -119,24 +119,20 @@ So such a file answers `declined`, never `accept`. The arena's `BogusRecursor`,
 `indNeg` and `typeWithTooHighTypeField` are exactly the attacks that check
 would stop, and all three currently decline rather than reject.
 
-**K-like reduction.** Tried, measured, and taken back out. A recursor marked
-`k` may fire on a major premise that is not a literal constructor, because its
-inductive has one constructor that takes no fields. Firing it unguarded is
-unsound: the Lean kernel infers the major premise's type first, and without
-that check the rule fires on a major premise of the wrong type. The arena's
-`100_ruleKbad` is the attack on exactly that, and firing the rule unguarded
-turned it from a correct rejection into a pass while fixing only `099_ruleK`.
-Trading a soundness test for a completeness test is the wrong way round for a
-kernel, so the flag is read and stored and nothing fires on it. The guard
-needs a type inside reduction, which would make reduction and inference call
-each other, so it waits for those two to be fused into one def.
+**Eta for a structure that carries data.** A recursor whose inductive has one
+constructor taking no fields now reduces even when the major premise is not
+written as that constructor, which covers both the K rule and eta for a
+one-element structure. A constructor that does carry data needs projections to
+write, and those are not here.
 
-**Eta for a structure with fields, and literals.** Function eta is here, and so
-is eta for a structure with no fields, which settles any two elements of a unit
-type. Eta for a structure that has fields needs projections. The `Nat` literals
-the arena enables are not read: a `natVal` node names the real `Nat`, so
-handling one needs the name table and a comparison against the characters
-`Nat`, where everything else here identifies a constant by its index.
+**Projections and quotients.** Not read at all.
+
+**A native `Nat`.** A literal is read, by desugaring it into that many
+successors of zero, which needs the ids of `Nat`, `Nat.zero` and `Nat.succ` and
+is the only place this kernel looks at a name's characters. The arena's native
+`Nat` instead treats a literal as a primitive with arithmetic built into the
+kernel, so a large literal here is rejected rather than read: past a cap of
+4096 the reader answers a loose variable, which no inference accepts.
 
 **Scale.** The reader works, but its tables are lists, so a lookup is linear
 and a file with fifty thousand expressions is far too slow. `Array` is the
@@ -177,15 +173,19 @@ left out, that is 119 tests:
 |---|---|
 | correct accept | 29 |
 | correct reject | 25 |
-| honest decline, an inductive block was trusted | 56 |
-| wrongly rejected, a feature this kernel lacks | 9 |
-| **wrongly accepted** | **0** |
+| honest decline, an inductive block was trusted | 65 |
+| wrongly rejected | **0** |
+| wrongly accepted | **0** |
 
-A decline is the arena's exit code 2 and scores nothing, so 54 of 119 are
-verdicts and the rest is work still to do. The number that matters for a
-kernel is the last row: it never accepted a file it should have rejected.
+**Every verdict it gives is correct.** A decline is the arena's exit code 2 and
+scores nothing, so 54 of the 119 are verdicts and the other 65 are the work
+that remains. Nothing times out.
 
 On the 37 tests that need no inductive block, it is 37 correct.
+
+The single thing standing between the 65 declines and 65 verdicts is deriving
+the recursor from the inductive specification and comparing the two. Nothing
+else is missing for them.
 
 Six real bugs turned up on the way, and every one was found by reading a
 failing declaration or the code, not by guessing.
