@@ -10,6 +10,9 @@
 # conversion has to be able to ask for a type. Asking the checking inferencer
 # would be a cycle.
 #
+# A term that reduction gave up on has no shape, so a guard that rests on one
+# simply does not fire. That is safe: a guard only ever lets a rule apply.
+#
 # A shape is not a verdict. It answers the type a term would have if the term
 # were well typed, and `RBad` when it cannot. Nothing here is a soundness
 # claim, and `Infer` still does all of the checking.
@@ -133,6 +136,8 @@ def Shape.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
             T.TSort{L.Level.mk_imax(Shape.sort_level(ts), Shape.sort_level(bs))})
         case T.TLet{ty, +v, bd}:
           Shape.infer(f, env, ctx, T.Term.inst(bd, v))
+        case T.TUnk{}:
+          SBad{}
 
 # Does the type `ty` itself have type `Sort 0`?
 def Shape.prop_sort(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, ty: T.Term) -> Bool:

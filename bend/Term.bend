@@ -17,6 +17,13 @@ type Term is Data:
   TLam{ty: Term, bd: Term}
   TPi{ty: Term, bd: Term}
   TLet{ty: Term, v: Term, bd: Term}
+  # The term reduction gives back when it runs out of budget.
+  #
+  # Running out is not an answer. A kernel that treats it as one reports
+  # falsely: it rejects a declaration it merely failed to reduce far enough.
+  # So reduction hands back this instead, and everything that meets it answers
+  # "I do not know" rather than yes or no.
+  TUnk{}
 
 # Choose between two terms on a computed Bool.
 def Term.pick(b: Bool, x: Term, y: Term) -> Term:
@@ -34,6 +41,14 @@ def Term.same_levels(xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> Bool:
     case Con{x, xr} Con{y, yr}:
       Bool.and(L.Level.same(x, y), Term.same_levels(xr, yr))
     case x y:
+      False{}
+
+# Is this the term reduction gives back when it runs out of budget?
+def Term.is_unk(t: Term) -> Bool:
+  match t:
+    case TUnk{}:
+      True{}
+    case x:
       False{}
 
 # Structural equality of two terms, without fuel. The recursion is on both
@@ -78,6 +93,8 @@ def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
       TPi{Term.lift(ty, d, cut), Term.lift(bd, d, 1n+cut)}
     case TLet{ty, v, bd}:
       TLet{Term.lift(ty, d, cut), Term.lift(v, d, cut), Term.lift(bd, d, 1n+cut)}
+    case TUnk{}:
+      TUnk{}
 
 # Replace the variable at depth `cut` with `v`, and shift the ones above it
 # down by one. This is the de Bruijn instantiation a beta step needs.
@@ -100,6 +117,8 @@ def Term.subst(t: Term, +v: Term, +cut: Nat) -> Term:
       TPi{Term.subst(ty, v, cut), Term.subst(bd, v, 1n+cut)}
     case TLet{ty, vl, bd}:
       TLet{Term.subst(ty, v, cut), Term.subst(vl, v, cut), Term.subst(bd, v, 1n+cut)}
+    case TUnk{}:
+      TUnk{}
 
 # Instantiate the body of a binder with `v`, which is the common case of
 # `Term.subst` at depth zero.
@@ -141,6 +160,8 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TPi{Term.remap_levels(ty, ps), Term.remap_levels(bd, ps)}
     case TLet{ty, v, bd}:
       TLet{Term.remap_levels(ty, ps), Term.remap_levels(v, ps), Term.remap_levels(bd, ps)}
+    case TUnk{}:
+      TUnk{}
 
 # Substitute a declaration's level parameters throughout a term.
 def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
@@ -159,3 +180,5 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TPi{Term.subst_levels(ty, vs), Term.subst_levels(bd, vs)}
     case TLet{ty, v, bd}:
       TLet{Term.subst_levels(ty, vs), Term.subst_levels(v, vs), Term.subst_levels(bd, vs)}
+    case TUnk{}:
+      TUnk{}

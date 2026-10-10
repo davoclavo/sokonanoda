@@ -17,58 +17,62 @@ import ./Env.bend as E
 import ./Eval.bend as V
 import ./Conv.bend as C
 import ./Infer.bend as I
+import ./Ans.bend as A
 
 # Is this term a type, that is, does its own type reduce to a sort?
-def Kernel.is_type(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> Bool:
-  I.Infer.is_sort(
-    V.Eval.whnf(fuel, env, I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, ty)), Nil{}))
+def Kernel.is_type(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> A.Ans:
+  +r = I.Infer.infer(fuel, env, Nil{}, ty)
+  A.Ans.and(
+    I.Infer.res_ans(r),
+    I.Infer.sort_ans(V.Eval.whnf(fuel, env, I.Infer.res_ty(r), Nil{})))
 
 # Does `v` have type `ty`?
-def Kernel.has_type(+fuel: Nat, +env: List<&2, E.Decl>, v: T.Term, ty: T.Term) -> Bool:
+def Kernel.has_type(+fuel: Nat, +env: List<&2, E.Decl>, v: T.Term, ty: T.Term) -> A.Ans:
   +r = I.Infer.infer(fuel, env, Nil{}, v)
-  Bool.and(
-    I.Infer.res_ok(r),
+  A.Ans.and(
+    I.Infer.res_ans(r),
     C.Conv.eq(fuel, env, I.Infer.res_ty(r), ty))
 
 # Is this term a Prop, that is, does its own type reduce to `Sort 0`?
 # A theorem's type must be one.
-def Kernel.is_prop(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> Bool:
-  L.Level.is_zero(
-    I.Infer.sort_level(
-      V.Eval.whnf(fuel, env, I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, ty)), Nil{})))
+def Kernel.is_prop(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> A.Ans:
+  +w = V.Eval.whnf(fuel, env, I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, ty)), Nil{})
+  A.Ans.and(
+    I.Infer.sort_ans(w),
+    A.Ans.of(L.Level.is_zero(I.Infer.sort_level(w))))
 
 # Check one declaration against the declarations before it.
-def Kernel.check_decl(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> Bool:
+def Kernel.check_decl(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> A.Ans:
   match d:
     case E.DAxiom{id, ps, ty}:
-      Bool.and(
-        E.Decl.no_dupes(ps),
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
     case E.DDef{id, ps, +ty, val}:
-      Bool.and(
-        E.Decl.no_dupes(ps),
-        Bool.and(
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
+        A.Ans.and(
           Kernel.is_type(fuel, env, ty),
           Kernel.has_type(fuel, env, val, ty)))
     case E.DThm{id, ps, +ty, val}:
-      Bool.and(
-        E.Decl.no_dupes(ps),
-        Bool.and(
-          Bool.and(
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
+        A.Ans.and(
+          A.Ans.and(
             Kernel.is_type(fuel, env, ty),
             Kernel.is_prop(fuel, env, ty)),
           Kernel.has_type(fuel, env, val, ty)))
     case E.DInd{id, ps, ty, np, ni, ctors}:
-      Bool.and(
-        E.Decl.no_dupes(ps),
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
     case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
-      Bool.and(
-        E.Decl.no_dupes(ps),
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
     case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
-      Bool.and(
-        E.Decl.no_dupes(ps),
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
 
 # True when a lookup found nothing.
@@ -86,14 +90,14 @@ def Kernel.is_fresh(+env: List<&2, E.Decl>, +i: Nat) -> Bool:
 # Check every declaration, each against the ones before it. A name that is
 # already taken is rejected, which is what stops a second declaration of the
 # same constant from quietly replacing the first.
-def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> Bool:
+def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> A.Ans:
   match ds:
     case Nil{}:
-      True{}
+      A.AYes{}
     case Con{+h, t}:
-      Bool.and(
-        Bool.and(
-          Kernel.is_fresh(acc, E.Decl.id(h)),
+      A.Ans.and(
+        A.Ans.and(
+          A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
           Kernel.check_decl(fuel, acc, h)),
         Kernel.check_all(t, fuel, Con{h, acc}))
 
@@ -114,26 +118,28 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "rec  "
 
 # One check, named, with a tick or a cross.
-def Kernel.flag(+name: String, ok: Bool) -> String:
-  match ok:
-    case True{}:
+def Kernel.flag(+name: String, a: A.Ans) -> String:
+  match a:
+    case A.AYes{}:
       " " ++ name ++ "=ok"
-    case False{}:
+    case A.ANo{}:
       " " ++ name ++ "=BAD"
+    case A.AUnk{}:
+      " " ++ name ++ "=unknown"
 
 # Which of the checks on a declaration passed? A rejection says little on its
 # own, and the three parts fail for very different reasons.
 def Kernel.why(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> String:
   match d:
     case E.DAxiom{id, ps, ty}:
-      Kernel.flag("params", E.Decl.no_dupes(ps)) ++
+      Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty))
     case E.DDef{id, ps, +ty, val}:
-      Kernel.flag("params", E.Decl.no_dupes(ps)) ++
+      Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
     case E.DThm{id, ps, +ty, +val}:
-      Kernel.flag("params", E.Decl.no_dupes(ps)) ++
+      Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("prop", Kernel.is_prop(fuel, env, ty)) ++
       Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
@@ -141,12 +147,14 @@ def Kernel.why(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> String:
       ""
 
 # One line of the report.
-def Kernel.mark(ok: Bool, +id: Nat, +kind: String, +why: String) -> String:
-  match ok:
-    case True{}:
+def Kernel.mark(a: A.Ans, +id: Nat, +kind: String, +why: String) -> String:
+  match a:
+    case A.AYes{}:
       "  ok     " ++ kind ++ " " ++ Nat.show(id) ++ "\n"
-    case False{}:
+    case A.ANo{}:
       "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ why ++ "\n"
+    case A.AUnk{}:
+      "  unknown " ++ kind ++ " " ++ Nat.show(id) ++ why ++ "\n"
 
 # Which declaration failed? Reports one line per declaration, in order, so a
 # rejection can be traced to the declaration that caused it rather than
@@ -157,8 +165,8 @@ def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> S
       ""
     case Con{+h, t}:
       Kernel.mark(
-        Bool.and(
-          Kernel.is_fresh(acc, E.Decl.id(h)),
+        A.Ans.and(
+          A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
           Kernel.check_decl(fuel, acc, h)),
         E.Decl.id(h),
         Kernel.kind_name(h),

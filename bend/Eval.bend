@@ -8,8 +8,13 @@
 # `fuel` strictly decreases on every recursive call, which is how this passes
 # Bend's termination check. A kernel's whnf genuinely does not terminate on
 # every input, so the fuel is not a formality: it is the honest statement that
-# this function answers within a budget. When the budget runs out it rebuilds
-# the term unreduced, which is sound for a checker that then rejects.
+# this function answers within a budget.
+#
+# When the budget runs out it hands back `TUnk` rather than the term
+# unreduced. The difference matters. An unreduced term looks like an answer,
+# and conversion then compares it with something and says they differ, so the
+# declaration is rejected for want of budget. `TUnk` says what happened, and
+# everything that meets it answers that it does not know.
 #
 # Every test on a computed value goes through a helper that matches its own
 # parameter, since a Bend match may not scrutinize a computed value.
@@ -240,7 +245,7 @@ def Eval.iota_term(
 def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
     case 0n:
-      Eval.rebuild(sp, t)
+      T.TUnk{}
     case 1n+f:
       match t:
         case T.TVar{i}:
@@ -269,3 +274,5 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
           Eval.rebuild(sp, T.TPi{ty, bd})
         case T.TLet{ty, v, bd}:
           Eval.whnf(f, env, T.Term.inst(bd, v), sp)
+        case T.TUnk{}:
+          T.TUnk{}

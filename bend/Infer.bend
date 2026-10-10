@@ -25,10 +25,14 @@ import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
 import ./Conv.bend as C
+import ./Ans.bend as A
 
 type Res is Data:
   ROk{ty: T.Term}
   RBad{}
+  # Inference ran out of budget, or met a term reduction had given up on. The
+  # answer is neither a type nor a verdict, and it must not be read as one.
+  RUnk{}
 
 # The term a failed result stands in with.
 #
@@ -43,11 +47,22 @@ def Infer.dummy() -> T.Term:
   T.TVar{0n}
 
 # Did inference succeed?
+def Infer.res_ans(r: Res) -> A.Ans:
+  match r:
+    case ROk{ty}:
+      A.AYes{}
+    case RBad{}:
+      A.ANo{}
+    case RUnk{}:
+      A.AUnk{}
+
 def Infer.res_ok(r: Res) -> Bool:
   match r:
     case ROk{ty}:
       True{}
     case RBad{}:
+      False{}
+    case RUnk{}:
       False{}
 
 # The inferred type, or the dummy when inference failed.
@@ -57,6 +72,8 @@ def Infer.res_ty(r: Res) -> T.Term:
       ty
     case RBad{}:
       Infer.dummy()
+    case RUnk{}:
+      T.TUnk{}
 
 # A result from a Bool and a type.
 def Infer.res_if(b: Bool, ty: T.Term) -> Res:
@@ -66,6 +83,16 @@ def Infer.res_if(b: Bool, ty: T.Term) -> Res:
     case False{}:
       RBad{}
 
+# A result from a three-valued answer, so not knowing stays not knowing.
+def Infer.res_of(a: A.Ans, ty: T.Term) -> Res:
+  match a:
+    case A.AYes{}:
+      ROk{ty}
+    case A.ANo{}:
+      RBad{}
+    case A.AUnk{}:
+      RUnk{}
+
 # Shift a result's free variables up by `d`.
 def Infer.lift_res(r: Res, +d: Nat) -> Res:
   match r:
@@ -73,6 +100,18 @@ def Infer.lift_res(r: Res, +d: Nat) -> Res:
       ROk{T.Term.lift(ty, d, 0n)}
     case RBad{}:
       RBad{}
+    case RUnk{}:
+      RUnk{}
+
+# Is this term a pi, or did reduction give up before it could say?
+def Infer.pi_ans(t: T.Term) -> A.Ans:
+  match t:
+    case T.TPi{ty, bd}:
+      A.AYes{}
+    case T.TUnk{}:
+      A.AUnk{}
+    case x:
+      A.ANo{}
 
 # Is this term a pi?
 def Infer.is_pi(t: T.Term) -> Bool:
@@ -97,6 +136,16 @@ def Infer.pi_bd(t: T.Term) -> T.Term:
       bd
     case x:
       Infer.dummy()
+
+# Is this term a sort, or did reduction give up before it could say?
+def Infer.sort_ans(t: T.Term) -> A.Ans:
+  match t:
+    case T.TSort{l}:
+      A.AYes{}
+    case T.TUnk{}:
+      A.AUnk{}
+    case x:
+      A.ANo{}
 
 # Is this term a sort?
 def Infer.is_sort(t: T.Term) -> Bool:
@@ -146,7 +195,7 @@ def Infer.const_type(lk: E.Lookup, +ls: List<&2, L.Level>) -> T.Term:
 def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T.Term) -> Res:
   match fuel:
     case 0n:
-      RBad{}
+      RUnk{}
     case 1n+f:
       match t:
         case T.TVar{+i}:
@@ -160,29 +209,35 @@ def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
         case T.TApp{g, +a}:
           +gt = V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, g)), Nil{})
           +at = Infer.infer(f, env, ctx, a)
-          Infer.res_if(
-            Bool.and(
-              Bool.and(Infer.is_pi(gt), Infer.res_ok(at)),
+          Infer.res_of(
+            A.Ans.and(
+              A.Ans.and(
+                Infer.pi_ans(gt),
+                Infer.res_ans(at)),
               C.Conv.eq_in(f, env, ctx, Infer.res_ty(at), Infer.pi_dom(gt))),
             T.Term.inst(Infer.pi_bd(gt), a))
         case T.TLam{+ty, bd}:
           +bt = Infer.infer(f, env, Con{ty, ctx}, bd)
-          Infer.res_if(Infer.res_ok(bt), T.TPi{ty, Infer.res_ty(bt)})
+          Infer.res_of(Infer.res_ans(bt), T.TPi{ty, Infer.res_ty(bt)})
         case T.TPi{+ty, bd}:
           +tr = Infer.infer(f, env, ctx, ty)
           +br = Infer.infer(f, env, Con{ty, ctx}, bd)
           +ts = V.Eval.whnf(f, env, Infer.res_ty(tr), Nil{})
           +bs = V.Eval.whnf(f, env, Infer.res_ty(br), Nil{})
-          Infer.res_if(
-            Bool.and(
-              Bool.and(Infer.res_ok(tr), Infer.res_ok(br)),
-              Bool.and(Infer.is_sort(ts), Infer.is_sort(bs))),
+          Infer.res_of(
+            A.Ans.and(
+              A.Ans.and(Infer.res_ans(tr), Infer.res_ans(br)),
+              A.Ans.and(
+                Infer.sort_ans(ts),
+                Infer.sort_ans(bs))),
             T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
+        case T.TUnk{}:
+          RUnk{}
         case T.TLet{ty, +v, bd}:
           +vt = Infer.infer(f, env, ctx, v)
           +br = Infer.infer(f, env, ctx, T.Term.inst(bd, v))
-          Infer.res_if(
-            Bool.and(
-              Bool.and(Infer.res_ok(vt), Infer.res_ok(br)),
+          Infer.res_of(
+            A.Ans.and(
+              A.Ans.and(Infer.res_ans(vt), Infer.res_ans(br)),
               C.Conv.eq_in(f, env, ctx, Infer.res_ty(vt), ty)),
             Infer.res_ty(br))

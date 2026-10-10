@@ -15,6 +15,7 @@ import ./Env.bend as E
 import ./Eval.bend as V
 import ./Conv.bend as C
 import ./Kernel.bend as K
+import ./Ans.bend as A
 
 # An environment that must be accepted.
 #
@@ -129,12 +130,8 @@ def Main.env_iota_at(major: T.Term) -> List<&2, E.Decl>:
   ]
 
 # "accept" or "reject".
-def Main.show(b: Bool) -> String:
-  match b:
-    case True{}:
-      "accept"
-    case False{}:
-      "reject"
+def Main.show(a: A.Ans) -> String:
+  A.Ans.show(a)
 
 def main() -> IO(Unit):
   do IO<Unit>:

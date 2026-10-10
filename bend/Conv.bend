@@ -31,6 +31,7 @@ import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
 import ./Shape.bend as S
+import ./Ans.bend as A
 
 # A pair of terms still to be shown equal, with the context they live in.
 type TPair is Data:
@@ -40,6 +41,7 @@ type TPair is Data:
 type Step is Data:
   SNo{}
   SYes{}
+  SUnk{}
   SMore{ps: List<&2, TPair>}
 
 # Choose between two Bools on a computed Bool.
@@ -58,15 +60,17 @@ def Conv.pick_step(b: Bool, x: Step, y: Step) -> Step:
     case False{}:
       y
 
-# True unless the step says no.
-def Conv.step_ok(s: Step) -> Bool:
+# What this step says on its own, before its further pairs are worked.
+def Conv.step_ans(s: Step) -> A.Ans:
   match s:
     case SNo{}:
-      False{}
+      A.ANo{}
     case SYes{}:
-      True{}
+      A.AYes{}
+    case SUnk{}:
+      A.AUnk{}
     case SMore{ps}:
-      True{}
+      A.AYes{}
 
 # The further pairs a step asks for.
 def Conv.step_more(s: Step) -> List<&2, TPair>:
@@ -74,6 +78,8 @@ def Conv.step_more(s: Step) -> List<&2, TPair>:
     case SNo{}:
       Nil{}
     case SYes{}:
+      Nil{}
+    case SUnk{}:
       Nil{}
     case SMore{ps}:
       ps
@@ -123,6 +129,10 @@ def Conv.structural(
       SMore{[MkPair{Con{t1, ctx}, b1, T.TApp{T.Term.lift(y, 1n, 0n), T.TVar{0n}}}]}
     case x T.TLam{+t2, b2}:
       SMore{[MkPair{Con{t2, ctx}, T.TApp{T.Term.lift(x, 1n, 0n), T.TVar{0n}}, b2}]}
+    case T.TUnk{} y:
+      SUnk{}
+    case x T.TUnk{}:
+      SUnk{}
     case x y:
       SNo{}
 
@@ -382,27 +392,32 @@ def Conv.classify_pair(+fuel: Nat, +env: List<&2, E.Decl>, p: TPair) -> Step:
         Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, b, Nil{})))
 
 # Work the queue. It empties exactly when every pair in it is equal.
-def Conv.eq_all(+fuel: Nat, +env: List<&2, E.Decl>, work: List<&2, TPair>) -> Bool:
+#
+# A pair that settles the question does not stop the walk, because Bend
+# forbids the two defs that would take. `Ans.and` does the work instead: a
+# definite no anywhere is a rejection whatever the rest says, and not knowing
+# one pair leaves the whole answer unknown unless some other pair is a
+# definite no.
+def Conv.eq_all(+fuel: Nat, +env: List<&2, E.Decl>, work: List<&2, TPair>) -> A.Ans:
   match fuel:
     case 0n:
-      False{}
+      A.AUnk{}
     case 1n+f:
       match work:
         case Nil{}:
-          True{}
+          A.AYes{}
         case Con{p, rest}:
           +st = Conv.classify_pair(f, env, p)
-          Conv.pick_b(
-            Conv.step_ok(st),
-            Conv.eq_all(f, env, List.append(&2, TPair, Conv.step_more(st), rest)),
-            False{})
+          A.Ans.and(
+            Conv.step_ans(st),
+            Conv.eq_all(f, env, List.append(&2, TPair, Conv.step_more(st), rest)))
 
 # Are these two terms definitionally equal in the given context?
 def Conv.eq_in(
   +fuel: Nat, +env: List<&2, E.Decl>, ctx: List<&2, T.Term>, a: T.Term, b: T.Term
-) -> Bool:
+) -> A.Ans:
   Conv.eq_all(fuel, env, [MkPair{ctx, a, b}])
 
 # Are these two closed terms definitionally equal?
-def Conv.eq(+fuel: Nat, +env: List<&2, E.Decl>, a: T.Term, b: T.Term) -> Bool:
+def Conv.eq(+fuel: Nat, +env: List<&2, E.Decl>, a: T.Term, b: T.Term) -> A.Ans:
   Conv.eq_in(fuel, env, Nil{}, a, b)

@@ -15,6 +15,7 @@ import ./Bytes.bend as B
 import ./Parse.bend as P
 import ./Env.bend as E
 import ./Kernel.bend as K
+import ./Ans.bend as A
 
 # The fuel one declaration gets.
 #
@@ -43,11 +44,13 @@ def Check.trusted_word(t: Bool) -> String:
 # recursor and so is not entitled to accept it. `reject` needs no trust: a
 # declaration that fails a check this kernel does make is wrong whatever the
 # recursor says.
-def Check.show(ok: Bool, trusted: Bool) -> String:
-  match ok:
-    case False{}:
+def Check.show(a: A.Ans, trusted: Bool) -> String:
+  match a:
+    case A.ANo{}:
       "reject"
-    case True{}:
+    case A.AUnk{}:
+      "declined (the budget ran out before an answer)"
+    case A.AYes{}:
       Check.trusted_word(trusted)
 
 def main() -> IO(Unit):
