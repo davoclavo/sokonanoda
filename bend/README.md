@@ -48,6 +48,8 @@ refuse.
 | `Eval.bend` | weak head normal form: beta, delta, zeta |
 | `Conv.bend` | definitional equality, as a worklist |
 | `Infer.bend` | type inference for the core |
+| `Bytes.bend` | a tail-recursive byte scanner, the base of a reader |
+| `scan.bend` | reads a real export and reports what the scanner found |
 | `main.bend` | the driver and its three test environments |
 | `LAWS.bend` | the laws the kernel must obey |
 | `PROOF.bend` | their proofs |
@@ -105,8 +107,11 @@ nested inductives, recursor rules, iota reduction, large elimination, and K-like
 reduction. None of it is here. What is here is the dependently typed core that
 the rest is built on.
 
-**The parser.** A Bend string is a linked list of characters, so reading the
-arena's 6 GB mathlib export is out of reach. Environments are built in Bend.
+**The parser.** Started, not finished. `Bytes.bend` and `scan.bend` are the
+groundwork, and the measurements below say the approach holds. What is missing
+is the reader proper: the node kinds of the export format, and building an
+environment from them. Until that exists the driver checks environments written
+in Bend, and this kernel scores nothing on the arena.
 
 **Eta, proof irrelevance, and the imax case split.** Proof irrelevance is the
 interesting omission: it needs the type of a term, so adding it makes
@@ -117,6 +122,44 @@ cycle is the next real design problem here, not a matter of writing more code.
 hash-consed terms cannot be carried over, and the environment is a list
 searched linearly where the parent resolves a constant in one load. The point
 of this folder is the proofs, not the clock.
+
+## Reading an export
+
+The first attempt used `String`, and it failed hard. A Bend string is a linked
+list of characters, and Base's `String.lines`, `String.length` and
+`String.split` recurse once per character with the call out of tail position,
+so they overflow the host stack. Upstream has both bugs on file as
+bendlang/bend#798 and #802. Measured here, `String.lines` dies at 50 KB, while
+the smallest arena test is 3.7 MB.
+
+The second attempt reads bytes and walks them with tail calls, which the guide
+says compile to loops. That works. `scan.bend` on the smallest arena test:
+
+| | Bend | expected |
+|---|---|---|
+| bytes | 3741967 | `wc -c` 3741967 |
+| lines | 64110 | `wc -l` 64110 |
+| first `"in":` | 1 | 1 |
+
+0.13 s for the whole 3.7 MB file. For scale, the Rust build parses the same
+file into 2106 declarations in 0.004 s, so this is roughly thirty times slower
+while doing far less. That is the right trade for this folder.
+
+The idiom that made it work, and that every function in `Bytes.bend` follows:
+
+1. peek at the head with a small non-recursive helper,
+2. pass the answer as a parameter of the next call,
+3. make that call the whole body, so it is a tail call.
+
+Bend will not let a `match` look at a computed value and will not let two defs
+call each other, so a conditional cannot sit between the recursion and the tail
+position. Carrying the decision forward in a parameter is the way around both.
+
+A bug worth recording: the first search skipped to the key's first byte and
+required the whole key there, with no retry. The first `"` in an export belongs
+to the metadata line, so every lookup answered zero. Counting bytes and lines
+was already correct, which is why cross-checking against a second key caught
+it.
 
 ## Installing Bend 2
 

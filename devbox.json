@@ -39,7 +39,8 @@
       "arena-build": "python3 tools/arena.py build \"$@\"",
       "bend": "tools/bend.sh bend/main.bend",
       "bend-proof": "tools/bend.sh bend/PROOF.bend",
-      "bend-verdict": "tools/bend.sh bend/PROOF.bend --verdict"
+      "bend-verdict": "tools/bend.sh bend/PROOF.bend --verdict",
+      "bend-scan": "tools/bend.sh bend/scan.bend"
     }
   }
 }
