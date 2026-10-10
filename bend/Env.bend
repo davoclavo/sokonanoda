@@ -231,6 +231,28 @@ def Decl.rec_rules(d: Decl) -> List<&2, RecRule>:
     case o:
       Nil{}
 
+# An inductive's shape. Guard with `Decl.is_ind`.
+def Decl.is_ind(d: Decl) -> Bool:
+  match d:
+    case DInd{id, ps, ty, np, ni, ctors}:
+      True{}
+    case o:
+      False{}
+
+def Decl.ind_ni(d: Decl) -> Nat:
+  match d:
+    case DInd{id, ps, ty, np, ni, ctors}:
+      ni
+    case o:
+      1n
+
+def Decl.ind_ctors(d: Decl) -> List<&2, Nat>:
+  match d:
+    case DInd{id, ps, ty, np, ni, ctors}:
+      ctors
+    case o:
+      Nil{}
+
 # A constructor's layout. Guard with `Decl.is_ctor`.
 def Decl.is_ctor(d: Decl) -> Bool:
   match d:
@@ -245,6 +267,38 @@ def Decl.ctor_np(d: Decl) -> Nat:
       np
     case o:
       0n
+
+def Decl.ctor_nf(d: Decl) -> Nat:
+  match d:
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      nf
+    case o:
+      1n
+
+# The only entry of a one-entry list, or zero.
+def Decl.only(xs: List<&2, Nat>) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case Con{h, t}:
+      h
+
+
+
+def Decl.is_nil(xs: List<&2, Nat>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      False{}
+
+# Does this list hold exactly one entry?
+def Decl.is_one(xs: List<&2, Nat>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case Con{h, t}:
+      Decl.is_nil(t)
 
 # One rule's parts.
 def RecRule.ctor(r: RecRule) -> Nat:

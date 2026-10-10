@@ -139,6 +139,44 @@ def Conv.maybe_proof(t: T.Term) -> Bool:
     case x:
       True{}
 
+# The head of an application.
+def Conv.head(t: T.Term) -> T.Term:
+  match t:
+    case T.TApp{f, a}:
+      Conv.head(f)
+    case x:
+      x
+
+# The name a head names, or zero.
+def Conv.head_name(t: T.Term) -> Nat:
+  match t:
+    case T.TConst{n, ls}:
+      n
+    case x:
+      0n
+
+# Does this declaration describe a unit type?
+def Conv.unit_of(+env: List<&2, E.Decl>, +d: E.Decl) -> Bool:
+  Bool.and(
+    Bool.and(E.Decl.is_ind(d), Nat.is_eq(E.Decl.ind_ni(d), 0n)),
+    Bool.and(
+      E.Decl.is_one(E.Decl.ind_ctors(d)),
+      Nat.is_eq(
+        E.Decl.ctor_nf(
+          E.Lookup.get(E.Env.find(env, E.Decl.only(E.Decl.ind_ctors(d))))),
+        0n)))
+
+# Is this type a unit: an inductive with no indices and exactly one
+# constructor that takes no fields?
+#
+# Every element of such a type is that constructor, so any two of them are
+# equal. This is eta for a structure with no fields, and it is what settles
+# the arena's `unitEta` tests. The general structure rule, where an element
+# equals its constructor applied to its own projections, needs projections and
+# is not here.
+def Conv.is_unit(+env: List<&2, E.Decl>, +t: T.Term) -> Bool:
+  Conv.unit_of(env, E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))))
+
 # Try proof irrelevance in earnest, now that it is worth the inference.
 def Conv.irrel_go(
   +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
@@ -148,12 +186,18 @@ def Conv.irrel_go(
   Conv.pick_step(
     Bool.and(
       Bool.and(S.Shape.ok(ra), S.Shape.ok(rb)),
-      S.Shape.prop_sort(fuel, env, ctx, S.Shape.ty(ra))),
+      Bool.or(
+        S.Shape.prop_sort(fuel, env, ctx, S.Shape.ty(ra)),
+        Conv.is_unit(
+          env,
+          V.Eval.whnf(fuel, env, S.Shape.ty(ra), Nil{})))),
     SMore{[MkPair{ctx, S.Shape.ty(ra), S.Shape.ty(rb)}]},
     Conv.structural(fuel, ctx, a, b))
 
-# Proof irrelevance: if the left side is a proof, the two sides are equal
-# exactly when their types are, so the types go on the queue instead.
+# Two terms are equal when their types are, in two cases: the type is a
+# proposition, which is proof irrelevance, or the type is a unit, which is eta
+# for a structure with no fields. Both put the two types on the queue instead
+# of the two terms.
 #
 # The two types are inferred once and bound, not inferred again for each use.
 def Conv.irrel(
