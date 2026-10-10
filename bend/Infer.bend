@@ -163,7 +163,7 @@ def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
           Infer.res_if(
             Bool.and(
               Bool.and(Infer.is_pi(gt), Infer.res_ok(at)),
-              C.Conv.eq(f, env, Infer.res_ty(at), Infer.pi_dom(gt))),
+              C.Conv.eq_in(f, env, ctx, Infer.res_ty(at), Infer.pi_dom(gt))),
             T.Term.inst(Infer.pi_bd(gt), a))
         case T.TLam{+ty, bd}:
           +bt = Infer.infer(f, env, Con{ty, ctx}, bd)
@@ -184,5 +184,5 @@ def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
           Infer.res_if(
             Bool.and(
               Bool.and(Infer.res_ok(vt), Infer.res_ok(br)),
-              C.Conv.eq(f, env, Infer.res_ty(vt), ty)),
+              C.Conv.eq_in(f, env, ctx, Infer.res_ty(vt), ty)),
             Infer.res_ty(br))

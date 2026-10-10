@@ -48,6 +48,7 @@ refuse.
 | `Term.bend` | terms with de Bruijn indices, lifting, instantiation, level substitution |
 | `Env.bend` | declarations and the environment |
 | `Eval.bend` | weak head normal form: beta, delta, zeta |
+| `Shape.bend` | the type of a term, without checking it |
 | `Conv.bend` | definitional equality, as a worklist |
 | `Infer.bend` | type inference for the core |
 | `Bytes.bend` | a tail-recursive byte scanner, the base of the reader |
@@ -118,10 +119,9 @@ the rest is built on.
 and a file with fifty thousand expressions is far too slow. `Array` is the
 answer, and it is the same change the memory ceiling below needs.
 
-**Eta, proof irrelevance, and the imax case split.** Proof irrelevance is the
-interesting omission: it needs the type of a term, so adding it makes
-conversion and inference mutually recursive, which Bend forbids. Breaking that
-cycle is the next real design problem here, not a matter of writing more code.
+**Eta, and the imax case split.** Eta for functions and for structures is not
+here. Neither is the case split on an imax whose right side is a bare
+parameter, so two such atoms are still compared as syntax.
 
 **Performance.** Bend has no `U64`, so the parent's packed pointers and
 hash-consed terms cannot be carried over, and the environment is a list
@@ -148,17 +148,10 @@ verdict accept
 ```
 
 Against the arena's tutorial tests, taking only those inside this fragment,
-that is 37 tests and **29 correct**. The eight that are wrong fall into three
-groups.
+that is **37 tests and 37 correct**.
 
-| Group | Tests | Why |
-|---|---|---|
-| the level order | 017, 023, 024, 025, 027 | `Level.eq` compares syntax after normalization, so it misses that max is commutative, associative and absorbing |
-| missing rejections | 009, 019 | under investigation |
-| proof irrelevance | 107 | needs a term's type during conversion |
-
-Three real bugs turned up while getting here, and all three were found by
-reading a failing declaration rather than by guessing.
+Six real bugs turned up on the way, and every one was found by reading a
+failing declaration or the code, not by guessing.
 
 **`max l l` never collapsed.** The comment on `Level.mk_max` claimed it did and
 the code did not. So `Prop -> Prop` typed as `Sort (max 1 1)` where the export
@@ -173,6 +166,36 @@ writes `LPar{j}` with `j` the export's name index, but a use site supplies
 levels by position. The simplest tests passed regardless, because the identity
 is correct when a declaration is used at its own parameter. `Term.remap_levels`
 is the translation.
+
+**Max compared as syntax.** `max u v` and `max v u` are the same level, and so
+are `max 2 1` and `2`, but comparing syntax says otherwise. `Level.nf` now
+flattens a level into atoms, each a base with a count of successors, sorts
+them and collapses two atoms on one base. That makes max commutative,
+associative, idempotent and absorbing in one stroke, and two closed numerals
+compare by value.
+
+**A failed inference passed for `Sort 0`.** This was the bad one. `res_ty` on a
+failure returned a dummy, the dummy was `Sort 0`, and `is_sort` accepted it. So
+an inference failure inside a pi or a let became a valid sort and the
+declaration was **accepted**. The dummy is now a loose variable, which is
+neither a sort nor a pi, and both cases guard on `res_ok` as well. `Shape.bend`
+follows the same rule. A kernel accepting what it cannot type is the worst
+failure there is, and it was invisible until `009_forallSortBad` was traced
+declaration by declaration.
+
+**A duplicate universe parameter went unchecked.** The Lean kernel refuses one
+in `check_duplicated_univ_params`. A declaration now carries its parameter
+list rather than just a count, so the check is possible.
+
+Proof irrelevance took a small design change rather than more code. Two proofs
+of one proposition are equal, and deciding that needs the type of each side, so
+conversion has to ask for a type. Asking `Infer` would be a cycle, so
+`Shape.bend` is inference with every conversion check removed, and `Conv`
+depends on that instead. Two further points mattered: a pair on the queue now
+carries its own local context, because a pair pushed from under a binder is
+open; and the rule is tried before the two sides are taken apart, since once
+`f (h a)` and `f (h b)` are split into function and argument, `a` against `b`
+is beyond saving.
 
 There is also a limit worth stating. The fuel cannot be large.
 `Conv.eq_all` works a queue and its recursive call sits in an argument rather
