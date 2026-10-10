@@ -30,9 +30,17 @@ type Res is Data:
   ROk{ty: T.Term}
   RBad{}
 
-# The term a failed result stands in with. Every use is guarded by `res_ok`.
+# The term a failed result stands in with.
+#
+# This is a loose variable on purpose. A failed inference has no type, but
+# something has to come back, and whatever comes back must not look like a
+# sort or like a pi. An earlier version used `Sort 0` here, and because
+# `is_sort` accepted it, a failure inside a pi or a let passed for a valid
+# sort and the declaration was accepted. The arena's `009_forallSortBad` is
+# exactly that. Every case below also guards on `res_ok`, so this is the
+# second line of defence rather than the first.
 def Infer.dummy() -> T.Term:
-  T.TSort{L.LZero{}}
+  T.TVar{0n}
 
 # Did inference succeed?
 def Infer.res_ok(r: Res) -> Bool:
@@ -161,15 +169,20 @@ def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
           +bt = Infer.infer(f, env, Con{ty, ctx}, bd)
           Infer.res_if(Infer.res_ok(bt), T.TPi{ty, Infer.res_ty(bt)})
         case T.TPi{+ty, bd}:
-          +ts = V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, ty)), Nil{})
-          +bs = V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, Con{ty, ctx}, bd)), Nil{})
+          +tr = Infer.infer(f, env, ctx, ty)
+          +br = Infer.infer(f, env, Con{ty, ctx}, bd)
+          +ts = V.Eval.whnf(f, env, Infer.res_ty(tr), Nil{})
+          +bs = V.Eval.whnf(f, env, Infer.res_ty(br), Nil{})
           Infer.res_if(
-            Bool.and(Infer.is_sort(ts), Infer.is_sort(bs)),
+            Bool.and(
+              Bool.and(Infer.res_ok(tr), Infer.res_ok(br)),
+              Bool.and(Infer.is_sort(ts), Infer.is_sort(bs))),
             T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
         case T.TLet{ty, +v, bd}:
           +vt = Infer.infer(f, env, ctx, v)
+          +br = Infer.infer(f, env, ctx, T.Term.inst(bd, v))
           Infer.res_if(
             Bool.and(
-              Infer.res_ok(vt),
+              Bool.and(Infer.res_ok(vt), Infer.res_ok(br)),
               C.Conv.eq(f, env, Infer.res_ty(vt), ty)),
-            Infer.res_ty(Infer.infer(f, env, ctx, T.Term.inst(bd, v))))
+            Infer.res_ty(br))

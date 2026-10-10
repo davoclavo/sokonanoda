@@ -26,12 +26,12 @@ import ./Kernel.bend as K
 # `got` exercises delta on `idf`, beta on its body, and conversion against the
 # declared type.
 def Main.env_good() -> List<&2, E.Decl>:
-  [ E.DAxiom{0n, 0n, T.TSort{L.LSucc{L.LZero{}}}}
-  , E.DAxiom{1n, 0n, T.TConst{0n, []}}
-  , E.DDef{2n, 0n,
+  [ E.DAxiom{0n, [], T.TSort{L.LSucc{L.LZero{}}}}
+  , E.DAxiom{1n, [], T.TConst{0n, []}}
+  , E.DDef{2n, [],
       T.TPi{T.TConst{0n, []}, T.TConst{0n, []}},
       T.TLam{T.TConst{0n, []}, T.TVar{0n}}}
-  , E.DDef{3n, 0n,
+  , E.DDef{3n, [],
       T.TConst{0n, []},
       T.TApp{T.TConst{2n, []}, T.TConst{1n, []}}}
   ]
@@ -39,12 +39,12 @@ def Main.env_good() -> List<&2, E.Decl>:
 # An environment that must be rejected. `bad` claims to be an element of `Ty`
 # but its value is the function `idf`.
 def Main.env_bad() -> List<&2, E.Decl>:
-  [ E.DAxiom{0n, 0n, T.TSort{L.LSucc{L.LZero{}}}}
-  , E.DAxiom{1n, 0n, T.TConst{0n, []}}
-  , E.DDef{2n, 0n,
+  [ E.DAxiom{0n, [], T.TSort{L.LSucc{L.LZero{}}}}
+  , E.DAxiom{1n, [], T.TConst{0n, []}}
+  , E.DDef{2n, [],
       T.TPi{T.TConst{0n, []}, T.TConst{0n, []}},
       T.TLam{T.TConst{0n, []}, T.TVar{0n}}}
-  , E.DDef{3n, 0n,
+  , E.DDef{3n, [],
       T.TConst{0n, []},
       T.TConst{2n, []}}
   ]
@@ -52,9 +52,9 @@ def Main.env_bad() -> List<&2, E.Decl>:
 # An environment that must be rejected for a different reason: `fwd` names a
 # declaration that comes after it, which the ordered check must not allow.
 def Main.env_forward() -> List<&2, E.Decl>:
-  [ E.DAxiom{0n, 0n, T.TSort{L.LSucc{L.LZero{}}}}
-  , E.DDef{1n, 0n, T.TConst{0n, []}, T.TConst{2n, []}}
-  , E.DAxiom{2n, 0n, T.TConst{0n, []}}
+  [ E.DAxiom{0n, [], T.TSort{L.LSucc{L.LZero{}}}}
+  , E.DDef{1n, [], T.TConst{0n, []}, T.TConst{2n, []}}
+  , E.DAxiom{2n, [], T.TConst{0n, []}}
   ]
 
 # "accept" or "reject".

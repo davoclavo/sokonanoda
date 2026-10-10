@@ -248,14 +248,14 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
         case R.KAxiom{}:
           E.DAxiom{
             R.Reader.field("name", line),
-            Parse.nat_len(R.Reader.num_list("levelParams", line)),
+            R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
               Parse.exp(ex, ne, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KDef{}:
           E.DDef{
             R.Reader.field("name", line),
-            Parse.nat_len(R.Reader.num_list("levelParams", line)),
+            R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
               Parse.exp(ex, ne, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line)),
@@ -265,7 +265,7 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
         case R.KThm{}:
           E.DThm{
             R.Reader.field("name", line),
-            Parse.nat_len(R.Reader.num_list("levelParams", line)),
+            R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
               Parse.exp(ex, ne, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line)),
@@ -275,24 +275,24 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
         case R.KOpaque{}:
           E.DAxiom{
             R.Reader.field("name", line),
-            Parse.nat_len(R.Reader.num_list("levelParams", line)),
+            R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
               Parse.exp(ex, ne, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KMeta{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
         case R.KName{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
         case R.KLevel{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
         case R.KExpr{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
         case R.KInductive{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
         case R.KQuot{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
         case R.KOther{}:
-          E.DAxiom{0n, 0n, T.TSort{L.LZero{}}}
+          E.DAxiom{0n, [], T.TSort{L.LZero{}}}
 
 # One line
 # --------

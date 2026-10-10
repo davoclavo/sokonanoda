@@ -33,18 +33,24 @@ def Kernel.is_prop(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> Bool:
 # Check one declaration against the declarations before it.
 def Kernel.check_decl(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> Bool:
   match d:
-    case E.DAxiom{id, nps, ty}:
-      Kernel.is_type(fuel, env, ty)
-    case E.DDef{id, nps, +ty, val}:
+    case E.DAxiom{id, ps, ty}:
       Bool.and(
-        Kernel.is_type(fuel, env, ty),
-        Kernel.has_type(fuel, env, val, ty))
-    case E.DThm{id, nps, +ty, val}:
+        E.Decl.no_dupes(ps),
+        Kernel.is_type(fuel, env, ty))
+    case E.DDef{id, ps, +ty, val}:
       Bool.and(
+        E.Decl.no_dupes(ps),
         Bool.and(
           Kernel.is_type(fuel, env, ty),
-          Kernel.is_prop(fuel, env, ty)),
-        Kernel.has_type(fuel, env, val, ty))
+          Kernel.has_type(fuel, env, val, ty)))
+    case E.DThm{id, ps, +ty, val}:
+      Bool.and(
+        E.Decl.no_dupes(ps),
+        Bool.and(
+          Bool.and(
+            Kernel.is_type(fuel, env, ty),
+            Kernel.is_prop(fuel, env, ty)),
+          Kernel.has_type(fuel, env, val, ty)))
 
 # True when a lookup found nothing.
 def Kernel.missing(lk: E.Lookup) -> Bool:
@@ -75,11 +81,11 @@ def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -
 # The kind of a declaration, for the report.
 def Kernel.kind_name(d: E.Decl) -> String:
   match d:
-    case E.DAxiom{id, nps, ty}:
+    case E.DAxiom{id, ps, ty}:
       "axiom"
-    case E.DDef{id, nps, ty, val}:
+    case E.DDef{id, ps, ty, val}:
       "def  "
-    case E.DThm{id, nps, ty, val}:
+    case E.DThm{id, ps, ty, val}:
       "thm  "
 
 # One line of the report.
