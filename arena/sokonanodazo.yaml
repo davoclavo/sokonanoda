@@ -32,11 +32,6 @@ description: |
   thread count also no longer caps itself at four, so the default uses every
   core.
 
-  Several ideas were measured and rejected: `target-cpu=native` beyond the PGO
-  build, the parent's `top-byte-ignore` feature on aarch64, newer dependency
-  versions, mimalloc tuning, and a larger `prune_dm` cache. The last of these
-  is markedly worse, because that table is cleared on every session reset.
-
   A larger architectural change is future work rather than something this
   submission claims.
 version: "0.5.0"
