@@ -36,7 +36,10 @@
       "lint-strict": "cargo clippy --all-targets -- -D warnings",
       "arena": "python3 tools/arena.py run \"$@\"",
       "arena-fetch": "python3 tools/arena.py fetch",
-      "arena-build": "python3 tools/arena.py build \"$@\""
+      "arena-build": "python3 tools/arena.py build \"$@\"",
+      "bend": "tools/bend.sh bend/main.bend",
+      "bend-proof": "tools/bend.sh bend/PROOF.bend",
+      "bend-verdict": "tools/bend.sh bend/PROOF.bend --verdict"
     }
   }
 }
