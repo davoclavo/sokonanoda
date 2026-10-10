@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.18.0/.schema/devbox.schema.json",
+  "packages": [
+    "rustc@1.97.1",
+    "cargo@1.97.1",
+    "clippy@1.97.1",
+    "rustfmt@1.97.1",
+    "libiconv@latest",
+    "elan@4.2.4",
+    "uv@0.12.5",
+    "curl@latest",
+    "gnutar@latest",
+    "python@3.13"
+  ],
+  "env": {
+    "CARGO_HOME": "$PWD/.devbox/cargo",
+    "RUST_BACKTRACE": "1",
+    "ELAN_HOME": "$PWD/.devbox/elan"
+  },
+  "shell": {
+    "init_hook": [
+      "export PATH=$CARGO_HOME/bin:$ELAN_HOME/bin:$PATH"
+    ],
+    "scripts": {
+      "build": "cargo build --release",
+      "run": "cargo run --release --",
+      "test": "cargo test",
+      "fmt": "cargo fmt --all",
+      "lint": "cargo clippy --all-targets",
+      "check": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets",
+        "cargo test"
+      ],
+      "lint-strict": "cargo clippy --all-targets -- -D warnings",
+      "arena": "python3 tools/arena.py run \"$@\"",
+      "arena-fetch": "python3 tools/arena.py fetch",
+      "arena-build": "python3 tools/arena.py build \"$@\""
+    }
+  }
+}
