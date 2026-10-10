@@ -2,6 +2,13 @@
 #
 # A declaration is checked against the declarations before it, as the Lean
 # kernel does, so a forward reference cannot resolve.
+#
+# An inductive type, a constructor and a recursor are checked only for a well
+# formed type. Their contents are taken on trust: nothing here derives the
+# recursor from the inductive specification and compares the two, and nothing
+# checks positivity. So a file whose recursor is a lie is accepted. That is
+# not a verdict this kernel is entitled to give, and `Kernel.trusts` reports
+# which declarations were taken on trust so a caller can decline instead.
 
 import Base
 import ./Level.bend as L
@@ -51,6 +58,18 @@ def Kernel.check_decl(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> Bool:
             Kernel.is_type(fuel, env, ty),
             Kernel.is_prop(fuel, env, ty)),
           Kernel.has_type(fuel, env, val, ty)))
+    case E.DInd{id, ps, ty, np, ni, ctors}:
+      Bool.and(
+        E.Decl.no_dupes(ps),
+        Kernel.is_type(fuel, env, ty))
+    case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
+      Bool.and(
+        E.Decl.no_dupes(ps),
+        Kernel.is_type(fuel, env, ty))
+    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      Bool.and(
+        E.Decl.no_dupes(ps),
+        Kernel.is_type(fuel, env, ty))
 
 # True when a lookup found nothing.
 def Kernel.missing(lk: E.Lookup) -> Bool:
@@ -87,6 +106,12 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "def  "
     case E.DThm{id, ps, ty, val}:
       "thm  "
+    case E.DInd{id, ps, ty, np, ni, ctors}:
+      "ind  "
+    case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
+      "ctor "
+    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      "rec  "
 
 # One line of the report.
 def Kernel.mark(ok: Bool, +id: Nat, +kind: String) -> String:
@@ -110,6 +135,27 @@ def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> S
           Kernel.check_decl(fuel, acc, h)),
         E.Decl.id(h),
         Kernel.kind_name(h)) ++ Kernel.report(t, fuel, Con{h, acc})
+
+# Is this declaration one whose contents are not checked?
+def Kernel.is_trusted(d: E.Decl) -> Bool:
+  match d:
+    case E.DInd{id, ps, ty, np, ni, ctors}:
+      True{}
+    case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
+      True{}
+    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      True{}
+    case o:
+      False{}
+
+# Did any declaration have to be taken on trust? A caller that cares about
+# soundness should decline rather than accept when this is true.
+def Kernel.trusts(ds: List<&2, E.Decl>) -> Bool:
+  match ds:
+    case Nil{}:
+      False{}
+    case Con{+h, t}:
+      Bool.or(Kernel.is_trusted(h), Kernel.trusts(t))
 
 # How many declarations are there?
 def Kernel.count(ds: List<&2, E.Decl>, +acc: Nat) -> Nat:

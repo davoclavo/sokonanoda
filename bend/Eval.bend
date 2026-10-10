@@ -61,6 +61,148 @@ def Eval.unfold_of(lk: E.Lookup, +ls: List<&2, L.Level>, dflt: T.Term) -> T.Term
     case E.LMissing{}:
       dflt
 
+# Iota reduction
+# --------------
+#
+# A recursor applied to a constructor computes. Its arguments come in the
+# order the declaration states: parameters, motives, minor premises, indices,
+# then the major premise. When the major premise reduces to a constructor,
+# the rule for that constructor replaces the whole application.
+#
+# The right-hand side of a rule expects the recursor's parameters, motives and
+# minor premises, then the constructor's fields, which are its arguments past
+# its parameters. Whatever followed the major premise is applied after that.
+
+# The position of the major premise among a recursor's arguments.
+def Eval.major_idx(+d: E.Decl) -> Nat:
+  Nat.add(
+    Nat.add(E.Decl.rec_np(d), E.Decl.rec_nm(d)),
+    Nat.add(E.Decl.rec_nmin(d), E.Decl.rec_ni(d)))
+
+# How long is this list?
+def Eval.len(xs: List<&2, T.Term>, +acc: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{h, t}:
+      Eval.len(t, 1n+acc)
+
+# The i-th term, or a sort when the list is too short.
+def Eval.nth(xs: List<&2, T.Term>, i: Nat) -> T.Term:
+  match xs:
+    case Nil{}:
+      T.TSort{L.LZero{}}
+    case Con{h, t}:
+      match i:
+        case 0n:
+          h
+        case 1n+p:
+          Eval.nth(t, p)
+
+# The first `n` terms.
+def Eval.take(xs: List<&2, T.Term>, n: Nat) -> List<&2, T.Term>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{h, t}:
+      match n:
+        case 0n:
+          Nil{}
+        case 1n+p:
+          Con{h, Eval.take(t, p)}
+
+# Everything past the first `n` terms.
+def Eval.drop(xs: List<&2, T.Term>, n: Nat) -> List<&2, T.Term>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{h, t}:
+      match n:
+        case 0n:
+          Con{h, t}
+        case 1n+p:
+          Eval.drop(t, p)
+
+# Peel an application into its head and its arguments, in order.
+def Eval.spine(t: T.Term, +acc: List<&2, T.Term>) -> List<&2, T.Term>:
+  match t:
+    case T.TApp{f, a}:
+      Eval.spine(f, Con{a, acc})
+    case x:
+      acc
+
+# The head of an application.
+def Eval.head(t: T.Term) -> T.Term:
+  match t:
+    case T.TApp{f, a}:
+      Eval.head(f)
+    case x:
+      x
+
+# The name a head names, or zero. Guard with `Eval.head_is_const`.
+def Eval.head_name(t: T.Term) -> Nat:
+  match t:
+    case T.TConst{n, ls}:
+      n
+    case x:
+      0n
+
+# Is the head of this application a constant?
+def Eval.head_is_const(t: T.Term) -> Bool:
+  match t:
+    case T.TConst{n, ls}:
+      True{}
+    case x:
+      False{}
+
+# Unwrap a rule, or none.
+def Eval.rule_ok(m: Maybe<&2, E.RecRule>) -> Bool:
+  match m:
+    case Some{r}:
+      True{}
+    case None{}:
+      False{}
+
+def Eval.rule_get(m: Maybe<&2, E.RecRule>) -> E.RecRule:
+  match m:
+    case Some{r}:
+      r
+    case None{}:
+      E.MkRule{0n, 0n, T.TSort{L.LZero{}}}
+
+# Can iota fire here? The declaration must be a recursor, the spine must reach
+# the major premise, and the reduced major premise must be a constructor this
+# recursor has a rule for.
+def Eval.can_iota(+d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term) -> Bool:
+  Bool.and(
+    Bool.and(
+      E.Decl.is_rec(d),
+      Nat.is_lt(Eval.major_idx(d), Eval.len(sp, 0n))),
+    Bool.and(
+      Eval.head_is_const(Eval.head(mw)),
+      Eval.rule_ok(
+        E.Decl.rule_for(E.Decl.rec_rules(d), Eval.head_name(Eval.head(mw))))))
+
+# The term a fired rule reduces to. Guard with `Eval.can_iota`.
+def Eval.iota_term(
+  +d: E.Decl, +ls: List<&2, L.Level>, +sp: List<&2, T.Term>, +mw: T.Term
+) -> T.Term:
+  +rule = Eval.rule_get(
+    E.Decl.rule_for(E.Decl.rec_rules(d), Eval.head_name(Eval.head(mw))))
+  Eval.rebuild(
+    List.append(&2, T.Term,
+      Eval.take(
+        Eval.drop(Eval.spine(mw, Nil{}), E.Decl.rec_np(d)),
+        E.RecRule.nfields(rule)),
+      Eval.drop(sp, 1n+Eval.major_idx(d))),
+    Eval.rebuild(
+      Eval.take(
+        sp,
+        Nat.add(
+          Nat.add(E.Decl.rec_np(d), E.Decl.rec_nm(d)),
+          E.Decl.rec_nmin(d))),
+      T.Term.subst_levels(E.RecRule.rhs(rule), ls)))
+
 # Reduce `t` applied to `sp` to weak head normal form.
 def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
@@ -73,10 +215,15 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
         case T.TSort{l}:
           Eval.rebuild(sp, T.TSort{l})
         case T.TConst{+n, +ls}:
+          +d = E.Lookup.get(E.Env.find(env, n))
+          +mw = Eval.whnf(f, env, Eval.nth(sp, Eval.major_idx(d)), Nil{})
           Eval.pick_t(
-            Eval.is_def(E.Env.find(env, n)),
+            E.Decl.is_def(d),
             Eval.whnf(f, env, Eval.unfold_of(E.Env.find(env, n), ls, T.TConst{n, ls}), sp),
-            Eval.rebuild(sp, T.TConst{n, ls}))
+            Eval.pick_t(
+              Eval.can_iota(d, sp, mw),
+              Eval.whnf(f, env, Eval.iota_term(d, ls, sp, mw), Nil{}),
+              Eval.rebuild(sp, T.TConst{n, ls})))
         case T.TApp{g, a}:
           Eval.whnf(f, env, g, Con{a, sp})
         case T.TLam{ty, bd}:

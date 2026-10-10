@@ -302,6 +302,165 @@ def Reader.num_list(+key: String, +line: List<&2, U32>) -> List<&2, Nat>:
       93,
       Reader.after(key, line)))
 
+# Nested structure
+# ----------------
+#
+# An inductive block nests arrays of objects, and the same key appears in
+# several of them: `name` is in the type, in every constructor and in the
+# recursor. So a field cannot be found by taking the first occurrence in the
+# line. The bytes have to be cut into the array, and the array into its
+# objects, before a field is read.
+#
+# Brackets and braces are counted for that. A line of an export has no string
+# that contains a bracket, so counting is enough and no quote tracking is
+# needed.
+
+# Is this byte an opening bracket or brace?
+def Reader.is_open(+c: U32) -> Bool:
+  Bool.or(U32.is_eq(c, 91), U32.is_eq(c, 123))
+
+# Is this byte a closing bracket or brace?
+def Reader.is_close(+c: U32) -> Bool:
+  Bool.or(U32.is_eq(c, 93), U32.is_eq(c, 125))
+
+# Choose between two numbers on a computed Bool.
+def Reader.pick_nat(b: Bool, x: Nat, y: Nat) -> Nat:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The depth after this byte.
+def Reader.bump(+d: Nat, +c: U32) -> Nat:
+  Reader.pick_nat(
+    Reader.is_open(c),
+    1n+d,
+    Reader.pick_nat(Reader.is_close(c), Nat.sub(d, 1n), d))
+
+# Drop the head of a list.
+def Reader.drop1(xs: List<&2, U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{c, r}:
+      r
+
+# The bytes inside a bracketed run, with the brackets removed. `xs` must start
+# at the opening bracket. `started` is false for that first byte, which is
+# consumed but not kept; the run ends when the depth returns to zero, and the
+# closing byte was accumulated by then, so the head of the accumulator goes.
+def Reader.bal(fuel: Nat, started: Bool, d: Nat, +acc: List<&2, U32>, xs: List<&2, U32>) -> List<&2, U32>:
+  match fuel:
+    case 0n:
+      Reader.rev(Reader.line_fuel(), Nil{}, acc)
+    case 1n+f:
+      match started:
+        case False{}:
+          match xs:
+            case Nil{}:
+              Nil{}
+            case Con{+c, r}:
+              Reader.bal(f, True{}, Reader.bump(0n, c), acc, r)
+        case True{}:
+          match d:
+            case 0n:
+              Reader.rev(Reader.line_fuel(), Nil{}, Reader.drop1(acc))
+            case 1n+dd:
+              match xs:
+                case Nil{}:
+                  Reader.rev(Reader.line_fuel(), Nil{}, acc)
+                case Con{+c, r}:
+                  Reader.bal(f, True{}, Reader.bump(1n+dd, c), Con{c, acc}, r)
+
+# The contents of the array or object that follows `key`.
+def Reader.inside(+key: String, +line: List<&2, U32>) -> List<&2, U32>:
+  Reader.bal(Reader.line_fuel(), False{}, 0n, Nil{}, Reader.after(key, line))
+
+# One object of a comma-separated list, and what follows it. `d` is the depth
+# and `started` says the opening brace has been passed, as in `Reader.bal`.
+def Reader.obj(fuel: Nat, started: Bool, d: Nat, +acc: List<&2, U32>, xs: List<&2, U32>) -> Line:
+  match fuel:
+    case 0n:
+      LEnd{}
+    case 1n+f:
+      match started:
+        case False{}:
+          match xs:
+            case Nil{}:
+              LEnd{}
+            case Con{+c, r}:
+              Reader.obj(f, True{}, Reader.bump(0n, c), acc, r)
+        case True{}:
+          match d:
+            case 0n:
+              LLine{
+                Reader.rev(Reader.line_fuel(), Nil{}, Reader.drop1(acc)),
+                xs}
+            case 1n+dd:
+              match xs:
+                case Nil{}:
+                  LLine{Reader.rev(Reader.line_fuel(), Nil{}, acc), Nil{}}
+                case Con{+c, r}:
+                  Reader.obj(f, True{}, Reader.bump(1n+dd, c), Con{c, acc}, r)
+
+# Peek: is there another object here? The separator is a comma, which is
+# skipped before the test.
+def Reader.more_objs(+xs: List<&2, U32>) -> Bool:
+  Bool.or(
+    B.Bytes.starts_with(xs, 123),
+    Bool.and(B.Bytes.starts_with(xs, 44), B.Bytes.starts_with(Reader.drop1(xs), 123)))
+
+# Choose between two byte lists on a computed Bool.
+def Reader.pick_bytes(b: Bool, x: List<&2, U32>, y: List<&2, U32>) -> List<&2, U32>:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# Step past a separating comma.
+def Reader.skip_comma(+xs: List<&2, U32>) -> List<&2, U32>:
+  Reader.pick_bytes(B.Bytes.starts_with(xs, 44), Reader.drop1(xs), xs)
+
+# Reverse a list of objects.
+def Reader.rev_objs(
+  fuel: Nat, +acc: List<&2, List<&2, U32>>, xs: List<&2, List<&2, U32>>
+) -> List<&2, List<&2, U32>>:
+  match fuel:
+    case 0n:
+      acc
+    case 1n+f:
+      match xs:
+        case Nil{}:
+          acc
+        case Con{h, t}:
+          Reader.rev_objs(f, Con{h, acc}, t)
+
+# Split a comma-separated list of objects. `go` says another object follows.
+def Reader.objects(
+  fuel: Nat, go: Bool, +out: List<&2, List<&2, U32>>, xs: List<&2, U32>
+) -> List<&2, List<&2, U32>>:
+  match fuel:
+    case 0n:
+      Reader.rev_objs(Reader.line_fuel(), Nil{}, out)
+    case 1n+f:
+      match go:
+        case False{}:
+          Reader.rev_objs(Reader.line_fuel(), Nil{}, out)
+        case True{}:
+          +o = Reader.obj(Reader.line_fuel(), False{}, 0n, Nil{}, Reader.skip_comma(xs))
+          Reader.objects(
+            f,
+            Reader.more_objs(Reader.line_rest(o)),
+            Con{Reader.line_bytes(o), out},
+            Reader.line_rest(o))
+
+# The objects of the array that follows `key`.
+def Reader.obj_list(+key: String, +line: List<&2, U32>) -> List<&2, List<&2, U32>>:
+  +inner = Reader.inside(key, line)
+  Reader.objects(Reader.line_fuel(), Reader.more_objs(inner), Nil{}, inner)
+
 # The number that follows `key` in this line, or zero.
 def Reader.field(+key: String, +line: List<&2, U32>) -> Nat:
   Reader.num_of(

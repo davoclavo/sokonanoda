@@ -294,6 +294,122 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
         case R.KOther{}:
           E.DAxiom{0n, [], T.TSort{L.LZero{}}}
 
+# Inductive blocks
+# ----------------
+#
+# One line carries the whole block: the inductive types, their constructors,
+# and their recursors with the computation rules. Each is an array of objects,
+# and the same key appears in several of them, so `Reader.obj_list` cuts the
+# arrays into objects first and a field is read from one object.
+#
+# Everything is read at the expression table as it stood before the block, so
+# a block may not name an expression written after it.
+
+# One computation rule.
+def Parse.rule_of(+o: List<&2, U32>, +st: PState) -> E.RecRule:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds}:
+      E.MkRule{
+        R.Reader.field("ctor", o),
+        R.Reader.field("nfields", o),
+        Parse.exp(ex, ne, R.Reader.field("rhs", o))}
+
+# Every rule of one recursor.
+def Parse.rules_of(os: List<&2, List<&2, U32>>, +st: PState) -> List<&2, E.RecRule>:
+  match os:
+    case Nil{}:
+      Nil{}
+    case Con{o, t}:
+      Con{Parse.rule_of(o, st), Parse.rules_of(t, st)}
+
+# One inductive type.
+def Parse.ind_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds}:
+      E.DInd{
+        R.Reader.field("name", o),
+        R.Reader.num_list("levelParams", o),
+        T.Term.remap_levels(
+          Parse.exp(ex, ne, R.Reader.field("type", o)),
+          R.Reader.num_list("levelParams", o)),
+        R.Reader.field("numParams", o),
+        R.Reader.field("numIndices", o),
+        R.Reader.num_list("ctors", o)}
+
+# One constructor.
+def Parse.ctor_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds}:
+      E.DCtor{
+        R.Reader.field("name", o),
+        R.Reader.num_list("levelParams", o),
+        T.Term.remap_levels(
+          Parse.exp(ex, ne, R.Reader.field("type", o)),
+          R.Reader.num_list("levelParams", o)),
+        R.Reader.field("induct", o),
+        R.Reader.field("cidx", o),
+        R.Reader.field("numParams", o),
+        R.Reader.field("numFields", o)}
+
+# One recursor.
+def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds}:
+      E.DRec{
+        R.Reader.field("name", o),
+        R.Reader.num_list("levelParams", o),
+        T.Term.remap_levels(
+          Parse.exp(ex, ne, R.Reader.field("type", o)),
+          R.Reader.num_list("levelParams", o)),
+        R.Reader.field("numParams", o),
+        R.Reader.field("numIndices", o),
+        R.Reader.field("numMotives", o),
+        R.Reader.field("numMinors", o),
+        False{},
+        Parse.rules_of(
+          R.Reader.obj_list("rules", o),
+          MkPS{nl, lv, ne, ex, ds}),
+        R.Reader.num_list("all", o)}
+
+# Add every object of an array, in order, to the declarations.
+def Parse.add_inds(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>) -> List<&2, E.Decl>:
+  match os:
+    case Nil{}:
+      ds
+    case Con{o, t}:
+      Parse.add_inds(t, st, Con{Parse.ind_of(o, st), ds})
+
+def Parse.add_ctors(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>) -> List<&2, E.Decl>:
+  match os:
+    case Nil{}:
+      ds
+    case Con{o, t}:
+      Parse.add_ctors(t, st, Con{Parse.ctor_of(o, st), ds})
+
+def Parse.add_recs(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>) -> List<&2, E.Decl>:
+  match os:
+    case Nil{}:
+      ds
+    case Con{o, t}:
+      Parse.add_recs(t, st, Con{Parse.rec_of(o, st), ds})
+
+# Fold a whole inductive block into the declarations: the types first, then
+# the constructors, then the recursors, which is the order a later
+# declaration may rely on.
+def Parse.block_of(+line: List<&2, U32>, +st: PState) -> List<&2, E.Decl>:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds}:
+      Parse.add_recs(
+        R.Reader.obj_list("recs", line),
+        MkPS{nl, lv, ne, ex, ds},
+        Parse.add_ctors(
+          R.Reader.obj_list("ctors", line),
+          MkPS{nl, lv, ne, ex, ds},
+          Parse.add_inds(
+            R.Reader.obj_list("types", line),
+            MkPS{nl, lv, ne, ex, ds},
+            ds)))
+
 # One line
 # --------
 
@@ -330,7 +446,8 @@ def Parse.step(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> PState:
         case R.KName{}:
           MkPS{nl, lv, ne, ex, ds}
         case R.KInductive{}:
-          MkPS{nl, lv, ne, ex, ds}
+          MkPS{nl, lv, ne, ex,
+            Parse.block_of(line, MkPS{nl, lv, ne, ex, ds})}
         case R.KQuot{}:
           MkPS{nl, lv, ne, ex, ds}
         case R.KOther{}:

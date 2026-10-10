@@ -5,10 +5,10 @@
 #
 #   SOKO_EXPORT=<path to a .ndjson export> bend bend/check.bend
 #
-# The verdict covers only what this kernel implements. An export with
-# inductive types, quotients, projections or literals is read but those
-# declarations are skipped, so a verdict on such a file means nothing. The
-# tutorial tests 001 to 018 are inside the fragment.
+# The verdict covers only what this kernel implements. An inductive block is
+# read and its types are checked, but nothing derives the recursor from the
+# specification, so such a file answers `declined` rather than `accept`.
+# Quotients, projections and literals are still skipped entirely.
 
 import Base
 import ./Bytes.bend as B
@@ -31,12 +31,24 @@ def Check.bytes(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> List<&
   Result.default(&1, &1, U32 & String, List<&2, U32>,
     Pair.snd(File, Result<&1, &1, U32 & String, List<&2, U32>>, r), Nil{})
 
-def Check.show(b: Bool) -> String:
-  match b:
+def Check.trusted_word(t: Bool) -> String:
+  match t:
     case True{}:
+      "declined (an inductive block was taken on trust)"
+    case False{}:
       "accept"
+
+# The verdict. A file whose inductive block had to be taken on trust gets
+# `declined` rather than `accept`, because this kernel does not derive the
+# recursor and so is not entitled to accept it. `reject` needs no trust: a
+# declaration that fails a check this kernel does make is wrong whatever the
+# recursor says.
+def Check.show(ok: Bool, trusted: Bool) -> String:
+  match ok:
     case False{}:
       "reject"
+    case True{}:
+      Check.trusted_word(trusted)
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -46,4 +58,4 @@ def main() -> IO(Unit):
     +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Check.bytes(r)))
     IO.print("declarations " ++ Nat.show(K.Kernel.count(ds, 0n)))
     IO.print(K.Kernel.report(ds, Check.fuel(), Nil{}))
-    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), Nil{})))
+    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), Nil{}), K.Kernel.trusts(ds)))

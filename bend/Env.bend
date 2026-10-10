@@ -16,10 +16,26 @@ import Base
 import ./Level.bend as L
 import ./Term.bend as T
 
+# One computation rule of a recursor: for this constructor, with this many
+# fields, reduce to this right-hand side.
+type RecRule is Data:
+  MkRule{ctor: Nat, nfields: Nat, rhs: T.Term}
+
 type Decl is Data:
   DAxiom{id: Nat, ps: List<&2, Nat>, ty: T.Term}
   DDef{id: Nat, ps: List<&2, Nat>, ty: T.Term, val: T.Term}
   DThm{id: Nat, ps: List<&2, Nat>, ty: T.Term, val: T.Term}
+  # An inductive type. `np` parameters and `ni` indices, with the names of its
+  # constructors.
+  DInd{id: Nat, ps: List<&2, Nat>, ty: T.Term, np: Nat, ni: Nat, ctors: List<&2, Nat>}
+  # A constructor of `ind`, the `cidx`-th, with `np` parameters and `nf` fields.
+  DCtor{id: Nat, ps: List<&2, Nat>, ty: T.Term, ind: Nat, cidx: Nat, np: Nat, nf: Nat}
+  # A recursor. Its arguments come in the order: `np` parameters, `nm`
+  # motives, `nmin` minor premises, `ni` indices, then the major premise.
+  DRec{
+    id: Nat, ps: List<&2, Nat>, ty: T.Term,
+    np: Nat, ni: Nat, nm: Nat, nmin: Nat,
+    k: Bool, rules: List<&2, RecRule>, inds: List<&2, Nat>}
 
 type Lookup is Data:
   LFound{d: Decl}
@@ -42,6 +58,12 @@ def Decl.id(d: Decl) -> Nat:
       id
     case DThm{id, ps, ty, val}:
       id
+    case DInd{id, ps, ty, np, ni, ctors}:
+      id
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      id
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      id
 
 # True when this declaration is a theorem, whose type must be a Prop.
 def Decl.is_thm(d: Decl) -> Bool:
@@ -52,6 +74,12 @@ def Decl.is_thm(d: Decl) -> Bool:
       False{}
     case DThm{id, ps, ty, val}:
       True{}
+    case DInd{id, ps, ty, np, ni, ctors}:
+      False{}
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      False{}
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      False{}
 
 # True when this declaration has a value, so delta reduction can unfold it.
 def Decl.is_def(d: Decl) -> Bool:
@@ -62,6 +90,12 @@ def Decl.is_def(d: Decl) -> Bool:
       True{}
     case DThm{id, ps, ty, val}:
       True{}
+    case DInd{id, ps, ty, np, ni, ctors}:
+      False{}
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      False{}
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      False{}
 
 # How many numbers a list holds. A level parameter list is a handful long.
 def Decl.len(xs: List<&2, Nat>) -> Nat:
@@ -97,6 +131,12 @@ def Decl.num_params(d: Decl) -> Nat:
       Decl.len(ps)
     case DThm{id, ps, ty, val}:
       Decl.len(ps)
+    case DInd{id, ps, ty, np, ni, ctors}:
+      Decl.len(ps)
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      Decl.len(ps)
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      Decl.len(ps)
 
 # The level parameters a declaration takes.
 def Decl.params(d: Decl) -> List<&2, Nat>:
@@ -107,6 +147,12 @@ def Decl.params(d: Decl) -> List<&2, Nat>:
       ps
     case DThm{id, ps, ty, val}:
       ps
+    case DInd{id, ps, ty, np, ni, ctors}:
+      ps
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      ps
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      ps
 
 # The declared type of a declaration, with its level parameters replaced.
 def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
@@ -116,6 +162,12 @@ def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
     case DDef{id, ps, ty, val}:
       T.Term.subst_levels(ty, ls)
     case DThm{id, ps, ty, val}:
+      T.Term.subst_levels(ty, ls)
+    case DInd{id, ps, ty, np, ni, ctors}:
+      T.Term.subst_levels(ty, ls)
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      T.Term.subst_levels(ty, ls)
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       T.Term.subst_levels(ty, ls)
 
 # The value of a definition, with its level parameters replaced. An axiom has
@@ -128,6 +180,116 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
       Some{T.Term.subst_levels(val, ls)}
     case DThm{id, ps, ty, val}:
       Some{T.Term.subst_levels(val, ls)}
+    case DInd{id, ps, ty, np, ni, ctors}:
+      None{}
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      None{}
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      None{}
+
+# A recursor's argument layout, and its rules. A declaration that is not a
+# recursor answers zero, so guard these with `Decl.is_rec`.
+def Decl.is_rec(d: Decl) -> Bool:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      True{}
+    case o:
+      False{}
+
+def Decl.rec_np(d: Decl) -> Nat:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      np
+    case o:
+      0n
+
+def Decl.rec_ni(d: Decl) -> Nat:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      ni
+    case o:
+      0n
+
+def Decl.rec_nm(d: Decl) -> Nat:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      nm
+    case o:
+      0n
+
+def Decl.rec_nmin(d: Decl) -> Nat:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      nmin
+    case o:
+      0n
+
+def Decl.rec_rules(d: Decl) -> List<&2, RecRule>:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      rules
+    case o:
+      Nil{}
+
+# A constructor's layout. Guard with `Decl.is_ctor`.
+def Decl.is_ctor(d: Decl) -> Bool:
+  match d:
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      True{}
+    case o:
+      False{}
+
+def Decl.ctor_np(d: Decl) -> Nat:
+  match d:
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      np
+    case o:
+      0n
+
+# One rule's parts.
+def RecRule.ctor(r: RecRule) -> Nat:
+  match r:
+    case MkRule{c, n, rhs}:
+      c
+
+def RecRule.nfields(r: RecRule) -> Nat:
+  match r:
+    case MkRule{c, n, rhs}:
+      n
+
+def RecRule.rhs(r: RecRule) -> T.Term:
+  match r:
+    case MkRule{c, n, rhs}:
+      rhs
+
+# Choose between a rule and the rest of the search.
+def Decl.pick_rule(b: Bool, h: RecRule, rest: Maybe<&2, RecRule>) -> Maybe<&2, RecRule>:
+  match b:
+    case True{}:
+      Some{h}
+    case False{}:
+      rest
+
+# The rule for this constructor, or none.
+def Decl.rule_for(rs: List<&2, RecRule>, +c: Nat) -> Maybe<&2, RecRule>:
+  match rs:
+    case Nil{}:
+      None{}
+    case Con{+h, t}:
+      Decl.pick_rule(Nat.is_eq(RecRule.ctor(h), c), h, Decl.rule_for(t, c))
+
+# A declaration to stand in with when a lookup found nothing. Guard with
+# `Env.found`.
+def Decl.none() -> Decl:
+  DAxiom{0n, Nil{}, T.TSort{L.LZero{}}}
+
+# The declaration a lookup found, or the stand-in.
+def Lookup.get(lk: Lookup) -> Decl:
+  match lk:
+    case LFound{d}:
+      d
+    case LMissing{}:
+      Decl.none()
 
 # Find a declaration by id.
 def Env.find(env: List<&2, Decl>, +i: Nat) -> Lookup:
