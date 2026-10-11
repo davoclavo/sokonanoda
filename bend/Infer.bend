@@ -237,13 +237,24 @@ def Infer.proj_walk(
             tn, s)
 
 # Is this structure's type one this kernel can project from?
-def Infer.proj_ok(+env: E.DTable, +sty: T.Term) -> Bool:
+# Is this structure's type one this kernel can project from, and is it the
+# structure the node says it is?
+#
+# The node carries a type name of its own and the kernel reads the field from
+# the inferred type, so a name that does not match is not read at all. It is
+# still wrong, and it is not harmless: the name goes into the term, where
+# `Conv.proj_step` compares two projections by it and reduction reads it. The
+# reference kernel rejects the mismatch and so does this.
+def Infer.proj_ok(+env: E.DTable, +sty: T.Term, +tn: Nat) -> Bool:
   Bool.and(
-    E.Decl.is_ind(
-      E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
-    E.Decl.is_one(
-      E.Decl.ind_ctors(
-        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))
+    Nat.is_eq(tn, V.Eval.head_name(V.Eval.head(sty))),
+    Bool.and(
+      E.Decl.is_ind(
+        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
+      E.Decl.is_one(
+        E.Decl.ind_ctors(
+          E.Lookup.get(
+            E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))))))
 
 # Put the structure's parameters into the constructor's type.
 #
@@ -423,7 +434,7 @@ def Infer.proj_from(
     Nil{})
   Infer.res_of(
     A.Ans.and(
-      A.Ans.and(A.Ans.of(Infer.proj_ok(env, sty)), Infer.pi_ans(w)),
+      A.Ans.and(A.Ans.of(Infer.proj_ok(env, sty, tn)), Infer.pi_ans(w)),
       Infer.proj_prefix_ans(
         fuel, env, idx, 0n, Infer.proj_base(fuel, env, sty), tn, s,
         Infer.ind_is_prop(env, sty), ctx)),

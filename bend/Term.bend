@@ -224,6 +224,44 @@ def Term.occurs_any(ts: List<&2, Term>, +n: Nat) -> Bool:
     case Con{h, t}:
       Bool.or(Term.occurs(h, n), Term.occurs_any(t, n))
 
+# Is every level parameter in this list one of the first `n`?
+def Term.pars_ok_levels(ls: List<&2, L.Level>, +n: Nat) -> Bool:
+  match ls:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      Bool.and(L.Level.pars_ok(h, n), Term.pars_ok_levels(t, n))
+
+# Is every level parameter in this term one of the first `n`?
+#
+# A declaration that names a universe it did not declare is rejected by the
+# Lean kernel, and `Level.param_pos` leaves a marker for one, so this is where
+# the marker is caught.
+def Term.pars_ok(t: Term, +n: Nat) -> Bool:
+  match t:
+    case TVar{i}:
+      True{}
+    case TSort{l}:
+      L.Level.pars_ok(l, n)
+    case TConst{m, ls}:
+      Term.pars_ok_levels(ls, n)
+    case TApp{f, a}:
+      Bool.and(Term.pars_ok(f, n), Term.pars_ok(a, n))
+    case TLam{ty, bd}:
+      Bool.and(Term.pars_ok(ty, n), Term.pars_ok(bd, n))
+    case TPi{ty, bd}:
+      Bool.and(Term.pars_ok(ty, n), Term.pars_ok(bd, n))
+    case TLet{ty, v, bd}:
+      Bool.and(
+        Bool.and(Term.pars_ok(ty, n), Term.pars_ok(v, n)),
+        Term.pars_ok(bd, n))
+    case TNat{v, m, z, c}:
+      True{}
+    case TUnk{}:
+      True{}
+    case TProj{tn, idx, st}:
+      Term.pars_ok(st, n)
+
 # Does this term use the variable bound `d` binders out?
 #
 # The Lean kernel calls this a loose bound variable. A projection out of a

@@ -551,6 +551,21 @@ def Kernel.missing(lk: E.Lookup) -> Bool:
 def Kernel.is_fresh(+env: E.DTable, +i: Nat) -> Bool:
   Kernel.missing(E.Env.find(env, i))
 
+# Does this declaration name only the universes it declares?
+#
+# The Lean kernel rejects one that does, and this kernel has to, because
+# `Level.param_pos` numbers a declaration's parameters by position: a name
+# index that is smaller than the number of declared parameters would be read
+# as one of them, so a file could use a universe it never declared and have
+# it taken for a universe it did. The marker `Level.param_pos` leaves is out
+# of range, and so is any index past the last declared parameter.
+def Kernel.pars_ok(+d: E.Decl) -> Bool:
+  Bool.and(
+    T.Term.pars_ok(
+      E.Decl.raw_ty(d), List.length(&2, Nat, E.Decl.params(d))),
+    T.Term.pars_ok(
+      E.Decl.raw_val(d), List.length(&2, Nat, E.Decl.params(d))))
+
 # Check every declaration, each against the ones before it, with the answer
 # so far as a parameter.
 #
@@ -573,7 +588,9 @@ def Kernel.check_from(
         A.Ans.and(
           o,
           A.Ans.and(
-            A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
+            A.Ans.and(
+              A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
+              A.Ans.of(Kernel.pars_ok(h))),
             Kernel.check_decl(fuel, acc, h))),
         fuel,
         E.Env.add(acc, h))
@@ -832,7 +849,9 @@ def Kernel.run_from(
       (A.ANo{}, "")
     case Con{+h, t} o:
       +b : A.Ans = A.Ans.and(
-        A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
+        A.Ans.and(
+          A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
+          A.Ans.of(Kernel.pars_ok(h))),
         Kernel.check_decl(fuel, acc, h))
       line : String = Kernel.mark(b, E.Decl.id(h), Kernel.kind_name(h), fuel, acc, h)
       Kernel.run_join(line, Kernel.run_from(t, A.Ans.and(o, b), fuel, E.Env.add(acc, h)))

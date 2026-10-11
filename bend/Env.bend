@@ -194,6 +194,40 @@ def Decl.params(d: Decl) -> List<&2, Nat>:
     case DPrim{id, ps, ty, val, op, yes, no}:
       ps
 
+# The declared type as it is stored, with its level parameters at the
+# positions the reader gave them. `Decl.type_at` rebuilds the term to
+# substitute; this reads it.
+def Decl.raw_ty(d: Decl) -> T.Term:
+  match d:
+    case DAxiom{id, ps, ty}:
+      ty
+    case DDef{id, ps, ty, val}:
+      ty
+    case DThm{id, ps, ty, val}:
+      ty
+    case DInd{id, ps, ty, np, ni, ctors}:
+      ty
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      ty
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
+      ty
+    case DQuot{id, ps, ty, kind, eq}:
+      ty
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      ty
+
+# The stored value, or the unknown term for a declaration with none.
+def Decl.raw_val(d: Decl) -> T.Term:
+  match d:
+    case DDef{id, ps, ty, val}:
+      val
+    case DThm{id, ps, ty, val}:
+      val
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      val
+    case o:
+      T.TUnk{}
+
 # The declared type of a declaration, with its level parameters replaced.
 def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
   match d:

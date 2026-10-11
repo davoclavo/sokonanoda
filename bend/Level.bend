@@ -467,12 +467,37 @@ def Level.eq(+fuel: Nat, +a: Level, +b: Level) -> Bool:
 # The position of name index `j` among `ps`, as a level, or `LPar{j}` when `j`
 # is not one of them. The search is over the declaration's level parameters,
 # which number a handful, so it needs no table and no fuel.
+# A position no declaration can have, for a level parameter the declaration
+# does not declare.
+#
+# Answering the name index instead was unsound. A declaration names its
+# parameters by position after this, so a name index that happens to be
+# smaller than the number of declared parameters would be read as one of
+# them: a file could use a universe it never declared and have it taken for a
+# universe it did. `Level.pars_ok` is what refuses the marker.
+def Level.bad_par() -> Nat:
+  1000000n
+
 def Level.param_pos(ps: List<&2, Nat>, +j: Nat, +k: Nat) -> Level:
   match ps:
     case Nil{}:
-      LPar{j}
+      LPar{Level.bad_par()}
     case Con{+h, t}:
       Level.pick(Nat.is_eq(h, j), LPar{k}, Level.param_pos(t, j, 1n+k))
+
+# Is every parameter of this level one of the first `n`?
+def Level.pars_ok(l: Level, +n: Nat) -> Bool:
+  match l:
+    case LZero{}:
+      True{}
+    case LSucc{x}:
+      Level.pars_ok(x, n)
+    case LMax{a, b}:
+      Bool.and(Level.pars_ok(a, n), Level.pars_ok(b, n))
+    case LIMax{a, b}:
+      Bool.and(Level.pars_ok(a, n), Level.pars_ok(b, n))
+    case LPar{+i}:
+      Nat.is_lt(i, n)
 
 # Renumber a level's parameters from name index to position.
 #
