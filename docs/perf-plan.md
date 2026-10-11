@@ -667,3 +667,19 @@ So the nine files that time out are not a tuning problem. Five of them are
 small files built to punish a kernel with no sharing, and `init-prelude` is
 large and wants throughput this representation does not have. B13 says what
 the missing piece is and why Bend charges for it.
+
+### How to look for what a limit is hiding
+
+Five of this kernel's bugs were latent wrong answers behind something that
+stopped the run early. Four were found by accident, after a change made the
+kernel faster. The fifth was found on purpose, and the method is worth
+writing down.
+
+**Run the corpus at a small budget.** A declaration that gives up early costs
+little, so the walk reaches far more declarations than it does at a large
+budget. `init-prelude` at a fuel of 300 answers in two seconds where at 30000
+it runs past sixty, and that run is what found `2 ^ 64` crashing the runtime.
+
+It is also the broadest correctness check available: at a small budget every
+declaration either passes or declines, so **any rejection is a bug**. Use it
+after any change to the rules, and not only the arena's 195 files.

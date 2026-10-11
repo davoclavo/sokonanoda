@@ -610,7 +610,32 @@ rejected a class from Lean's own prelude.
 With both, the file gets far enough to run out of time rather than answer
 wrongly, and the two cost 1.01x on the bench set.
 
-### The pattern, four times over
+### A number too large, again
+
+`init-prelude` has a cliff rather than a slope: 500 declarations in 0.7 s and
+700 past seventy seconds. Running the whole file at a budget of **300**, where
+every declaration gives up early and the walk gets much further, took two
+seconds and ended in
+
+```
+bend: a Nat past the largest immediate 2^48-1
+```
+
+Lean's prelude defines `UInt64.size` as `2 ^ 64`. The native power computed it
+and the runtime stopped the program dead. The reader had a cap for a literal
+this large from the start; the arithmetic had none.
+
+Every operation is bounded by 2^47 now. A product is formed only after a
+division shows it fits, a sum only after a subtraction does, and a power
+multiplies through the guarded product. A result that reaches the cap becomes
+the unknown term, so a file that needs `2 ^ 64` declines rather than dies.
+Division and the remainder by zero answer zero, as Lean defines them.
+
+That low-budget run is now the broadest check this kernel has. At a budget of
+300, **every one of the prelude's 1698 declarations either passes or runs out
+of budget, and none is rejected.**
+
+### The pattern, five times over
 
 | what hid it | what it hid |
 |---|---|
@@ -618,10 +643,12 @@ wrongly, and the two cost 1.01x on the bench set.
 | the memory ceiling | a file rejecting for an unsafe body Lean never reads |
 | a sixty-second limit | `Lean.Syntax.rec_2`, rejected by two proxy rules |
 | the report pass nobody asked for | iota's parameter count and the order's imax split |
+| a large budget, which never got that far | `2 ^ 64` crashing the runtime |
 
-Every one of them was a wrong answer the whole time. None of them was found by
-a test; each was found by making the kernel faster or more honest and then
-looking at what came out.
+Every one of them was there the whole time. None was found by a test; each was
+found by making the kernel faster or more honest, or by making it give up
+sooner, and then looking at what came out. The last one is the method worth
+keeping: **a small budget reaches more declarations than a large one.**
 
 ## What Lean never looks at
 
