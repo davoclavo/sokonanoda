@@ -75,10 +75,16 @@ def Kernel.rec_inds_ok(+env: E.DTable, +ns: List<&2, Nat>) -> Bool:
     case Con{h, t}:
       Bool.and(Kernel.is_ind_name(env, h), Kernel.rec_inds_ok(env, t))
 
+# A recursor must also carry the name a recursor has. Lean names the
+# eliminator of `I` as `I.rec`, and the arena ships three attacks on that:
+# `extra-rec` adds a second eliminator called `False.rogue`, and
+# `misnamed_rec_user` and `dup_rec_def2` each name theirs `not_rec`.
 def Kernel.rec_ok(+env: E.DTable, +d: E.Decl) -> Bool:
   Bool.and(
-    Bool.not(E.Decl.is_nil(E.Decl.rec_inds(d))),
-    Kernel.rec_inds_ok(env, E.Decl.rec_inds(d)))
+    E.Decl.rec_named(d),
+    Bool.and(
+      Bool.not(E.Decl.is_nil(E.Decl.rec_inds(d))),
+      Kernel.rec_inds_ok(env, E.Decl.rec_inds(d))))
 
 # An inductive's type is a telescope of one binder for each parameter and
 # each index, and it ends in a sort. The arena attacks both halves:
@@ -153,14 +159,14 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
               Kernel.ctor_ind_ok(env, E.DCtor{id, ps, ty, ind, cidx, np, nf}),
               Kernel.ctor_arity_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf})))),
         Kernel.is_type(fuel, env, ty))
-    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds}:
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
       A.Ans.and(
         A.Ans.of(
           Bool.and(
             E.Decl.no_dupes(ps),
             Kernel.rec_ok(
               env,
-              E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}))),
+              E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))),
         Kernel.is_type(fuel, env, ty))
     case E.DQuot{id, ps, ty, kind}:
       A.Ans.and(
@@ -212,7 +218,7 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "ind  "
     case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
       "ctor "
-    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       "rec  "
     case E.DQuot{id, ps, ty, kind}:
       "quot "
@@ -285,7 +291,7 @@ def Kernel.is_trusted(d: E.Decl) -> Bool:
       True{}
     case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
       True{}
-    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       True{}
     case E.DQuot{id, ps, ty, kind}:
       True{}

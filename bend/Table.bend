@@ -313,6 +313,148 @@ def ETable.set(
                       Table.rest(i),
                       v)}
 
+# Numbers
+# -------
+#
+# A table of numbers keyed by a name, for a fact about a name that the reader
+# learns from its name line and the kernel needs much later.
+
+type NTable is Data:
+  NmTip{}
+  NmNode{v: Maybe<&2, Nat>, lo: NTable, hi: NTable}
+
+def NTable.new() -> NTable:
+  NmTip{}
+
+def NTable.or_zero(m: Maybe<&2, Nat>) -> Nat:
+  match m:
+    case None{}:
+      0n
+    case Some{v}:
+      v
+
+def NTable.at(t: NTable) -> Nat:
+  match t:
+    case NmTip{}:
+      0n
+    case NmNode{v, lo, hi}:
+      NTable.or_zero(v)
+
+def NTable.get(n: Nat, stop: Bool, b: Bool, t: NTable, +i: Nat) -> Nat:
+  match n:
+    case 0n:
+      0n
+    case 1n+m:
+      match stop:
+        case True{}:
+          NTable.at(t)
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case NmTip{}:
+                  0n
+                case NmNode{v, lo, hi}:
+                  NTable.get(
+                    m,
+                    Table.here(Table.rest(i)),
+                    Table.low(Table.rest(i)),
+                    lo,
+                    Table.rest(i))
+            case False{}:
+              match t:
+                case NmTip{}:
+                  0n
+                case NmNode{v, lo, hi}:
+                  NTable.get(
+                    m,
+                    Table.here(Table.rest(i)),
+                    Table.low(Table.rest(i)),
+                    hi,
+                    Table.rest(i))
+
+def NTable.set(
+  n: Nat, stop: Bool, b: Bool, t: NTable, +i: Nat, +v: Nat
+) -> NTable:
+  match n:
+    case 0n:
+      t
+    case 1n+m:
+      match stop:
+        case True{}:
+          match t:
+            case NmTip{}:
+              NmNode{Some{v}, NmTip{}, NmTip{}}
+            case NmNode{o, lo, hi}:
+              NmNode{Some{v}, lo, hi}
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case NmTip{}:
+                  NmNode{
+                    None{},
+                    NTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      NmTip{},
+                      Table.rest(i),
+                      v),
+                    NmTip{}}
+                case NmNode{o, lo, hi}:
+                  NmNode{
+                    o,
+                    NTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      lo,
+                      Table.rest(i),
+                      v),
+                    hi}
+            case False{}:
+              match t:
+                case NmTip{}:
+                  NmNode{
+                    None{},
+                    NmTip{},
+                    NTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      NmTip{},
+                      Table.rest(i),
+                      v)}
+                case NmNode{o, lo, hi}:
+                  NmNode{
+                    o,
+                    lo,
+                    NTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      hi,
+                      Table.rest(i),
+                      v)}
+
+def Table.read_nat(+t: NTable, +i: Nat) -> Nat:
+  NTable.get(
+    Table.bits(),
+    Table.here(Table.path(i)),
+    Table.low(Table.path(i)),
+    t,
+    Table.path(i))
+
+def Table.write_nat(+t: NTable, +i: Nat, +v: Nat) -> NTable:
+  NTable.set(
+    Table.bits(),
+    Table.here(Table.path(i)),
+    Table.low(Table.path(i)),
+    t,
+    Table.path(i),
+    v)
+
 # The two the rest of the kernel calls.
 def Table.read(+t: ETable, +i: Nat) -> T.Term:
   ETable.get(

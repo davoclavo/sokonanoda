@@ -36,7 +36,11 @@ type Decl is Data:
   DRec{
     id: Nat, ps: List<&2, Nat>, ty: T.Term,
     np: Nat, ni: Nat, nm: Nat, nmin: Nat,
-    k: Bool, rules: List<&2, RecRule>, inds: List<&2, Nat>}
+    k: Bool, rules: List<&2, RecRule>, inds: List<&2, Nat>,
+    # Is this declaration's own name the one a recursor must have? Lean names
+    # the eliminator of `I` as `I.rec`, and the reader is the only part that
+    # sees a name's characters, so it reads this and the kernel checks it.
+    named: Bool}
   # One of the four quotient declarations. `kind` is 0 for `Quot` itself, 1
   # for `Quot.mk`, 2 for `Quot.lift` and 3 for `Quot.ind`. The export states
   # their types; the Lean kernel has them built in, so taking the file's word
@@ -78,7 +82,7 @@ def Decl.id(d: Decl) -> Nat:
       id
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       id
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       id
     case DQuot{id, ps, ty, kind}:
       id
@@ -98,7 +102,7 @@ def Decl.is_thm(d: Decl) -> Bool:
       False{}
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       False{}
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       False{}
     case DQuot{id, ps, ty, kind}:
       False{}
@@ -118,7 +122,7 @@ def Decl.is_def(d: Decl) -> Bool:
       False{}
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       False{}
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       False{}
     case DQuot{id, ps, ty, kind}:
       False{}
@@ -163,7 +167,7 @@ def Decl.num_params(d: Decl) -> Nat:
       Decl.len(ps)
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       Decl.len(ps)
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       Decl.len(ps)
     case DQuot{id, ps, ty, kind}:
       Decl.len(ps)
@@ -183,7 +187,7 @@ def Decl.params(d: Decl) -> List<&2, Nat>:
       ps
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       ps
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       ps
     case DQuot{id, ps, ty, kind}:
       ps
@@ -203,7 +207,7 @@ def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
       T.Term.subst_levels(ty, ls)
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       T.Term.subst_levels(ty, ls)
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       T.Term.subst_levels(ty, ls)
     case DQuot{id, ps, ty, kind}:
       T.Term.subst_levels(ty, ls)
@@ -224,7 +228,7 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
       None{}
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       None{}
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       None{}
     case DQuot{id, ps, ty, kind}:
       None{}
@@ -235,35 +239,35 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
 # recursor answers zero, so guard these with `Decl.is_rec`.
 def Decl.is_rec(d: Decl) -> Bool:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       True{}
     case o:
       False{}
 
 def Decl.rec_np(d: Decl) -> Nat:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       np
     case o:
       0n
 
 def Decl.rec_ni(d: Decl) -> Nat:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       ni
     case o:
       0n
 
 def Decl.rec_nm(d: Decl) -> Nat:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       nm
     case o:
       0n
 
 def Decl.rec_nmin(d: Decl) -> Nat:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       nmin
     case o:
       0n
@@ -282,21 +286,21 @@ def Decl.rec_nmin(d: Decl) -> Nat:
 # for those two to be fused into one def.
 def Decl.rec_k(d: Decl) -> Bool:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       k
     case o:
       False{}
 
 def Decl.rec_inds(d: Decl) -> List<&2, Nat>:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       inds
     case o:
       Nil{}
 
 def Decl.rec_rules(d: Decl) -> List<&2, RecRule>:
   match d:
-    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       rules
     case o:
       Nil{}
@@ -464,6 +468,14 @@ def Decl.prim_no(d: Decl) -> Nat:
       no
     case o:
       0n
+
+# Does this recursor carry the name a recursor must have?
+def Decl.rec_named(d: Decl) -> Bool:
+  match d:
+    case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
+      named
+    case o:
+      True{}
 
 # A declaration to stand in with when a lookup found nothing. Guard with
 # `Env.found`.
