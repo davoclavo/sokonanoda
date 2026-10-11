@@ -700,3 +700,82 @@ So the fix for a stuck mismatch is to make reduction more complete, not to
 weaken the verdict. That needs a blame tool for conversion, not for inference:
 `bend/blame.bend` walks into a term whose **inference** is a definite no, and
 nothing yet walks into a pair whose **conversion** is one.
+
+### Where the nine timeouts spend their time, measured
+
+`bend/count.bend` reads a file into terms and counts the nodes, which is what
+separates a reader that is slow from a checker that is slow.
+
+| file | read into terms | nodes built |
+|---|---|---|
+| `perf/shared-subterm` | 0.03 s | 6,292 |
+| `perf/proj-stuck-struct` | 0.04 s | 1,854 |
+| `perf/beta-ladder` | 0.16 s | 16,644 |
+| `perf/magma-list-pair-n7` | 0.28 s | 46,830 |
+| `perf/magma-list-deep-n36` | 0.62 s | 899,202 |
+| `perf/fueled-chain` | 9.2 s | **206,437,819** |
+| `perf/app-lam` | **more than 123 s** | — |
+
+So two of the nine never reach the checker at all. `fueled-chain` builds 206
+million nodes from an 869 kB file, and `app-lam` cannot be read: its largest
+expression expands to a tree whose node count has nine hundred digits.
+
+The cause is one line of the design. The export's expression table is a
+**graph**, one expression named by many others, and this kernel reads it as a
+**tree**, because Bend is affine and a value read twice is copied.
+
+### What the export's graph looks like
+
+| file | closed, no level parameter | closed, with one | open |
+|---|---|---|---|
+| `perf/app-lam` | 0.1% | 0.5% | **99.4%** |
+| `perf/fueled-chain` | 0.6% | 5.1% | **94.3%** |
+| `good/init-prelude` | 1.8% | 13.3% | **84.8%** |
+| `perf/shared-subterm` | **88.0%** | 3.5% | 8.5% |
+
+That table decides the design. A reference to a **closed, level-free**
+expression is sound with no bookkeeping at all: a closed term is the same term
+in every scope, so `Term.subst` and `Term.lift` leave it alone, and a
+level-free term needs none of the per-declaration level remapping. A reference
+to an **open** one needs a shift, and to a **level-carrying** one needs a
+level substitution: an explicit-substitution calculus.
+
+### B20: a reference for the closed, level-free case
+
+| hypothesis | status | result |
+|---|---|---|
+| B20 a reference to a closed, level-free expression pays | **rejected as built** | the node counts fall by factors of 27,000, and the score falls by one |
+
+What it bought, with a size threshold of 64 nodes:
+
+| file | nodes before | nodes after |
+|---|---|---|
+| `perf/shared-subterm` | 6,292 | 4,282 |
+| `perf/fueled-chain` | 206,437,819 | **9,775** |
+
+What it cost: `perf/church-numerals` stops being accepted, so 186 becomes 185.
+Three things were learned on the way, each measured.
+
+**A reference may not stand where an analysis pass looks.** Every such pass
+reads one as a leaf, so positivity does not see the inductive inside it, the
+projection rules do not see a field, and the rule that a safe declaration may
+not use an unsafe one does not see the constant. With references in types, 65
+files answered wrongly.
+
+**Resolving must not cost a reduction step.** Charging the declaration's
+budget for it took `church-numerals` from accepted to out of budget on its
+own. `Eval.deref` resolves in the caller instead, so the arm in `Eval.whnf`
+fires once per term handed in from outside rather than once per use.
+
+**The remaining cost is the mismatch.** A type is expanded and a value is
+not, so `T.Term.same` never matches the inferred type of a value against the
+declared type, and conversion loses its fast path. That is what
+`church-numerals` pays. The threshold cannot fix it: at 64 the file declines,
+and at 900 the parse cost comes back, because computing an entry's size by
+walking an inlined child costs the threshold.
+
+So the next step is the consistent version: references in types as well, which
+needs `Term.occurs`, `Term.pars_ok`, `Term.has_bvar`, `Term.pi_count` and
+`Term.pi_skip` to resolve, which needs the expression table visible from
+`Term.bend`. The work is saved as a patch rather than committed, because the
+half-built version is a point worse than none.
