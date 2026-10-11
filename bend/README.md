@@ -374,24 +374,16 @@ tarball, 195 attempted and one too large to read:
 |---|---|---|---|---|
 | correct | 101 | 101 | 173 | **186** |
 | declined | 82 | 87 | 17 | **0** |
-| wrong | 0 | 0 | 0 | **1** |
-| error or timeout | 11 | 7 | 5 | 8 |
+| wrong | 0 | 0 | 0 | **0** |
+| error or timeout | 11 | 7 | 5 | 9 |
 
-The one wrong answer is `init-prelude`, and it arrived the way the other six
-did: a kernel that got faster reached a declaration it had never reached
-before. It rejects `Lean.Syntax.brecOn_2.go`, which is the machinery Lean
-builds for a **nested** inductive, and nothing here derives one. `blame.bend`
-names the pair conversion cannot settle:
+**Every file it reads gets an answer, every answer is correct, and nothing is
+declined.** The nine it does not read are eight `perf` tests and
+`init-prelude`, all of which run past sixty seconds, plus one more too large
+to read at all.
 
-```
-decl 2198
-  blame: ((#3 ((Array.mk Lean.Syntax) #1)) #0)
-    fn   : (Pi :(Lean.Syntax.below_1 .. ((Array.mk Lean.Syntax) #1)) -> ..)
-    arg  : ((PProd ..) (Lean.Syntax.below_2 ..))
-```
-
-That is the open item. The eight that are not read are all `perf` tests, plus
-one more too large to read at all.
+`init-prelude` was a wrong answer for one iteration, and finding out why took
+two fixes. See "What a faster kernel found in the prelude" below.
 
 The jump in the last column is the recursor derivation, which is described
 below. The middle column hides a story, and it is not what it looks like.
@@ -587,6 +579,49 @@ side and not a telescope, so they all lift by the same amount.
 `bend/derive.bend` reports, per recursor, whether the derived type and every
 derived rule converts with what the file states. It changes no verdict. It is
 what turned "the derivation is probably right" into a number, twice.
+
+## What a faster kernel found in the prelude
+
+Removing the lost report pass made `init-prelude` finish inside sixty seconds
+for the first time, and it answered `reject`. Two bugs, both invisible until
+then, and `blame.bend` and the report's own reasons found each in one run.
+
+**Iota dropped the wrong parameter count.** A rule's right side takes the
+recursor's parameters, motives and minor premises, then the constructor's
+fields. The fields are the constructor's arguments past **its own**
+parameters, and `Eval.iota_term` dropped the recursor's count. For a block
+with no nested inductive the two are the same number, which is why this
+worked on every other file in the set.
+
+`Lean.Syntax.rec_2` eliminates a nested block and states no parameters, while
+the auxiliary constructor `Array.mk` has one, so dropping zero took the type
+argument `Syntax` for the field. The rule never fired,
+`Lean.Syntax.below_1` stayed stuck, and conversion compared a stuck
+application against a `PProd` and called them different.
+
+**The order on levels needed the imax case split.** Equality got it earlier;
+the order did not, so an imax whose right side is a bare parameter stayed one
+opaque atom and matched nothing. The field of `Trans.mk` is `forall a b c, r a
+b -> s b c -> t a c`, whose sort is a tower of imax over six parameters, while
+`Trans` lives in the max of the same six. The field does fit and no normal
+form can see it, so the rule that a field must fit its inductive's universe
+rejected a class from Lean's own prelude.
+
+With both, the file gets far enough to run out of time rather than answer
+wrongly, and the two cost 1.01x on the bench set.
+
+### The pattern, four times over
+
+| what hid it | what it hid |
+|---|---|
+| a sixty-second limit | six files rejecting on `imax 0 u` and `imax 1 u` |
+| the memory ceiling | a file rejecting for an unsafe body Lean never reads |
+| a sixty-second limit | `Lean.Syntax.rec_2`, rejected by two proxy rules |
+| the report pass nobody asked for | iota's parameter count and the order's imax split |
+
+Every one of them was a wrong answer the whole time. None of them was found by
+a test; each was found by making the kernel faster or more honest and then
+looking at what came out.
 
 ## What Lean never looks at
 
