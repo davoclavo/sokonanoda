@@ -564,17 +564,40 @@ def Conv.eta_fix(
 
 # Reduce the two sides of a pair, then try proof irrelevance before taking
 # them apart.
+def Conv.classify_work(
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, a: T.Term, b: T.Term
+) -> Step:
+  +ka = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, a, Nil{}))
+  +kb = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, b, Nil{}))
+  Conv.irrel(
+    fuel,
+    env,
+    ctx,
+    Conv.eta_fix(fuel, env, ctx, kb, ka),
+    Conv.eta_fix(fuel, env, ctx, ka, kb))
+
+# Two terms that are the same syntax are the same term, and no reduction can
+# tell anyone anything new about them.
+#
+# This is not a small saving. `Conv.structural` takes two applications apart
+# into a pair per argument, and most of those pairs are a term against itself,
+# because the two sides of a real conversion question differ in one place. Each
+# one used to pay for two whnf passes, two K rule passes and two eta passes
+# before anything looked at it.
+def Conv.same_or(
+  eq: Bool, +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
+  a: T.Term, b: T.Term
+) -> Step:
+  match eq:
+    case True{}:
+      SYes{}
+    case False{}:
+      Conv.classify_work(fuel, env, ctx, a, b)
+
 def Conv.classify_pair(+fuel: Nat, +env: E.DTable, p: TPair) -> Step:
   match p:
-    case MkPair{+ctx, a, b}:
-      +ka = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, a, Nil{}))
-      +kb = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, b, Nil{}))
-      Conv.irrel(
-        fuel,
-        env,
-        ctx,
-        Conv.eta_fix(fuel, env, ctx, kb, ka),
-        Conv.eta_fix(fuel, env, ctx, ka, kb))
+    case MkPair{+ctx, +a, +b}:
+      Conv.same_or(T.Term.same(a, b), fuel, env, ctx, a, b)
 
 # Work the queue. It empties exactly when every pair in it is equal.
 #
