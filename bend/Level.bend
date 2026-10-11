@@ -457,8 +457,24 @@ def Level.eq_go(
             Level.eq_go(f, Level.split(f, a1, b1), a1, b1))
 
 # Are these two levels equal under every assignment of their parameters?
-def Level.eq(+fuel: Nat, +a: Level, +b: Level) -> Bool:
-  Level.eq_go(fuel, Level.split(fuel, a, b), a, b)
+# How much a level comparison may spend.
+#
+# Comparing levels is not reduction, and it must not share the declaration's
+# budget. It used to, and that was a wrong answer: `Level.atoms` stops at its
+# fuel and hands back the atoms it has reached, dropping the rest, so at a
+# small budget two levels that are equal compared unequal and conversion
+# reported a difference. `grind-ring-5` rejects at a fuel of 150 and declines
+# at 500 for that reason alone, and the arena expects it accepted.
+#
+# A level is a handful of nodes. A million is past anything a real export
+# writes, so this never runs out, which is the point: a bound that is reached
+# has to answer, and neither answer a `Bool` can give is honest.
+def Level.budget() -> Nat:
+  1000000n
+
+def Level.eq(+a: Level, +b: Level) -> Bool:
+  Level.eq_go(
+    Level.budget(), Level.split(Level.budget(), a, b), a, b)
 
 # The position of name index `j` among `ps`, as a level, or `LPar{j}` when `j`
 # is not one of them. The search is over the declaration's level parameters,
@@ -507,8 +523,9 @@ def Level.leq_go(
             Level.leq_go(f, Level.split_le(f, a0, b0), a0, b0),
             Level.leq_go(f, Level.split_le(f, a1, b1), a1, b1))
 
-def Level.leq(+fuel: Nat, +a: Level, +b: Level) -> Bool:
-  Level.leq_go(fuel, Level.split_le(fuel, a, b), a, b)
+def Level.leq(+a: Level, +b: Level) -> Bool:
+  Level.leq_go(
+    Level.budget(), Level.split_le(Level.budget(), a, b), a, b)
 
 def Level.bad_par() -> Nat:
   1000000n

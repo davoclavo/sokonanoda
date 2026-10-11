@@ -137,7 +137,7 @@ def Conv.levels_eq(+fuel: Nat, xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> 
     case Nil{} Nil{}:
       True{}
     case Con{x, xr} Con{y, yr}:
-      Bool.and(L.Level.eq(fuel, x, y), Conv.levels_eq(fuel, xr, yr))
+      Bool.and(L.Level.eq(x, y), Conv.levels_eq(fuel, xr, yr))
     case x y:
       False{}
 
@@ -169,7 +169,7 @@ def Conv.structural(
     case T.TVar{i} T.TVar{j}:
       Conv.step_of(Nat.is_eq(i, j))
     case T.TSort{x} T.TSort{y}:
-      Conv.step_of(L.Level.eq(fuel, x, y))
+      Conv.step_of(L.Level.eq(x, y))
     case T.TConst{n1, l1} T.TConst{n2, l2}:
       Conv.step_of(Bool.and(Nat.is_eq(n1, n2), Conv.levels_eq(fuel, l1, l2)))
     case T.TApp{f1, a1} T.TApp{f2, a2}:
