@@ -300,11 +300,26 @@ def Parse.nat_term(fuel: Nat, k: Nat, +zr: Nat, +sc: Nat) -> T.Term:
 # dispatch on the node key is what keeps them apart from a declaration's own
 # `"type"`.
 
-# A literal, and the end of the chain. A node this kernel does not know
-# answers a loose variable, so inference fails and the declaration is
-# rejected. Answering a sort here instead would be worse than useless: an
-# unknown node would pass for `Prop`, which is how a `natVal` first went by
-# unnoticed.
+# A literal, and the end of the chain.
+#
+# A node this kernel does not read answers the unknown term. It used to
+# answer a loose variable, on the reasoning that inference would then fail and
+# the declaration would be rejected. That is the wrong answer twice over. A
+# rejection is a claim that the declaration is wrong, and a node nobody read
+# is no evidence of that. And a loose variable is not even reliably wrong: at
+# index zero it names whatever binder happens to be in scope, so a declaration
+# could convert and be **accepted** on the strength of a node the kernel never
+# looked at.
+#
+# The unknown term says what is true: this is not known. Every function that
+# meets it answers that it does not know, so the file declines.
+#
+# A sort would be worse than either. An unknown node would pass for `Prop`,
+# which is how a `natVal` first went by unnoticed.
+#
+# The corpus holds ten kinds of expression node and this kernel reads nine.
+# The one it does not is `strVal`, a string literal, in 74 places across four
+# files.
 # A literal, or the unknown term when the number reached the reader's cap.
 # A capped number is not the number the export wrote, so nothing may be
 # concluded from it, and the unknown term is what says so.
@@ -321,7 +336,7 @@ def Parse.ex_natval(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
         case True{}:
           Parse.lit_term(R.Reader.field_q("natVal", line), nt, zr, sc)
         case False{}:
-          T.TVar{0n}
+          T.TUnk{}
 
 def Parse.ex_proj(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
