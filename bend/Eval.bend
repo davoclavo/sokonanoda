@@ -498,6 +498,13 @@ def Eval.prim_term(
     T.TSort{L.LZero{}})
 
 # Reduce `t` applied to `sp` to weak head normal form.
+#
+# When the premise a rule needs cannot be reduced, because the budget ran out,
+# the answer is `TUnk` and not the constant rebuilt. A rebuilt constant looks
+# stuck, and two stuck terms that differ are a definite no, so without this a
+# shortage of budget is reported as a rejection. The projection case has
+# always done this; the constant case did not, and that is what made the
+# arena's `beta-ladder` and `folded-constant-first` reject.
 def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
     case 0n:
@@ -520,12 +527,15 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
             E.Decl.is_def(d),
             Eval.whnf(f, env, Eval.unfold_decl(d, ls), sp),
             Eval.pick_t(
+              T.Term.is_unk(mw),
+              T.TUnk{},
+              Eval.pick_t(
               Eval.can_iota(d, sp, mw),
               Eval.whnf(f, env, Eval.iota_term(d, ls, sp, mw), Nil{}),
               Eval.pick_t(
                 Eval.quot_ready(env, d, sp, mw),
                 Eval.whnf(f, env, Eval.quot_term(d, sp, mw), Nil{}),
-                Eval.rebuild(sp, T.TConst{n, ls})))))
+                Eval.rebuild(sp, T.TConst{n, ls}))))))
         case T.TApp{g, a}:
           Eval.whnf(f, env, g, Con{a, sp})
         case T.TLam{ty, bd}:
