@@ -383,7 +383,27 @@ def Kernel.ctors_total(ns: List<&2, Nat>, +env: E.DTable, +acc: Nat) -> Nat:
           E.Decl.len(
             E.Decl.ind_ctors(E.Lookup.get(E.Env.find(env, h))))))
 
-def Kernel.rec_counts_ok(+env: E.DTable, +d: E.Decl) -> Bool:
+# Does this recursor eliminate a nested block?
+#
+# A nested inductive gets auxiliary types that the export does not list among
+# the recursor's inductives, so its motive count is larger than that list.
+# Nothing here can count the constructors of a type it cannot name, so the
+# counts cannot be checked and must not be claimed wrong.
+#
+# The test is one-sided, and that matters. A nested block states **more**
+# motives than it lists inductives, because the auxiliary types need one
+# each. The arena's `073_BogusRecursor` states fewer, zero against one, so a
+# two-sided test let it through to the trust path and it answered declined
+# where it had answered reject.
+#
+# A file could still state an inflated motive count to escape the counts
+# below. It cannot buy anything with that: the derivation in `Rec.bend` wants
+# one motive, so the block stays trusted and the file declines rather than
+# accepts.
+def Kernel.rec_nested(+d: E.Decl) -> Bool:
+  Nat.is_lt(E.Decl.len(E.Decl.rec_inds(d)), E.Decl.rec_nm(d))
+
+def Kernel.rec_counts_strict(+env: E.DTable, +d: E.Decl) -> Bool:
   Bool.and(
     Bool.and(
       Nat.is_eq(E.Decl.rec_nm(d), E.Decl.len(E.Decl.rec_inds(d))),
@@ -419,6 +439,11 @@ def Kernel.rec_counts_ok(+env: E.DTable, +d: E.Decl) -> Bool:
 # `Acc` all eliminate into any sort and all have one constructor, so the rule
 # must not fire on them. A proposition with no constructors, such as `False`,
 # is the same: there is nothing to read.
+def Kernel.rec_counts_ok(+env: E.DTable, +d: E.Decl) -> Bool:
+  Bool.or(
+    Kernel.rec_nested(d),
+    Kernel.rec_counts_strict(env, d))
+
 def Kernel.large_ok(
   b: Bool, +nl: Nat, +ns: Nat
 ) -> A.Ans:
@@ -538,6 +563,8 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
         A.Ans.and(
           Kernel.is_type(fuel, env, ty),
           Kernel.has_type(fuel, env, val, ty)))
+    case E.DUnsafe{id, ps, ty}:
+      A.AYes{}
 
 # True when a lookup found nothing.
 def Kernel.missing(lk: E.Lookup) -> Bool:
@@ -560,11 +587,56 @@ def Kernel.is_fresh(+env: E.DTable, +i: Nat) -> Bool:
 # it taken for a universe it did. The marker `Level.param_pos` leaves is out
 # of range, and so is any index past the last declared parameter.
 def Kernel.pars_ok(+d: E.Decl) -> Bool:
-  Bool.and(
-    T.Term.pars_ok(
-      E.Decl.raw_ty(d), List.length(&2, Nat, E.Decl.params(d))),
-    T.Term.pars_ok(
-      E.Decl.raw_val(d), List.length(&2, Nat, E.Decl.params(d))))
+  Bool.or(
+    E.Decl.is_unsafe(d),
+    Bool.and(
+      T.Term.pars_ok(
+        E.Decl.raw_ty(d), List.length(&2, Nat, E.Decl.params(d))),
+      T.Term.pars_ok(
+        E.Decl.raw_val(d), List.length(&2, Nat, E.Decl.params(d)))))
+
+# Does this term mention a declaration Lean's kernel never looked at?
+#
+# A constant that is not in the environment yet answers no, because the
+# ordered check rejects a forward reference on its own.
+def Kernel.uses_unsafe(t: T.Term, +env: E.DTable) -> Bool:
+  match t:
+    case T.TConst{+n, ls}:
+      E.Decl.is_unsafe(E.Lookup.get(E.Env.find(env, n)))
+    case T.TApp{f, a}:
+      Bool.or(Kernel.uses_unsafe(f, env), Kernel.uses_unsafe(a, env))
+    case T.TLam{ty, bd}:
+      Bool.or(Kernel.uses_unsafe(ty, env), Kernel.uses_unsafe(bd, env))
+    case T.TPi{ty, bd}:
+      Bool.or(Kernel.uses_unsafe(ty, env), Kernel.uses_unsafe(bd, env))
+    case T.TLet{ty, v, bd}:
+      Bool.or(
+        Bool.or(Kernel.uses_unsafe(ty, env), Kernel.uses_unsafe(v, env)),
+        Kernel.uses_unsafe(bd, env))
+    case T.TProj{tn, idx, st}:
+      Kernel.uses_unsafe(st, env)
+    case o:
+      False{}
+
+def Kernel.safe_pick(un: Bool, +d: E.Decl, +env: E.DTable) -> Bool:
+  match un:
+    case True{}:
+      True{}
+    case False{}:
+      Bool.not(
+        Bool.or(
+          Kernel.uses_unsafe(E.Decl.raw_ty(d), env),
+          Kernel.uses_unsafe(E.Decl.raw_val(d), env)))
+
+# May this declaration use what it uses?
+#
+# An unsafe declaration may use anything, because nothing is concluded from
+# it. A safe one may not mention an unsafe one, and that is the rule that
+# lets the kernel leave an unsafe body unread: the arena's
+# `140_falseFromUnsafe` proves `False` from `unsafe def loop : False := loop`
+# and this is what refuses it.
+def Kernel.safe_uses(+d: E.Decl, +env: E.DTable) -> Bool:
+  Kernel.safe_pick(E.Decl.is_unsafe(d), d, env)
 
 # Check every declaration, each against the ones before it, with the answer
 # so far as a parameter.
@@ -590,7 +662,9 @@ def Kernel.check_from(
           A.Ans.and(
             A.Ans.and(
               A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
-              A.Ans.of(Kernel.pars_ok(h))),
+              A.Ans.and(
+                A.Ans.of(Kernel.pars_ok(h)),
+                A.Ans.of(Kernel.safe_uses(h, acc)))),
             Kernel.check_decl(fuel, acc, h))),
         fuel,
         E.Env.add(acc, h))
@@ -620,6 +694,8 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "quot "
     case E.DPrim{id, ps, ty, val, op, yes, no}:
       "prim "
+    case E.DUnsafe{id, ps, ty}:
+      "unsf "
 
 # One check, named, with a tick or a cross.
 def Kernel.flag(+name: String, a: A.Ans) -> String:
@@ -633,7 +709,7 @@ def Kernel.flag(+name: String, a: A.Ans) -> String:
 
 # Which of the checks on a declaration passed? A rejection says little on its
 # own, and the three parts fail for very different reasons.
-def Kernel.why(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
+def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
   match d:
     case E.DAxiom{id, ps, ty}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
@@ -651,6 +727,26 @@ def Kernel.why(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("prop", Kernel.is_prop(fuel, env, ty)) ++
       Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
+      Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
+      Kernel.flag(
+        "block",
+        A.Ans.of(
+          Kernel.rec_ok(
+            env,
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))) ++
+      Kernel.flag(
+        "counts",
+        A.Ans.of(
+          Kernel.rec_counts_ok(
+            env,
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))) ++
+      Kernel.flag(
+        "elim",
+        Kernel.rec_elim(
+          fuel, env,
+          E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})) ++
+      Kernel.flag("type", Kernel.is_type(fuel, env, ty))
     case o:
       ""
 
@@ -660,6 +756,11 @@ def Kernel.why(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
 # the match picks an arm, so a `why` passed in as a string ran on every
 # declaration, and `why` for a definition infers the body three more times.
 # Taking the declaration keeps that cost on the two arms that print a reason.
+def Kernel.why(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
+  Kernel.flag("universes", A.Ans.of(Kernel.pars_ok(d))) ++
+  Kernel.flag("safe", A.Ans.of(Kernel.safe_uses(d, env))) ++
+  Kernel.why_kind(fuel, env, d)
+
 def Kernel.mark(a: A.Ans, +id: Nat, +kind: String, +fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
   match a:
     case A.AYes{}:
@@ -668,22 +769,6 @@ def Kernel.mark(a: A.Ans, +id: Nat, +kind: String, +fuel: Nat, +env: E.DTable, d
       "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ Kernel.why(fuel, env, d) ++ "\n"
     case A.AUnk{}:
       "  unknown " ++ kind ++ " " ++ Nat.show(id) ++ Kernel.why(fuel, env, d) ++ "\n"
-
-# Which declaration failed? Reports one line per declaration, in order, so a
-# rejection can be traced to the declaration that caused it rather than
-# guessed at. The id is the export's own name index.
-def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> String:
-  match ds:
-    case Nil{}:
-      ""
-    case Con{+h, t}:
-      Kernel.mark(
-        A.Ans.and(
-          A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
-          Kernel.check_decl(fuel, acc, h)),
-        E.Decl.id(h),
-        Kernel.kind_name(h),
-        fuel, acc, h) ++ Kernel.report(t, fuel, E.Env.add(acc, h))
 
 # The right side of every rule, against the one the file states.
 def Kernel.rules_match(
@@ -851,7 +936,9 @@ def Kernel.run_from(
       +b : A.Ans = A.Ans.and(
         A.Ans.and(
           A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
-          A.Ans.of(Kernel.pars_ok(h))),
+          A.Ans.and(
+            A.Ans.of(Kernel.pars_ok(h)),
+            A.Ans.of(Kernel.safe_uses(h, acc)))),
         Kernel.check_decl(fuel, acc, h))
       line : String = Kernel.mark(b, E.Decl.id(h), Kernel.kind_name(h), fuel, acc, h)
       Kernel.run_join(line, Kernel.run_from(t, A.Ans.and(o, b), fuel, E.Env.add(acc, h)))

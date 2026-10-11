@@ -207,10 +207,29 @@ def Parse.pick_tbl(b: Bool, x: Tb.NTable, y: Tb.NTable) -> Tb.NTable:
     case False{}:
       y
 
-# Record a name whose last component is `rec`, whatever its prefix.
+# Does this name line's last component begin with the given word?
+def Parse.name_starts(+line: List<&2, U32>, +w: String) -> Bool:
+  B.Bytes.is_hit(
+    B.Bytes.of_string("\"" ++ w),
+    R.Reader.after("str", Parse.name_part(line)))
+
+# Record a name whose last component is `rec`, or begins with `rec_`,
+# whatever its prefix.
+#
+# `rec_` is there for a nested inductive. Lean gives such a block more than
+# one eliminator and names them `I.rec_1`, `I.rec_2` and so on, and
+# `Lean.Syntax.rec_2` in the arena's `init-prelude` is one. Requiring the last
+# component to be exactly `rec` rejected it, and that file is one the arena
+# expects to accept.
+#
+# The test is a prefix, so `rec_anything` passes as well. That is looser than
+# Lean, which numbers them, and it still refuses the three attacks the rule is
+# for: `extra-rec` names its rogue eliminator `False.rogue`, and
+# `misnamed_rec_user` and `dup_rec_def2` each name theirs `not_rec`.
 def Parse.upd_rec(+line: List<&2, U32>, +rc: Tb.NTable) -> Tb.NTable:
   Parse.pick_tbl(
-    Parse.name_is(line, "rec"),
+    Bool.or(
+      Parse.name_is(line, "rec"), Parse.name_starts(line, "rec_")),
     Tb.Table.write_nat(rc, R.Reader.field("in", line), 1n),
     rc)
 
@@ -461,7 +480,15 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
               Parse.exp(ex, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KDef{}:
+          # A definition the exporter marks `unsafe` or `partial` is kept as
+          # its type and nothing else. Lean's kernel never looks at one, so a
+          # kernel that checks it is not stricter but wrong: `unsafe def loop
+          # : False := loop` is a file Lean accepts and this used to reject.
+          # What makes the omission sound is the rule that a safe declaration
+          # may not mention one.
           Parse.pick_decl(
+            R.Reader.is_word("safety", "safe", line),
+            Parse.pick_decl(
             Nat.is_eq(
               Parse.prim_op_at(pm, R.Reader.field("name", line), 0n), 0n),
             E.DDef{
@@ -484,7 +511,13 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
                 R.Reader.num_list("levelParams", line)),
               Parse.prim_op_at(pm, R.Reader.field("name", line), 0n),
               yes,
-              no})
+              no}),
+            E.DUnsafe{
+              R.Reader.field("name", line),
+              R.Reader.num_list("levelParams", line),
+              T.Term.remap_levels(
+                Parse.exp(ex, R.Reader.field("type", line)),
+                R.Reader.num_list("levelParams", line))})
         case R.KThm{}:
           E.DThm{
             R.Reader.field("name", line),
