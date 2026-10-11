@@ -296,12 +296,21 @@ def Parse.nat_term(fuel: Nat, k: Nat, +zr: Nat, +sc: Nat) -> T.Term:
 # rejected. Answering a sort here instead would be worse than useless: an
 # unknown node would pass for `Prop`, which is how a `natVal` first went by
 # unnoticed.
+# A literal, or the unknown term when the number reached the reader's cap.
+# A capped number is not the number the export wrote, so nothing may be
+# concluded from it, and the unknown term is what says so.
+def Parse.lit_term(+v: Nat, +nt: Nat, +zr: Nat, +sc: Nat) -> T.Term:
+  T.Term.pick(
+    Nat.is_lt(v, B.Bytes.nat_cap()),
+    T.TNat{v, nt, zr, sc},
+    T.TUnk{})
+
 def Parse.ex_natval(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
-          T.TNat{R.Reader.field_q("natVal", line), nt, zr, sc}
+          Parse.lit_term(R.Reader.field_q("natVal", line), nt, zr, sc)
         case False{}:
           T.TVar{0n}
 

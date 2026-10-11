@@ -97,6 +97,34 @@ def Bytes.char_code(c: Char) -> U32:
 def Bytes.eq_one(a: U32, b: U32) -> Nat:
   Bytes.bool_nat(U32.is_eq(a, b))
 
+# Choose between two numbers on a computed Bool.
+def Bytes.pick_nat(b: Bool, x: Nat, y: Nat) -> Nat:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The largest number this reader will read. A Bend `Nat` holds up to 2^48-1,
+# and Lean's own prelude writes `18446744073709551616` for the size of a
+# `UInt64`, which is past that. Reading it crashed the kernel, and a crash is
+# the one answer worse than not knowing. So the reader stops here instead, and
+# a literal that reaches this cap is read as unknown.
+#
+# The cap is 2^31. Bend writes a number up to 2^32-1 in source, and ten times
+# this one and nine more is still inside the 2^48 an immediate holds, so the
+# accumulator never overflows.
+def Bytes.nat_cap() -> Nat:
+  2147483648n
+
+# One more digit, or the cap. The cap is below 2^48 by enough that ten times
+# it and nine more is still an immediate, so this never overflows.
+def Bytes.digit_acc(+acc: Nat, +d: Nat) -> Nat:
+  Bytes.pick_nat(
+    Nat.is_lt(Nat.add(Nat.mul(acc, 10n), d), Bytes.nat_cap()),
+    Nat.add(Nat.mul(acc, 10n), d),
+    Bytes.nat_cap())
+
 # Read a decimal number. `go` says the head is a digit, which the caller
 # establishes with `Bytes.starts_digit`. The recursive call is the whole body.
 def Bytes.digits(fuel: Nat, go: Bool, +acc: Nat, xs: List<&2, U32>) -> Scan:
@@ -115,7 +143,7 @@ def Bytes.digits(fuel: Nat, go: Bool, +acc: Nat, xs: List<&2, U32>) -> Scan:
               Bytes.digits(
                 f,
                 Bytes.starts_digit(r),
-                Nat.add(Nat.mul(acc, 10n), Bytes.digit_val(c)),
+                Bytes.digit_acc(acc, Bytes.digit_val(c)),
                 r)
 
 # Read a decimal number from the head of the stream.
