@@ -10,29 +10,14 @@ use crate::outcome::ensure;
 use crate::report::Reporter;
 use crate::term::ptr::ExprPtr;
 
-/// The share of the cache that all of the checker threads together may hold.
-/// One thread gets the whole share. Each extra thread divides it.
-const CACHE_SHARE: usize = 16 * 1024 * 1024;
-
-/// The smallest session budget. Below this value a session resets so often that
-/// it drops cache entries it is about to need again.
-const SESSION_FLOOR: usize = 2 * 1024 * 1024;
-
 /// How many bytes a checking session may allocate before it resets its arena
-/// and drops its per-session caches. The budget trades cache hits against cache
-/// locality, and the threads compete for one cache, so the budget is a share.
-/// Measured on the arena corpora: at one thread 16 MiB beats 2 MiB by 8 percent
-/// on std and 2 percent on cedar, and at four threads 2 MiB beats 16 MiB by 5
-/// percent on cedar.
-fn session_budget(num_threads: usize) -> usize {
-    // TEMPORARY sweep hook. Remove before the commit.
-    if let Ok(mib) = std::env::var("SOKO_SESSION_BUDGET")
-        && let Ok(mib) = mib.parse::<usize>()
-    {
-        return mib * 1024 * 1024;
-    }
-    (CACHE_SHARE / num_threads.max(1)).max(SESSION_FLOOR)
-}
+/// and drops its per-session caches. A smaller budget keeps the working set in
+/// cache, which is worth more than the cache hits a larger budget would keep.
+/// Measured at four threads: 2 MiB beats 16 MiB by 10 percent on cslib and 20
+/// percent on mathlib, and ties it on std and cedar at every thread count
+/// tried. A budget that scales with the thread count was measured and rejected.
+const SESSION_BUDGET: usize = 2 * 1024 * 1024;
+const ARENA_KEEP: usize = 4 * SESSION_BUDGET;
 
 const CHUNK_SIZE: usize = 64;
 
@@ -186,8 +171,6 @@ impl<'p> ExportFile<'p> {
     ) where
         F: FnMut() -> Option<(usize, usize)>,
     {
-        let budget = session_budget(self.config.num_threads);
-        let arena_keep = 4 * budget;
         let base = bumpalo::Bump::new();
         let mut session_cache = crate::checker::cache::SessionCache::new(&base);
         let mut sbump = crate::checker::cache::SessionBump::new();
@@ -215,11 +198,11 @@ impl<'p> ExportFile<'p> {
                                         true
                                     });
                                 });
-                                ind_bump.reset(arena_keep);
+                                ind_bump.reset(ARENA_KEEP);
                                 continue;
                             }
                             report.check(d, || self.check_declar_with(tctx, cache, sbump.get(), d));
-                            if sbump.used_bytes() > budget {
+                            if sbump.used_bytes() > SESSION_BUDGET {
                                 pending = Some((i, end));
                                 return false;
                             }
@@ -227,7 +210,7 @@ impl<'p> ExportFile<'p> {
                     }
                 })
             };
-            sbump.reset(arena_keep);
+            sbump.reset(ARENA_KEEP);
             tctx.expr_cache.clear_session();
             if finished {
                 return;

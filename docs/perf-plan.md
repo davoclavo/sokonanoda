@@ -3,6 +3,27 @@
 A list of performance hypotheses for this checker. Each one states a claim, a
 test, and a result. Update the result after you run the test.
 
+## Principles
+
+The arena measures a weak proxy, so put these first.
+
+1. **Consistency first.** The checker must never accept a false proof. A change
+   that turns a rejection into an internal error is worse than a slow checker.
+   H6 did exactly that. Run the full arena suite, which holds the `bad` tests,
+   after every change.
+2. **Completeness second.** A cache that drops at a fixed size can turn a term
+   with heavy sharing into an exponential blow-up. Joachim Breitner raised this
+   about the session budget, and con-ron hit it for real on
+   `perf/magma-list-deep-n36`. Test the `perf/magma-*` family, not only the big
+   corpora.
+3. **Do not chase the sorted order.** The arena author states that the arena is
+   not a competition, and that the instruction count rewards neither parallelism
+   nor robustness. If a change only makes sense because of the metric, and looks
+   odd on its own, drop it.
+4. **A thread-count change is a collective question.** The arena author names it
+   as the one tweak that should be discussed on Zulip rather than applied alone.
+   See H1.
+
 Status values:
 
 - `confirmed` the test supports the claim
@@ -34,6 +55,36 @@ python3 tools/bench.py a=/tmp/a b=/tmp/b --reps 5 --threads 4 --tests std cedar
 
 Trust the median. Noise only adds time, so a best time flatters a lucky run.
 
+**Use 11 repetitions or more.** This machine drifts. At 5 repetitions the same
+binary and the same corpus gave medians of 7.250 s and 6.417 s on two runs, a
+spread of 13 percent. That spread is larger than every effect in this file. A
+5-repetition run produced a false positive that 15 repetitions then killed. See
+H2.
+
+## How to profile
+
+`devbox.json` holds samply, but samply is only on the path inside a devbox
+shell. From outside, call it by its store path.
+
+```
+samply record --save-only -o prof.json.gz -- \
+  ./target/release/sokonanodazo --nat-extension --string-extension \
+  --axiom-allow-all -q --threads 1 <corpus>.ndjson
+```
+
+The committed release profile carries no debug info, so a profile from it shows
+raw addresses and nothing else. Build a separate symbol-bearing binary into its
+own target directory. Debug info does not change the generated code, so the
+timings stay valid.
+
+```
+CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_PROFILE_RELEASE_STRIP=false \
+  CARGO_TARGET_DIR=/tmp/dbg cargo build --release
+```
+
+A fresh target directory rebuilds every dependency under fat LTO, which takes
+more than 10 minutes. Keep the directory between runs.
+
 ## What the arena scores
 
 **H0. The arena ranks on a retired instruction count, not on wall time.**
@@ -62,9 +113,14 @@ Test on cedar with `/usr/bin/time -l`.
 | 8 | 2.07 s | 12.72 s | 3.70 GB |
 
 - Status: **confirmed**. 2026-10-09. Eight threads cost 33 percent more CPU.
-- Action: `tools/arena.py` passes `--threads 4`, which matches
-  `checkers/sokonanoda.yaml`. Measure the arena score at `--threads 1` before
-  the next submission.
+- Action: **do not change the flag alone.** `tools/arena.py` passes
+  `--threads 4`, which matches `checkers/sokonanoda.yaml`. The arena author
+  names the thread count as the one tweak that every checker shares, and asks
+  that it be settled on Zulip rather than by each author. Measure the effect,
+  publish the number, and let the arena decide. See principle 4.
+- Note: parallelism is practically useful and the metric does not reward it. A
+  drop to one thread would raise the sorted order and make the checker worse to
+  use. That is the clearest case of the trade the arena author warns about.
 
 ## Build and tuning hypotheses
 
@@ -74,21 +130,48 @@ Test on cedar with `/usr/bin/time -l`.
 cache. The committed value of 2 MiB comes from 4-thread wall times. At one
 thread the threads do not compete, so a larger budget keeps more cache hits.
 
-Test: build a 2 MiB variant and a 16 MiB variant from the same tree, then run
-`tools/bench.py` at one thread and at four threads.
+Test: read the budget from an environment variable, build once, then sweep.
 
-| corpus | threads | 2 MiB | 16 MiB | outcome |
+First attempt, 5 repetitions. This looked like a win at one thread.
+
+| corpus | threads | 2 MiB | 16 MiB | reading |
 |---|---|---|---|---|
 | std | 1 | 7.250 s | 6.688 s | 16 MiB wins by 7.8 percent |
 | cedar | 1 | 10.080 s | 9.883 s | 16 MiB wins by 2.0 percent |
-| std | 4 | 2.247 s | 2.257 s | a tie |
-| cedar | 4 | 3.518 s | 3.707 s | 2 MiB wins by 5.4 percent |
 
-- Status: **confirmed**. 2026-10-09. The choice inverts with the thread count.
-- Action: derive the budget from a cache estimate divided by `num_threads`.
-  Keep 2 MiB as the floor for four threads or more.
-- Open follow-up: the one-thread win points the same way as H0 and H1. Both say
-  that more cache hits score better than better locality.
+Second attempt, 15 repetitions on std at one thread. The win vanished.
+
+| budget | median | best |
+|---|---|---|
+| 2 MiB | 6.390 s | 6.255 s |
+| 16 MiB | 6.388 s | 6.081 s |
+
+A full sweep at four threads, 11 repetitions, on the small corpora.
+
+| corpus | 2 MiB | 8 MiB | 16 MiB |
+|---|---|---|---|
+| std | 2.092 s | 2.148 s | 2.154 s |
+| cedar | 3.385 s | 3.379 s | 3.416 s |
+
+The small corpora hide the effect. The large corpora show it, 5 repetitions at
+four threads, where the medians and the best times agree.
+
+| corpus | 2 MiB median | 16 MiB median | 2 MiB best | 16 MiB best |
+|---|---|---|---|---|
+| cslib | 8.251 s | 9.102 s | 8.156 s | 9.016 s |
+| mathlib | 24.114 s | 29.069 s | 22.972 s | 25.198 s |
+
+- Status: **rejected as stated, and the committed constant is right.**
+  2026-10-10. The budget does not scale with the thread count. It scales with
+  the size of the corpus. At 2 MiB the gain is 10 percent on cslib and 20
+  percent on mathlib, and nothing on std and cedar at any thread count.
+- Action: none. The change is reverted. Keep `SESSION_BUDGET` at 2 MiB.
+- This confirms the README and the figure that circulates on Zulip. The first
+  5-repetition run that suggested a thread-count rule was noise.
+- Lesson: this run set the 11-repetition rule in the rig section above, and it
+  showed that a hypothesis about the large corpora must be tested on the large
+  corpora.
+- Open: see H13 for whether 2 MiB costs robustness on a hard declaration.
 
 **H3. `-C target-cpu=native` makes the checker faster.**
 
@@ -109,14 +192,45 @@ rust-analyzer about 20 percent. BOLT added almost nothing on top of PGO in the
 reports, so test PGO alone first. See
 <https://kobzol.github.io/rust/cargo/2023/07/28/rust-cargo-pgo.html>.
 
-Test with `cargo-pgo`. Train on `init` and `std`. Benchmark on `cedar` and
-`cslib`, which the training run never saw.
+Test with plain cargo. `cargo-pgo` is not needed. Train on `init` and `std`.
+Benchmark on `cedar`, `cslib`, and `mathlib`, which the training run never saw.
 
-- Status: **open**
-- Cost: small. No change to the checker.
-- Note: the arena builds from a recipe, so the profile must live in the repo and
-  the build must apply it.
-- Result:
+```
+SP=/tmp/pgo
+RUSTFLAGS="-Cprofile-generate=$SP/data" CARGO_TARGET_DIR=$SP/gen cargo build --release
+for c in init std; do
+  $SP/gen/release/sokonanodazo --stdin --nat-extension --string-extension \
+    --axiom-allow-all -q --threads 4 < ~/.cache/lean-kernel-arena/arena/_build/tests/$c.ndjson
+done
+llvm-profdata merge -o $SP/merged.profdata $SP/data/*.profraw
+RUSTFLAGS="-Cprofile-use=$SP/merged.profdata" CARGO_TARGET_DIR=$SP/use cargo build --release
+```
+
+The `llvm-profdata` must match the LLVM that rustc uses. The one in a rustup
+toolchain under `lib/rustlib/<target>/bin` works. Xcode also ships one.
+
+Four threads, 11 repetitions for the first three corpora and 5 for the rest.
+
+| corpus | baseline median | PGO median | outcome |
+|---|---|---|---|
+| init | 1.211 s | 1.195 s | 1.3 percent faster |
+| std | 2.086 s | 2.058 s | 1.3 percent faster |
+| cedar | 3.338 s | 3.269 s | 2.1 percent faster |
+| cslib | 8.177 s | 8.038 s | 1.7 percent faster |
+| mathlib | 23.332 s | 23.284 s | 0.2 percent faster, and 2.7 percent on best |
+
+- Status: **confirmed, but small**. 2026-10-10. The win is 1.3 to 2.1 percent on
+  four of the five corpora. It holds on `cedar` and `cslib`, which the training
+  run never saw, so the profile generalizes. mathlib is memory bound, so its
+  median hides the gain that its best time shows.
+- Correctness: the PGO build passes the full arena suite, 223 of 223.
+- One thread: inconclusive. On cedar the median says 7.4 percent slower and the
+  best says 1.0 percent faster, so the 10-second runs drift too much. Repeat
+  this part on a quiet Linux host with `perf stat`.
+- Action: ship it, because it needs no change to the checker. The arena builds
+  from a recipe, so the profile must live in the repo and the build must apply
+  it. The profile data is 4.1 MB after the merge.
+- Open follow-up: train on `cslib` as well, and test BOLT on top.
 
 **H5. `PROBE_CAP` and `WHNF_ADMIT_THRESHOLD` are tuned for wall time.**
 
@@ -150,11 +264,84 @@ Two steps:
    pointer, and the `std::ptr::eq` fast path at the top of `unify` fires much
    more often. The `canon` flag and `canon_cache` give a place to hang this.
 
-- Status: **open**
-- Risk: a class must not outlive its session, and a class must respect the bvar
-  depth. The value digest already carries the depth, so check that first.
-- Instrument: count the calls to `unify_no_cache` before the change and after.
-- Result:
+- Status: **rejected**. 2026-10-10. It is unsound in the plain form, and it buys
+  almost nothing in the sound form.
+
+### H6, what the instruments showed
+
+Counters on cedar at one thread, before any change:
+
+| Event | Count |
+|---|---|
+| `unify` calls | 21 182 517 |
+| resolved by pointer equality | 9 902 570, which is 47 percent |
+| cacheable pairs | 13 303 281 |
+| positive cache hit | 3 497 979 |
+| negative cache hit | 48 134 |
+| positive cache insert | 9 526 173 |
+| `unify_no_cache` calls | 12 215 921, which is 58 percent |
+
+The pair cache is not the bottleneck. Real reduction work is. Pointer equality
+already settles 47 percent of the calls, because the values are hash-consed.
+
+### H6, the soundness failure
+
+The plain union-find turned the arena test `bugs/rec-missing-ih` from a correct
+rejection, exit 1, into an internal error, exit 3. It panicked at
+`src/checker/inductive/positivity.rs:44` on an `Option::unwrap`.
+
+The cause: definitional equality is transitive only on **well-typed** terms.
+That test holds a deliberately malformed recursor, so the kernel asks def-eq
+questions about ill-typed terms. A pair cache answers each question with a fact
+it proved. A union-find answers with a fact it **derived**, and on an ill-typed
+term that derivation is invalid. The invented equality let the positivity check
+pass a gate it should have failed, and `which_valid_ind_app_v` then returned
+`None` where an earlier `ensure!` had accepted.
+
+The fix: union only a pair of closed values. `Value::is_closed` reads a bit of
+the digest, so the guard is free. With the guard the test rejects again.
+
+Two notes on the diagnosis, to save the next reader the same work.
+
+- An earlier draft of this file blamed composition across bvar depths. That is
+  wrong. `RigidHead::BVar` carries an **absolute** level and is hash-consed by
+  the pair of level and type, so a value does not change meaning with the
+  `depth` argument, and a conversion judgment with a free variable is parametric
+  in that variable. Composing two such facts is sound.
+- The closed-value guard rules out both candidate mechanisms at once, so the
+  experiment did not isolate which one fired. The well-typedness reading is the
+  one that the code supports.
+
+The general rule: a cache that **stores** a proven fact is safe on malformed
+input. A cache that **derives** a new fact is not, because the kernel must stay
+well behaved on terms that are not well typed.
+
+Neither this fork nor the parent composes a positive conversion fact.
+`conv_cache_pos` has exactly two uses, one `contains` and one `insert`.
+
+### H6, the sound form does not pay
+
+Counters on cedar with the guard in place:
+
+| Event | Count |
+|---|---|
+| union-find joins | 2 667 398 |
+| extra hits that the pair cache missed | 51 439 |
+
+51 439 extra hits against 13.3 million cacheable lookups is 0.39 percent, and
+it costs 2.7 million joins plus one hash lookup on every cacheable miss. The
+run time did not improve.
+
+The reason is the hash-consing. Two convertible closed values that the checker
+meets twice already share one pointer, so the classes stay tiny and there is
+almost no transitivity to exploit. The second half of the idea, which
+canonicalizes a spine argument to its class representative, has nothing to
+collapse for the same reason.
+
+- Action: reverted. The ansatz figure of 9.6 million calls down to eleven
+  thousand came from a checker with no hash-consing, so it does not carry over.
+- Lesson: measure the cache hit rate before you replace a cache. And run the
+  `bad` tests, because this failure was invisible on every corpus.
 
 **H7. Pointer compression halves the memory traffic of the hot caches.**
 
@@ -202,9 +389,19 @@ value-to-expression table, so it is the one cache that threads can share
 through a sharded read-mostly map. This attacks H1 directly.
 
 - Status: **open**
-- Blocker: the `ExprPtr` comes from the per-thread expression interner that
-  `tctx.expr_cache.clear_session()` truncates. Write only tenured entries into a
-  shared permanent tier.
+- The blocker is not a lifetime. `ExprCache::clear_session` clears only the
+  memo maps `inst`, `subst`, `dsubst`, and `simplify`. The interner itself is
+  `TcCtx::dag`, which `Dag::new_local` builds once per thread and which lives as
+  long as the thread. So a quoted `ExprPtr` stays valid across sessions. That is
+  why `whnf_store` can carry the `keep` marker.
+- The real blocker is that each thread interns into its **own** `Dag`, so an
+  `ExprPtr` from one thread means nothing to another.
+- Design: make the shared table map the `u64` digest to a compact serialized
+  expression, not to an `ExprPtr`. A reading thread interns the blob into its
+  own `Dag`. Interning a small blob costs far less than a repeated whnf. Shard
+  the table by the low bits of the digest to keep the locks short.
+- Measure first: H1 says 8 threads cost 33 percent more CPU than one thread.
+  That 33 percent is the ceiling for this idea, and only a part of it is whnf.
 - Result:
 
 **H10. Matcher-aware iota skips the intermediate recursor spine.**
@@ -238,15 +435,154 @@ mathlib. A 2 MiB page covers 512 times the memory of a 4 KiB page. Reports give
   move the arena score. They do help a local run.
 - Result:
 
+## The profile
+
+cedar, one thread, samply, 10 370 samples on the checker thread. Ignore the
+main thread, which spends its whole life blocked in a join.
+
+Self time, the top of the list:
+
+| Share | Function |
+|---|---|
+| 16.97 % | `eval::eval_no_cache` |
+| 14.92 % | `eval::eval` |
+| 14.24 % | `infer::infer_nonvar` |
+| 8.45 % | `eval::environment::prune_env_cold` |
+| 8.33 % | `eval::environment::intern_frame` |
+| 4.98 % | `eval::apply_many` |
+| 4.06 % | `eval::neutral_app` |
+| 2.63 % | `ptrmap::PtrMap::grow` |
+| 2.13 % | `eval::environment::env_new` |
+| 1.92 % | `value::Spine::to_vec` |
+| 1.63 % | `conv::unify_general` |
+
+Total time, which shows who drives the work:
+
+| Share | Function |
+|---|---|
+| 95.37 % | `infer::infer_nonvar` |
+| 63.34 % | `eval::eval` |
+| 59.75 % | `conv::unify_general` |
+| 42.72 % | `conv::unify_spine` |
+| 38.28 % | `eval::reduction::unfold_value_go` |
+| 25.29 % | `eval::reduction::iota_value` |
+| 23.46 % | `eval::reduction::do_recursor_iota` |
+| 23.11 % | `eval::reduction::do_proj` |
+
+Three readings:
+
+1. Type inference drives almost everything, at 95 percent of total time.
+   Conversion is 60 percent and evaluation is 63 percent, nested inside it.
+2. Conversion is cheap in **self** time, at 1.63 percent plus 0.67 percent for
+   `unify_direct`. It is expensive only through what it calls. This is the same
+   message the H6 counters gave. Do not optimize the conversion cache.
+3. About 22 percent of self time goes to building and interning environments and
+   hash-consing values: `prune_env_cold`, `intern_frame`, `env_new`, and the
+   `mk_*_hc` family. That is the machinery around reduction, not reduction.
+
+**H15. The prune cache is too small, so `prune_env_cold` runs too often.**
+
+`prune_env_cold` is marked `#[inline(never)]` and named cold, yet it is the
+fourth hottest function. The direct-mapped `prune_dm` table holds 1024 entries.
+
+Four threads, 11 repetitions, medians.
+
+| corpus | 2^10 | 2^12 | 2^13 | 2^14 |
+|---|---|---|---|---|
+| std | 2.223 s | 2.223 s | 2.232 s | 2.270 s |
+| cedar | 3.476 s | 3.482 s | 3.495 s | 3.561 s |
+
+- Status: **rejected**. 2026-10-10. The committed 2^10 is already the best size,
+  and 2^14 costs 2 percent. The cold path runs because the pruning work is
+  genuinely needed, not because the table misses.
+
+**H16. `PtrMap::reset_shrink` makes a table pay for the same growth twice.**
+
+`PtrMap::grow` holds 2.63 percent of self time. `reset_shrink` sizes a table
+from the last session, so a table that grows, shrinks, and grows again pays
+twice. This is the pattern the con-ron report names: a sizing rule for clearing
+that disagrees with the growth rule turns clear into grow.
+
+Test: make `reset_shrink` never shrink, so a table keeps its grown size.
+
+| corpus | shrink, committed | never shrink |
+|---|---|---|
+| std | 2.153 s | 2.203 s, 2.3 percent slower |
+| cedar | 3.468 s | 3.914 s, 12.9 percent slower |
+
+- Status: **rejected**. 2026-10-10. The shrink is load bearing. A table that
+  keeps its peak size loses more to cache misses, and to the larger memset on
+  reset, than it saves on growth. The 2.63 percent in `grow` is the price of
+  locality, and paying it is correct.
+- This is the same result as H2 from the other direction. Both say that this
+  checker wins by keeping its hot tables small.
+
+**H13. The 2 MiB session budget costs robustness on a hard declaration.**
+
+H2 shows that 2 MiB wins 10 to 20 percent on the large corpora. Joachim
+Breitner warns that a cache which drops at a fixed size can make a term with
+heavy sharing explode. con-ron hit this for real: a memo table that dropped at
+a fixed entry count made `perf/magma-list-deep-n36` cost 128 percent of
+con-leche instead of the usual 45 percent.
+
+This checker drops its session caches only between declarations, never inside
+one, so a single hard declaration keeps its caches whatever the budget is. The
+risk is therefore the loss of sharing **across** declarations, not inside one.
+
+Test the `perf/magma-*` family at several budgets and compare the instruction
+counts.
+
+- Status: **open, and not decided by the attempt below.**
+- A first single run suggested a large cliff on `magma-list-pair-n21`, 26.5 s at
+  2 MiB against 15.8 s at 16 MiB. Three repetitions reversed the sign: 15.9 s at
+  2 MiB against 26.7 s at 16 MiB. The medians and the best times disagree in
+  both directions, so the test is dominated by one heavy declaration and this
+  machine cannot resolve it. A 5-run attempt at measuring the CPU time timed out
+  after 10 minutes.
+- Action: run this on a quiet Linux host with `perf stat`, which counts
+  instructions and does not care about machine load. Do that before anyone
+  defends or changes the 2 MiB constant on robustness grounds.
+- Result:
+
 ## Suggested order
 
-1. H2, because the test is done and the fix is small.
-2. H4, because it cuts instructions and needs no change to the checker.
-3. H1, because the arena flags may cost the score for no gain.
-4. H6, because it is the largest algorithmic lever.
-5. H8 and H9, because both remove repeated work.
-6. H7, after H6 settles which caches stay hot.
-7. H5, H10, H11, then H12.
+1. ~~H2~~ done. The committed 2 MiB constant is correct and worth 10 to 20
+   percent on the large corpora. The thread-count rule is rejected.
+2. ~~H4~~ done, confirmed at 1.3 to 2.1 percent. Wire the profile into the build.
+3. ~~H6~~ done, rejected. Unsound in the plain form, worth 0.39 percent in the
+   sound form.
+4. ~~H15~~ done, rejected. The prune table is already the right size.
+5. ~~H16~~ done, rejected. The table shrink is load bearing.
+6. H13, because robustness outranks speed and the question is open.
+7. **H7**, promoted. Every measurement in this file says the same thing: this
+   checker wins by keeping its hot data small. H2, H15, and H16 all punished a
+   larger table. Pointer compression is the only idea here that makes the hot
+   data **smaller** without giving up a single cache entry, so it works with the
+   grain of the design instead of against it. A 32-bit arena offset halves every
+   `PtrMap` key, and `Value` is 56 bytes and `Env` is 64 bytes today.
+8. H8 and H9, because the profile says real reduction work, not cache lookup,
+   is where the time goes. Both remove repeated work.
+9. H10, for the same reason, and because `do_proj` and `do_recursor_iota` hold
+   23 percent of total time each.
+10. H1, but raise it on Zulip first. See principle 4.
+11. H5, H11, then H12.
+
+### What six results taught
+
+Five of the seven hypotheses tested are rejected, and the rejections agree.
+
+- **Do not cache more.** H2, H15, and H16 each tried to keep more, and each lost
+  2 to 13 percent. The small session budget, the 1024-entry prune table, and the
+  shrinking `PtrMap` are all correct as committed.
+- **Do not optimize the conversion cache.** H6 counters and the profile both say
+  conversion costs 1.63 percent of self time. It is expensive only through what
+  it calls.
+- **The remaining room is less work or smaller data.** Less work is H8, H9, and
+  H10. Smaller data is H7. Nothing else on this list has survived contact with a
+  measurement.
+- **Measure with 11 repetitions and on the corpus the claim is about.** H2 gave
+  a false positive at 5 repetitions, and a false negative until it was tested on
+  cslib and mathlib rather than std and cedar.
 
 ## Sources
 

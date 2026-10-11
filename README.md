@@ -15,65 +15,62 @@ Three changes sit on top, and they come to roughly 200 lines.
 
 ## What this fork changes
 
-### It judges `unsafe` and `partial` declarations
+**It judges `unsafe` and `partial` declarations.** The parent declines any
+export that declares one, so it gives no verdict on the two arena tests that
+prove `False` through an unsafe definition. This fork registers such a
+declaration, checks its type, never checks its value, and never unfolds it. A
+safe declaration that names one is rejected, with the Lean kernel's own two
+messages from `type_checker::infer_constant`. The arena suite goes from 221
+correct with 2 declined to 223 correct with 0 declined.
 
-The parent declines any export that declares one. A declined result claims
-nothing about the proof, so this is honest, but it also means the checker gives
-no verdict on the two arena tests that prove `False` through an unsafe
-definition.
+**The session arena budget drops from 16 MiB to 2 MiB.** A smaller arena keeps
+the working set in cache. The gain is real on the large corpora and absent on
+the small ones: at four threads it beats 16 MiB by 10 percent on cslib and 20
+percent on mathlib, and ties on std and cedar at every thread count tried.
 
-This fork registers such a declaration, checks its type, never checks its
-value, and never unfolds it. A safe declaration that names one is rejected.
-The Lean kernel makes the same check in `type_checker::infer_constant`, and this
-fork reports it with the kernel's own two messages.
+**The thread count no longer caps itself at four.** The parent caps the default
+at four cores. This fork uses every core.
 
-The effect on the arena is 205 correct with 0 declined, in place of 203 correct
-with 2 declined.
+## Measured effect
 
-### A smaller session arena budget
-
-The budget drops from 16 MiB to 2 MiB. A smaller arena keeps the working set in
-cache, and that is worth more than the cache entries a larger arena retains.
-Measured with interleaved repeated runs, 2 MiB beats 16 MiB on every corpus and
-every thread count tested.
-
-### The thread count no longer caps itself at four
-
-The parent takes the core count and then caps it at four. This fork uses every
-core.
-
-### Measured effect
-
-Parent against this fork, median of interleaved repeated runs, 14 cores.
+One machine, an Apple M3 Max with 14 cores. Medians of interleaved repeated
+runs.
 
 | Corpus | Flags | parent | this fork | Speedup |
 |---|---|---|---|---|
-| mathlib | `--threads 4` | 25.1 s | 22.8 s | 1.10x |
-| cslib | `--threads 4` | 8.9 s | 8.1 s | 1.11x |
-| mathlib | default | 24.6 s | 13.6 s | 1.80x |
-| cslib | default | 8.9 s | 4.7 s | 1.88x |
+| mathlib | `--threads 4` | 25.3 s | 23.8 s | 1.06x |
+| cslib | `--threads 4` | 9.5 s | 8.5 s | 1.12x |
+| mathlib | default | 28.7 s | 14.2 s | 2.0x |
+| cslib | default | 11.5 s | 6.8 s | 1.7x |
 
-Other changes were measured and dropped, among them `target-cpu=native` beyond
-the PGO build, the parent's `top-byte-ignore` feature, newer dependency
-versions, allocator tuning, and larger cache tables. None of them beat the
-parent's existing choices.
+Treat the single-digit figures with suspicion. Runs on this machine drift by
+several percent, and `init` comes out 1 to 3 percent *slower* than the parent.
+
+**These are wall clock times, and the arena scores an instruction count.** The
+budget change trades cache hits for locality, and fewer cache hits means more
+instructions. So this fork may score *worse* than the parent on the arena while
+running faster in practice. Nobody has measured that; it needs `perf stat` on a
+quiet Linux host. This fork is tuned for wall clock time.
+
+Other ideas were measured and dropped: `target-cpu=native`, the parent's
+`top-byte-ignore` feature, newer dependencies, allocator tuning, larger cache
+tables, a union-find conversion cache, and a budget that scales with the thread
+count. None beat the parent's existing choices. See
+[docs/perf-plan.md](docs/perf-plan.md).
 
 ## Tools
 
 `tools/` holds a harness that runs the whole 223-test arena suite on your
 machine, and a benchmark tool for comparing two builds. See
-[tools/README.md](tools/README.md).
+[tools/README.md](tools/README.md). All 223 tests pass, including the seven
+large corpora built from Lean sources: `init`, `std`, `cedar`, `con-leche`,
+`cslib`, `navier-stokes-euler`, and `mathlib`.
 
 ```
 devbox run build
 devbox run arena-fetch
 devbox run arena
 ```
-
-All 223 arena tests pass, with 0 declined and 0 wrong. That count includes all
-seven large real-world corpora, built from Lean sources and checked locally:
-`init`, `std`, `cedar`, `con-leche`, `cslib`, `navier-stokes-euler`, and
-`mathlib`.
 
 ## License
 
