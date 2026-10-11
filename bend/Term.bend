@@ -147,6 +147,36 @@ def Term.occurs_any(ts: List<&2, Term>, +n: Nat) -> Bool:
     case Con{h, t}:
       Bool.or(Term.occurs(h, n), Term.occurs_any(t, n))
 
+# Does this term use the variable bound `d` binders out?
+#
+# The Lean kernel calls this a loose bound variable. A projection out of a
+# proposition needs it: a field before the one projected has to be a proof
+# only when the rest of the constructor's telescope uses it.
+def Term.has_bvar(t: Term, +d: Nat) -> Bool:
+  match t:
+    case TVar{+i}:
+      Nat.is_eq(i, d)
+    case TSort{l}:
+      False{}
+    case TConst{n, ls}:
+      False{}
+    case TApp{f, a}:
+      Bool.or(Term.has_bvar(f, d), Term.has_bvar(a, d))
+    case TLam{ty, bd}:
+      Bool.or(Term.has_bvar(ty, d), Term.has_bvar(bd, 1n+d))
+    case TPi{ty, bd}:
+      Bool.or(Term.has_bvar(ty, d), Term.has_bvar(bd, 1n+d))
+    case TLet{ty, v, bd}:
+      Bool.or(
+        Bool.or(Term.has_bvar(ty, d), Term.has_bvar(v, d)),
+        Term.has_bvar(bd, 1n+d))
+    case TNat{v, m, z, c}:
+      False{}
+    case TUnk{}:
+      False{}
+    case TProj{tn, idx, st}:
+      Term.has_bvar(st, d)
+
 # Add `d` to every free variable whose index is at least `cut`.
 def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
   match t:

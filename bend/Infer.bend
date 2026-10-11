@@ -26,6 +26,7 @@ import ./Env.bend as E
 import ./Eval.bend as V
 import ./Conv.bend as C
 import ./Ans.bend as A
+import ./Shape.bend as S
 
 type Res is Data:
   ROk{ty: T.Term}
@@ -338,16 +339,94 @@ def Infer.prop_ok(b: Bool, +ps: T.Term) -> A.Ans:
     case False{}:
       A.AYes{}
 
+# Is this term a proposition? Not known when its type cannot be found.
+#
+# This asks `Shape.infer` rather than `Infer.infer`, because a def may only
+# call one declared above it and `Infer.infer` is below. `Shape` is the small
+# inference that exists for side questions of exactly this kind.
+def Infer.sort_prop_ans(w: T.Term) -> A.Ans:
+  match w:
+    case T.TSort{l}:
+      A.Ans.of(L.Level.is_zero(l))
+    case T.TUnk{}:
+      A.AUnk{}
+    case o:
+      A.ANo{}
+
+def Infer.prop_of(ok: Bool, w: T.Term) -> A.Ans:
+  match ok:
+    case False{}:
+      A.AUnk{}
+    case True{}:
+      Infer.sort_prop_ans(w)
+
+def Infer.is_prop_ans(
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +t: T.Term
+) -> A.Ans:
+  +r : S.Shp = S.Shape.infer(fuel, env, ctx, t)
+  Infer.prop_of(
+    S.Shape.ok(r), V.Eval.whnf(fuel, env, S.Shape.ty(r), Nil{}))
+
+# Must this field be a proof, and is it one?
+#
+# Only when the structure is a proposition and the rest of the telescope uses
+# the field, because then the walk has to form that field's own projection,
+# and a projection out of a proposition may not produce data. The test is a
+# match and not a disjunction, so a structure that is not a proposition pays
+# for no inference at all.
+def Infer.prefix_field_ans(
+  check: Bool, +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
+  +dom: T.Term
+) -> A.Ans:
+  match check:
+    case False{}:
+      A.AYes{}
+    case True{}:
+      Infer.is_prop_ans(fuel, env, ctx, dom)
+
+# Step over the earlier fields again, and ask of each whether it is allowed.
+#
+# This mirrors `Infer.proj_walk`, which carries the type along and cannot
+# carry an answer with it. The arena's `projProp6` is the test: its field five
+# is a proposition and the projection is still wrong, because field three is
+# data and field four uses it.
+def Infer.proj_prefix_ans(
+  +fuel: Nat, +env: E.DTable, i: Nat, +j: Nat, r: T.Term,
+  +tn: Nat, +s: T.Term, +isprop: Bool, +ctx: List<&2, T.Term>
+) -> A.Ans:
+  match fuel:
+    case 0n:
+      A.AUnk{}
+    case 1n+f:
+      match i:
+        case 0n:
+          A.AYes{}
+        case 1n+k:
+          +w : T.Term = V.Eval.whnf(f, env, r, Nil{})
+          A.Ans.and(
+            Infer.prefix_field_ans(
+              Bool.and(isprop, T.Term.has_bvar(Infer.pi_bd(w), 0n)),
+              f, env, ctx, Infer.pi_dom(w)),
+            Infer.proj_prefix_ans(
+              f, env, k, 1n+j,
+              T.Term.inst(Infer.pi_bd(w), T.TProj{tn, j, s}),
+              tn, s, isprop, ctx))
+
 # The type of `s.idx`, given the structure's own type.
 def Infer.proj_from(
-  +fuel: Nat, +env: E.DTable, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +sty: T.Term,
+  +tn: Nat, +idx: Nat, +s: T.Term
 ) -> Res:
   +w = V.Eval.whnf(
     fuel, env,
     Infer.proj_walk(fuel, env, idx, 0n, Infer.proj_base(fuel, env, sty), tn, s),
     Nil{})
   Infer.res_of(
-    A.Ans.and(A.Ans.of(Infer.proj_ok(env, sty)), Infer.pi_ans(w)),
+    A.Ans.and(
+      A.Ans.and(A.Ans.of(Infer.proj_ok(env, sty)), Infer.pi_ans(w)),
+      Infer.proj_prefix_ans(
+        fuel, env, idx, 0n, Infer.proj_base(fuel, env, sty), tn, s,
+        Infer.ind_is_prop(env, sty), ctx)),
     Infer.pi_dom(w))
 
 # Infer the type of `t` in the context `ctx`.
@@ -397,7 +476,7 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
         case T.TProj{tn, +idx, +st}:
           +sty = V.Eval.whnf(
             f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{})
-          +fr = Infer.proj_from(f, env, sty, tn, idx, st)
+          +fr = Infer.proj_from(f, env, ctx, sty, tn, idx, st)
           +ps = V.Eval.whnf(
             f, env,
             Infer.res_ty(
