@@ -362,13 +362,107 @@ def Level.nf_le(xs: List<&2, Atom>, +ys: List<&2, Atom>) -> Bool:
 def Level.leq(+fuel: Nat, a: Level, b: Level) -> Bool:
   Level.nf_le(Level.nf(fuel, a), Level.nf(fuel, b))
 
-# Are these two levels equal under every assignment of their parameters?
+# The imax case split
+# -------------------
 #
-# This decides the question for everything except an imax whose right side is
-# a bare parameter. Two such imax atoms are compared as syntax, so the case
-# split the Lean kernel performs on them is still missing.
-def Level.eq(+fuel: Nat, a: Level, b: Level) -> Bool:
-  Level.atoms_eq(Level.nf(fuel, a), Level.nf(fuel, b))
+# The normal form decides the question for everything except an imax whose
+# right side is a bare parameter, because `imax u p` is zero when `p` is zero
+# and `max u p` otherwise, and nothing here knows which. Two such atoms
+# compare as syntax, which is too strict: `imax 1 p` and `p` are the same
+# level, since `imax 1 0` is zero and `max 1 p` is `p` once `p` is at least
+# one, but they are not the same syntax.
+#
+# The Lean kernel splits on the parameter instead. It picks a parameter that
+# stands on the right of an imax in either side, and asks the question twice:
+# once with that parameter set to zero, once with it set to its own successor.
+# Both branches must hold. The two levels are then equal under every
+# assignment, because every assignment falls in one branch or the other.
+#
+# The split makes progress. Setting the parameter to zero collapses that imax
+# to zero, and setting it to a successor collapses it to a max, so the
+# parameter never stands on the right of an imax again and the same split
+# cannot be taken twice.
+#
+# This is what `Nat.div.go.match_1` needs. Its motive has the type
+# `Nat -> Sort (imax 1 (imax 1 u))` where the eliminator declares
+# `Nat -> Sort u`, and no smart constructor collapses that pair.
+
+# A parameter standing on the right of an imax, if the walk finds one.
+def Level.par_here(b: Level, acc: Maybe<&2, Nat>) -> Maybe<&2, Nat>:
+  match b:
+    case LPar{i}:
+      Some{i}
+    case o:
+      acc
+
+def Level.imax_par(l: Level, acc: Maybe<&2, Nat>) -> Maybe<&2, Nat>:
+  match l:
+    case LZero{}:
+      acc
+    case LPar{i}:
+      acc
+    case LSucc{x}:
+      Level.imax_par(x, acc)
+    case LMax{a, b}:
+      Level.imax_par(a, Level.imax_par(b, acc))
+    case LIMax{a, +b}:
+      Level.imax_par(a, Level.par_here(b, Level.imax_par(b, acc)))
+
+# Replace one parameter by a level, through the smart constructors, so an imax
+# that the replacement settles collapses on the spot.
+def Level.subst_par(l: Level, +i: Nat, +r: Level) -> Level:
+  match l:
+    case LZero{}:
+      LZero{}
+    case LPar{+j}:
+      Level.pick(Nat.is_eq(j, i), r, LPar{j})
+    case LSucc{x}:
+      LSucc{Level.subst_par(x, i, r)}
+    case LMax{a, b}:
+      Level.mk_max(Level.subst_par(a, i, r), Level.subst_par(b, i, r))
+    case LIMax{a, b}:
+      Level.mk_imax(Level.subst_par(a, i, r), Level.subst_par(b, i, r))
+
+# Which parameter to split on, or none. None when the two levels already have
+# the same normal form, and none when no parameter stands on the right of an
+# imax, because then the normal form is the whole answer.
+def Level.split_if(same: Bool, m: Maybe<&2, Nat>) -> Maybe<&2, Nat>:
+  match same:
+    case True{}:
+      None{}
+    case False{}:
+      m
+
+def Level.split(+fuel: Nat, +a: Level, +b: Level) -> Maybe<&2, Nat>:
+  Level.split_if(
+    Level.atoms_eq(Level.nf(fuel, a), Level.nf(fuel, b)),
+    Level.imax_par(a, Level.imax_par(b, None{})))
+
+# Equality, with the split already chosen. A match needs a parameter, and a
+# helper that matched the choice would have to call this from above it, which
+# Bend has no mutual recursion for. So the choice arrives as a parameter.
+def Level.eq_go(
+  +fuel: Nat, m: Maybe<&2, Nat>, +a: Level, +b: Level
+) -> Bool:
+  match fuel:
+    case 0n:
+      Level.atoms_eq(Level.nf(0n, a), Level.nf(0n, b))
+    case 1n+f:
+      match m:
+        case None{}:
+          Level.atoms_eq(Level.nf(f, a), Level.nf(f, b))
+        case Some{+i}:
+          +a0 : Level = Level.subst_par(a, i, LZero{})
+          +b0 : Level = Level.subst_par(b, i, LZero{})
+          +a1 : Level = Level.subst_par(a, i, LSucc{LPar{i}})
+          +b1 : Level = Level.subst_par(b, i, LSucc{LPar{i}})
+          Bool.and(
+            Level.eq_go(f, Level.split(f, a0, b0), a0, b0),
+            Level.eq_go(f, Level.split(f, a1, b1), a1, b1))
+
+# Are these two levels equal under every assignment of their parameters?
+def Level.eq(+fuel: Nat, +a: Level, +b: Level) -> Bool:
+  Level.eq_go(fuel, Level.split(fuel, a, b), a, b)
 
 # The position of name index `j` among `ps`, as a level, or `LPar{j}` when `j`
 # is not one of them. The search is over the declaration's level parameters,
