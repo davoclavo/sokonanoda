@@ -198,6 +198,43 @@ def Main.env_proj2(field: Nat) -> List<&2, E.Decl>:
       T.TConst{10n, []}}
   ]
 
+# A projection from a variable, which is stuck because the variable is not a
+# constructor application. This is the shape every projection in the arena has
+# and the shape none of the tests above had.
+#
+#   inductive S : Type where mk : Bool -> Bool -> S
+#   def r : Pi (x : S), Bool := fun x => x.0
+def Main.env_projvar(field: Nat) -> List<&2, E.Decl>:
+  [ E.DInd{0n, [], T.TSort{L.LSucc{L.LZero{}}}, 0n, 0n, [1n, 2n]}
+  , E.DCtor{1n, [], T.TConst{0n, []}, 0n, 0n, 0n, 0n}
+  , E.DCtor{2n, [], T.TConst{0n, []}, 0n, 1n, 0n, 0n}
+  , E.DInd{7n, [], T.TSort{L.LSucc{L.LZero{}}}, 0n, 0n, [8n]}
+  , E.DCtor{8n, [],
+      T.TPi{T.TConst{0n, []}, T.TPi{T.TConst{0n, []}, T.TConst{7n, []}}},
+      7n, 0n, 0n, 2n}
+  , E.DDef{11n, [],
+      T.TPi{T.TConst{7n, []}, T.TConst{0n, []}},
+      T.TLam{T.TConst{7n, []}, T.TProj{7n, field, T.TVar{0n}}}}
+  ]
+
+# A projection from a structure that takes a level parameter, which is the one
+# thing the tests above do not have and every arena projection does.
+#
+#   inductive S.{u} : Sort (u+1) where mk : Sort u -> S.{u}
+#   def r : Pi (x : S.{0}), Sort 0 := fun x => x.0
+#
+# Declarations here are written as the parser stores them, so a level
+# parameter is already a position: `LPar{0}` is the first one.
+def Main.env_projlv() -> List<&2, E.Decl>:
+  [ E.DInd{7n, [5n], T.TSort{L.LSucc{L.LPar{0n}}}, 0n, 0n, [8n]}
+  , E.DCtor{8n, [5n],
+      T.TPi{T.TSort{L.LPar{0n}}, T.TConst{7n, [L.LPar{0n}]}},
+      7n, 0n, 0n, 1n}
+  , E.DDef{11n, [],
+      T.TPi{T.TConst{7n, [L.LZero{}]}, T.TSort{L.LZero{}}},
+      T.TLam{T.TConst{7n, [L.LZero{}]}, T.TProj{7n, 0n, T.TVar{0n}}}}
+  ]
+
 # "accept" or "reject".
 def Main.show(a: A.Ans) -> String:
   A.Ans.show(a)
@@ -215,6 +252,9 @@ def main() -> IO(Unit):
     IO.print("proj2 0 expect reject  got " ++ Main.show(K.Kernel.check_all(Main.env_proj2(0n), 4000n, Nil{})))
     IO.print("proj2 field1 == ff  expect accept  got " ++ A.Ans.show(C.Conv.eq(4000n, Main.env_proj2(1n), T.TProj{7n, 1n, Main.mk_app()}, T.TConst{2n, []})))
     IO.print("proj2 field0 == tt  expect accept  got " ++ A.Ans.show(C.Conv.eq(4000n, Main.env_proj2(1n), T.TProj{7n, 0n, Main.mk_app()}, T.TConst{1n, []})))
+    IO.print("projvar 0 expect accept  got " ++ Main.show(K.Kernel.check_all(Main.env_projvar(0n), 4000n, Nil{})))
+    IO.print("projvar 1 expect accept  got " ++ Main.show(K.Kernel.check_all(Main.env_projvar(1n), 4000n, Nil{})))
+    IO.print("projlv  expect accept  got " ++ Main.show(K.Kernel.check_all(Main.env_projlv(), 4000n, Nil{})))
     IO.print("rec tt == tt   expect accept  got " ++ Main.show(C.Conv.eq(4000n, Main.env_iota_at(T.TConst{1n, []}), Main.rec_app(T.TConst{1n, []}), T.TConst{1n, []})))
     IO.print("rec ff == ff   expect accept  got " ++ Main.show(C.Conv.eq(4000n, Main.env_iota_at(T.TConst{1n, []}), Main.rec_app(T.TConst{2n, []}), T.TConst{2n, []})))
     IO.print("rec tt == ff   expect reject  got " ++ Main.show(C.Conv.eq(4000n, Main.env_iota_at(T.TConst{1n, []}), Main.rec_app(T.TConst{1n, []}), T.TConst{2n, []})))

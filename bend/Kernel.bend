@@ -139,7 +139,9 @@ def Kernel.why(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> String:
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("infer", I.Infer.res_ans(I.Infer.infer(fuel, env, Nil{}, val))) ++
       Kernel.flag("conv", C.Conv.eq(fuel, env,
-        I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty))
+        I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty)) ++
+      Kernel.flag("same", A.Ans.of(T.Term.same(
+        I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty)))
     case E.DThm{id, ps, +ty, +val}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++

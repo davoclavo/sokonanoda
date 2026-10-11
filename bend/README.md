@@ -128,11 +128,16 @@ write, and those are not here.
 **Projections.** Written and working, but not yet on the arena's cases. The
 term, its reduction and its type are all in, and four regression tests in
 `main.bend` cover a structure with and without parameters, in both directions.
-Every arena projection test still rejects, and the cause is narrowed to
-conversion on a projection that is stuck because its structure is not a
-constructor application.
+Every arena projection test still rejects, and the inferred type differs from
+the declared one as syntax, so the fault is in the type a projection is given
+and not in conversion. Six hand-built shapes all pass: a structure with no
+parameters and with two, a structure projected from a constructor application
+and from a variable, and a structure that takes a level parameter. Whatever
+the real exports do differently is not any of those, and finding it needs a
+way to print a term, which this kernel does not have. That is the next thing
+to build here.
 
-Writing those tests caught a real bug in the typing: `proj_base` applied the
+Writing those tests did catch a real bug in the typing: `proj_base` applied the
 constructor's type to the structure's parameters, where it had to instantiate
 them. A pi applied to an argument is not a beta-redex, so reduction left it
 untouched and the next step looked for a binder and found an application. The
