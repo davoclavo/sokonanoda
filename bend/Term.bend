@@ -171,15 +171,36 @@ def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
     case TProj{tn, idx, st}:
       TProj{tn, idx, Term.lift(st, d, cut)}
 
+# Lift a value into the scope it lands in, unless it lands in the scope it
+# was written in. A lift by zero is the value itself, and `Term.lift` would
+# walk and rebuild the whole of it to find that out.
+def Term.lift_by(at_top: Bool, v: Term, +cut: Nat) -> Term:
+  match at_top:
+    case True{}:
+      v
+    case False{}:
+      Term.lift(v, cut, 0n)
+
+# What one variable of the body becomes.
+#
+# This exists so that the value is walked only at the variable that is being
+# replaced. `Term.pick` evaluates both of its branches, because an argument
+# evaluates before the match picks an arm, so a lift written there copied the
+# whole value at every variable in the body, matching or not. A body with a
+# thousand variables copied a thousand values to use one.
+def Term.subst_var(hit: Bool, +i: Nat, +v: Term, +cut: Nat) -> Term:
+  match hit:
+    case True{}:
+      Term.lift_by(Nat.is_eq(cut, 0n), v, cut)
+    case False{}:
+      Term.pick(Nat.is_lt(i, cut), TVar{i}, TVar{Nat.sub(i, 1n)})
+
 # Replace the variable at depth `cut` with `v`, and shift the ones above it
 # down by one. This is the de Bruijn instantiation a beta step needs.
 def Term.subst(t: Term, +v: Term, +cut: Nat) -> Term:
   match t:
     case TVar{+i}:
-      Term.pick(
-        Nat.is_eq(i, cut),
-        Term.lift(v, cut, 0n),
-        Term.pick(Nat.is_lt(i, cut), TVar{i}, TVar{Nat.sub(i, 1n)}))
+      Term.subst_var(Nat.is_eq(i, cut), i, v, cut)
     case TSort{l}:
       TSort{l}
     case TConst{n, ls}:
