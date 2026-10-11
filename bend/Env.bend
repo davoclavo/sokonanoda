@@ -45,7 +45,7 @@ type Decl is Data:
   # for `Quot.mk`, 2 for `Quot.lift` and 3 for `Quot.ind`. The export states
   # their types; the Lean kernel has them built in, so taking the file's word
   # for the type is a thing this kernel trusts.
-  DQuot{id: Nat, ps: List<&2, Nat>, ty: T.Term, kind: Nat}
+  DQuot{id: Nat, ps: List<&2, Nat>, ty: T.Term, kind: Nat, eq: Nat}
   # A definition the kernel also knows how to compute directly. `op` names
   # which rule: 1 add, 2 sub, 3 mul, 4 div, 5 mod, 6 beq, 7 ble, 8 pow.
   # `yes` and `no` are the names of `Bool.true` and `Bool.false`, which the
@@ -84,7 +84,7 @@ def Decl.id(d: Decl) -> Nat:
       id
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       id
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       id
     case DPrim{id, ps, ty, val, op, yes, no}:
       id
@@ -104,7 +104,7 @@ def Decl.is_thm(d: Decl) -> Bool:
       False{}
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       False{}
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       False{}
     case DPrim{id, ps, ty, val, op, yes, no}:
       False{}
@@ -124,7 +124,7 @@ def Decl.is_def(d: Decl) -> Bool:
       False{}
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       False{}
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       False{}
     case DPrim{id, ps, ty, val, op, yes, no}:
       True{}
@@ -169,7 +169,7 @@ def Decl.num_params(d: Decl) -> Nat:
       Decl.len(ps)
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       Decl.len(ps)
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       Decl.len(ps)
     case DPrim{id, ps, ty, val, op, yes, no}:
       Decl.len(ps)
@@ -189,7 +189,7 @@ def Decl.params(d: Decl) -> List<&2, Nat>:
       ps
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       ps
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       ps
     case DPrim{id, ps, ty, val, op, yes, no}:
       ps
@@ -209,7 +209,7 @@ def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
       T.Term.subst_levels(ty, ls)
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       T.Term.subst_levels(ty, ls)
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       T.Term.subst_levels(ty, ls)
     case DPrim{id, ps, ty, val, op, yes, no}:
       T.Term.subst_levels(ty, ls)
@@ -230,7 +230,7 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
       None{}
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       None{}
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       None{}
     case DPrim{id, ps, ty, val, op, yes, no}:
       Some{T.Term.subst_levels(val, ls)}
@@ -447,9 +447,20 @@ def Decl.rule_for(rs: List<&2, RecRule>, +c: Nat) -> Maybe<&2, RecRule>:
 
 # Which of the four quotient declarations is this, if any? A declaration that
 # is not one answers 9, which matches nothing.
+# The name index of `Eq`, which only a quotient declaration carries. The type
+# of `Quot.lift` states that a function respects the relation, and it says so
+# with `Eq`, so a kernel that checks that type needs the name. The reader
+# finds it by its spelling, as it finds `Nat`.
+def Decl.quot_eq(d: Decl) -> Nat:
+  match d:
+    case DQuot{id, ps, ty, kind, eq}:
+      eq
+    case o:
+      0n
+
 def Decl.quot_kind(d: Decl) -> Nat:
   match d:
-    case DQuot{id, ps, ty, kind}:
+    case DQuot{id, ps, ty, kind, eq}:
       kind
     case o:
       9n

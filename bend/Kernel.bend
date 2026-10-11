@@ -19,6 +19,7 @@ import ./Conv.bend as C
 import ./Infer.bend as I
 import ./Ans.bend as A
 import ./Rec.bend as R
+import ./Quo.bend as Q
 
 # Is this term a type, that is, does its own type reduce to a sort?
 def Kernel.is_type(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
@@ -527,7 +528,7 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
             fuel, env,
             E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})),
         Kernel.is_type(fuel, env, ty))
-    case E.DQuot{id, ps, ty, kind}:
+    case E.DQuot{id, ps, ty, kind, eq}:
       A.Ans.and(
         A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
@@ -598,7 +599,7 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "ctor "
     case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
       "rec  "
-    case E.DQuot{id, ps, ty, kind}:
+    case E.DQuot{id, ps, ty, kind, eq}:
       "quot "
     case E.DPrim{id, ps, ty, val, op, yes, no}:
       "prim "
@@ -722,10 +723,56 @@ def Kernel.trusted_ans(+fuel: Nat, +env: E.DTable, d: E.Decl) -> Bool:
           Kernel.rec_verified(
             fuel, env,
             E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})))
-    case E.DQuot{id, ps, ty, kind}:
-      True{}
     case o:
       False{}
+
+# Does this quotient state the type Lean gives it?
+#
+# A quotient is checked against a fixed type, not derived from anything, so
+# the only question is whether the file wrote it. A declaration that is not a
+# quotient answers yes and costs one comparison of a number.
+def Kernel.quot_one(
+  is_q: Bool, +fuel: Nat, +env: E.DTable, +d: E.Decl, +q: Q.QN
+) -> A.Ans:
+  match is_q:
+    case False{}:
+      A.AYes{}
+    case True{}:
+      C.Conv.eq(
+        fuel, env,
+        Q.Quo.want(
+          E.Decl.quot_kind(d),
+          Q.Quo.ty_of(q), Q.Quo.mk_of(q), E.Decl.quot_eq(d)),
+        E.Decl.type_at(
+          d,
+          R.Rec.lvl_shift(
+            List.length(&2, Nat, E.Decl.params(d)), 0n, 0n)))
+
+# Every quotient in the file, against its fixed type.
+#
+# The environment is the one the whole file builds, because a quotient's type
+# names `Quot` and `Eq` and the order they arrive in is the exporter's
+# business. That is sound: this is a comparison of types and the check that a
+# name is not used before it is declared is a separate one.
+def Kernel.quots_ans(
+  ds: List<&2, E.Decl>, +fuel: Nat, +env: E.DTable, +q: Q.QN
+) -> A.Ans:
+  match ds:
+    case Nil{}:
+      A.AYes{}
+    case Con{+h, t}:
+      A.Ans.and(
+        Kernel.quot_one(
+          Nat.is_lt(E.Decl.quot_kind(h), 4n), fuel, env, h, q),
+        Kernel.quots_ans(t, fuel, env, q))
+
+# The environment the whole file builds.
+def Kernel.env_all(ds: List<&2, E.Decl>, +acc: E.DTable) -> E.DTable:
+  match ds:
+    case Nil{}:
+      acc
+    case Con{+h, t}:
+      Kernel.env_all(t, E.Env.add(acc, h))
 
 # Did any declaration have to be taken on trust? A caller that cares about
 # soundness should decline rather than accept when this is true.
@@ -743,8 +790,15 @@ def Kernel.trusts_from(
         Kernel.trusted_ans(fuel, acc, h),
         Kernel.trusts_from(t, fuel, E.Env.add(acc, h)))
 
-def Kernel.trusts(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> Bool:
-  Kernel.trusts_from(ds, fuel, acc)
+def Kernel.trusts(+ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> Bool:
+  Bool.or(
+    Kernel.trusts_from(ds, fuel, acc),
+    Bool.not(
+      A.Ans.is_yes(
+        Kernel.quots_ans(
+          ds, fuel,
+          Kernel.env_all(ds, acc),
+          Q.Quo.scan(ds, Q.MkQN{0n, 0n})))))
 
 # How many declarations are there?
 def Kernel.count(ds: List<&2, E.Decl>, +acc: Nat) -> Nat:
