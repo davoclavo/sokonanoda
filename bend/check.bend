@@ -64,4 +64,4 @@ def main() -> IO(Unit):
     +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Check.bytes(r)))
     IO.print("declarations " ++ Nat.show(K.Kernel.count(ds, 0n)))
     IO.print(K.Kernel.report(ds, Check.fuel(), E.Env.empty()))
-    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), E.Env.empty()), K.Kernel.trusts(ds)))
+    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), E.Env.empty()), K.Kernel.trusts(ds, Check.fuel(), E.Env.empty())))

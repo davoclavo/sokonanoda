@@ -61,6 +61,21 @@ def Derive.verdict(
   "  rec " ++ Nat.show(id) ++ " " ++ Derive.word(a) ++
   Derive.both(want, got, a) ++ "\n"
 
+# Every rule of a recursor, compared with the one the file states.
+def Derive.rules(
+  +fuel: Nat, +env: E.DTable, +r: E.Decl, n: Nat, +j: Nat
+) -> A.Ans:
+  match n:
+    case 0n:
+      A.AYes{}
+    case 1n+k:
+      A.Ans.and(
+        C.Conv.eq(
+          fuel, env,
+          R.Rec.rhs_at(fuel, env, r, j),
+          R.Rec.stated_rhs(env, r, j)),
+        Derive.rules(fuel, env, r, k, 1n+j))
+
 def Derive.shape_line(
   nope: Bool, +fuel: Nat, +env: E.DTable, +id: Nat,
   +got: T.Term, +want: T.Term
@@ -74,7 +89,18 @@ def Derive.shape_line(
 def Derive.line(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
   +got : T.Term = R.Rec.derive(fuel, env, d)
   Derive.shape_line(
-    T.Term.is_unk(got), fuel, env, E.Decl.id(d), got, Derive.stated(d))
+    T.Term.is_unk(got), fuel, env, E.Decl.id(d), got, Derive.stated(d)) ++
+  "  rules " ++ Nat.show(E.Decl.id(d)) ++ " " ++
+  Derive.word(
+    A.Ans.and(
+      A.Ans.of(
+        R.Rec.rule_fields_ok(
+          E.Decl.ind_ctors(
+            E.Lookup.get(
+              E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d))))),
+          env,
+          E.Decl.rec_rules(d))),
+      Derive.rules(fuel, env, d, E.Decl.rec_nmin(d), 0n))) ++ "\n"
 
 def Derive.at(on: Bool, +fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
   match on:

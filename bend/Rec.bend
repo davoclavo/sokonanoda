@@ -395,3 +395,166 @@ def Rec.derive(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> T.Term:
   Rec.pick(
     Rec.shape_ok(fuel, env, r, ind, i0, by),
     Rec.build(fuel, env, ind, i0, nl, by, Rec.motive_level(by)))
+
+# The rules
+# ---------
+#
+# A recursor's type says what it proves and its rules say what it computes, so
+# a file that states an honest type and a dishonest rule is as dangerous as
+# one that states neither. The rule for `C_j` is
+#
+#   Lam p.., Lam motive, Lam minor_0..minor_{m-1}, Lam f_0..f_{nf-1},
+#     minor_j f.. (one recursive call per recursive field)
+#
+# and the call for a recursive field `f_i : Pi x.., I p.. b..` is
+#
+#   Lam x.., I.rec p.. motive minors.. b.. (f_i x..)
+#
+# The binder types matter, because conversion compares them, so they are the
+# same telescope the type is built from.
+
+# A lambda telescope over a body, from binder types given outermost first.
+def Rec.lams(tys: List<&2, T.Term>, body: T.Term) -> T.Term:
+  match tys:
+    case Nil{}:
+      body
+    case Con{h, t}:
+      T.TLam{h, Rec.lams(t, body)}
+
+# The `j`-th constructor's name.
+def Rec.ctor_at(cs: List<&2, Nat>, +j: Nat) -> Nat:
+  match cs:
+    case Nil{}:
+      0n
+    case Con{+h, t}:
+      match j:
+        case 0n:
+          h
+        case 1n+k:
+          Rec.ctor_at(t, k)
+
+# The recursive call the rule hands to the minor premise for one field. The
+# rule binds no hypotheses, so the only lift is over the fields from this one
+# on.
+def Rec.call(
+  +fuel: Nat, +env: E.DTable, +fty: T.Term, +i: Nat, +nf: Nat, +np: Nat,
+  +m: Nat, +rid: Nat, +rlvls: List<&2, L.Level>
+) -> T.Term:
+  +up : Nat = Nat.sub(nf, i)
+  +var : Nat = Nat.sub(Nat.sub(nf, 1n), i)
+  +lf : T.Term = T.Term.lift(fty, up, 0n)
+  +nx : Nat = T.Term.pi_count(lf, 0n)
+  +base : Nat = Nat.add(Nat.add(nx, nf), m)
+  Rec.lams(
+    Rec.tele(nx, lf),
+    V.Eval.rebuild(
+      List.append(&2, T.Term,
+        List.append(&2, T.Term,
+          List.append(&2, T.Term,
+            Rec.vars(np, Nat.add(base, np)),
+            [T.TVar{base}]),
+          Rec.vars(m, Nat.sub(base, 1n))),
+        List.append(&2, T.Term,
+          V.Eval.drop(
+            V.Eval.spine(Rec.fres(fuel, env, lf), Nil{}), np),
+          [V.Eval.rebuild(
+            Rec.vars(nx, Nat.sub(nx, 1n)),
+            T.TVar{Nat.add(nx, var)})])),
+      T.TConst{rid, rlvls}))
+
+# One call per recursive field, in field order.
+def Rec.calls(
+  fs: List<&2, Field>, +fuel: Nat, +env: E.DTable, +nf: Nat, +np: Nat,
+  +m: Nat, +rid: Nat, +rlvls: List<&2, L.Level>
+) -> List<&2, T.Term>:
+  match fs:
+    case Nil{}:
+      Nil{}
+    case Con{MkField{+fty, True{}, +at}, t}:
+      Con{
+        Rec.call(fuel, env, fty, at, nf, np, m, rid, rlvls),
+        Rec.calls(t, fuel, env, nf, np, m, rid, rlvls)}
+    case Con{MkField{fty, False{}, at}, t}:
+      Rec.calls(t, fuel, env, nf, np, m, rid, rlvls)
+
+# The right side of the rule for the `j`-th constructor, given a shape this
+# derives.
+def Rec.rhs_build(
+  +fuel: Nat, +env: E.DTable, +ind: E.Decl, +i0: Nat, +rid: Nat,
+  +nl: Nat, +by: Nat, +mv: L.Level, +j: Nat
+) -> T.Term:
+  +lvls : List<&2, L.Level> = Rec.lvl_shift(nl, by, 0n)
+  +rlvls : List<&2, L.Level> = Rec.lvl_shift(Nat.add(nl, by), 0n, 0n)
+  +np : Nat = E.Decl.ind_np(ind)
+  +ni : Nat = E.Decl.ind_ni(ind)
+  +m : Nat = List.length(&2, Nat, E.Decl.ind_ctors(ind))
+  +cn : Nat = Rec.ctor_at(E.Decl.ind_ctors(ind), j)
+  +nf : Nat = E.Decl.ctor_nf(E.Lookup.get(E.Env.find(env, cn)))
+  +ity : T.Term = T.Term.subst_levels(
+    E.Decl.ind_ty(ind), Rec.lvl_shift(nl, by, 0n))
+  +body : T.Term = T.Term.lift(
+    T.Term.pi_skip(
+      np,
+      T.Term.subst_levels(
+        E.Decl.ctor_ty(E.Lookup.get(E.Env.find(env, cn))),
+        Rec.lvl_shift(nl, by, 0n))),
+    1n+m, 0n)
+  +fs : List<&2, Field> = Rec.fields(
+    Rec.tele(nf, body), fuel, env, i0, 0n)
+  Rec.lams(
+    Rec.tele(np, ity),
+    T.TLam{
+      Rec.pis(
+        Rec.tele(ni, T.Term.pi_skip(np, ity)),
+        T.TPi{Rec.ind_app(i0, lvls, np, ni, 0n), T.TSort{mv}}),
+      Rec.lams(
+        Rec.minors(
+          E.Decl.ind_ctors(ind), fuel, env, i0, lvls, nl, by, np, 0n),
+        Rec.lams(
+          Rec.tele(nf, body),
+          V.Eval.rebuild(
+            List.append(&2, T.Term,
+              Rec.vars(nf, Nat.sub(nf, 1n)),
+              Rec.calls(fs, fuel, env, nf, np, m, rid, rlvls)),
+            T.TVar{Nat.add(nf, Nat.sub(Nat.sub(m, 1n), j))})))})
+
+# The right side the `j`-th rule would have if the file told the truth about
+# it, or `T.TUnk` when the shape is not one this derives.
+def Rec.rhs_at(+fuel: Nat, +env: E.DTable, +r: E.Decl, +j: Nat) -> T.Term:
+  +i0 : Nat = E.Decl.only(E.Decl.rec_inds(r))
+  +ind : E.Decl = E.Lookup.get(E.Env.find(env, i0))
+  +nl : Nat = List.length(&2, Nat, E.Decl.params(ind))
+  +by : Nat = Nat.sub(
+    List.length(&2, Nat, E.Decl.params(r)),
+    List.length(&2, Nat, E.Decl.params(ind)))
+  Rec.pick(
+    Rec.shape_ok(fuel, env, r, ind, i0, by),
+    Rec.rhs_build(
+      fuel, env, ind, i0, E.Decl.id(r), nl, by, Rec.motive_level(by), j))
+
+# How many rules should there be, and how many fields should each name?
+def Rec.rule_fields_ok(
+  cs: List<&2, Nat>, +env: E.DTable, +rules: List<&2, E.RecRule>
+) -> Bool:
+  match cs:
+    case Nil{}:
+      True{}
+    case Con{+h, t}:
+      Bool.and(
+        Nat.is_eq(
+          E.RecRule.nfields(
+            V.Eval.rule_get(E.Decl.rule_for(rules, h))),
+          E.Decl.ctor_nf(E.Lookup.get(E.Env.find(env, h)))),
+        Rec.rule_fields_ok(t, env, rules))
+
+# The right side the file states for the `j`-th constructor.
+def Rec.stated_rhs(+env: E.DTable, +r: E.Decl, +j: Nat) -> T.Term:
+  E.RecRule.rhs(
+    V.Eval.rule_get(
+      E.Decl.rule_for(
+        E.Decl.rec_rules(r),
+        Rec.ctor_at(
+          E.Decl.ind_ctors(
+            E.Lookup.get(
+              E.Env.find(env, E.Decl.only(E.Decl.rec_inds(r))))),
+          j))))

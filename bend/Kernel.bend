@@ -18,6 +18,7 @@ import ./Eval.bend as V
 import ./Conv.bend as C
 import ./Infer.bend as I
 import ./Ans.bend as A
+import ./Rec.bend as R
 
 # Is this term a type, that is, does its own type reduce to a sort?
 def Kernel.is_type(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
@@ -666,15 +667,61 @@ def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> String:
         Kernel.kind_name(h),
         fuel, acc, h) ++ Kernel.report(t, fuel, E.Env.add(acc, h))
 
-# Is this declaration one whose contents are not checked?
-def Kernel.is_trusted(d: E.Decl) -> Bool:
+# The right side of every rule, against the one the file states.
+def Kernel.rules_match(
+  +fuel: Nat, +env: E.DTable, +r: E.Decl, n: Nat, +j: Nat
+) -> A.Ans:
+  match n:
+    case 0n:
+      A.AYes{}
+    case 1n+k:
+      A.Ans.and(
+        C.Conv.eq(
+          fuel, env,
+          R.Rec.rhs_at(fuel, env, r, j),
+          R.Rec.stated_rhs(env, r, j)),
+        Kernel.rules_match(fuel, env, r, k, 1n+j))
+
+# Is this recursor the one its inductive implies?
+#
+# The type and every rule are derived from the specification and compared by
+# conversion, not by syntax, because the exporter writes a telescope in
+# whatever form it reduced to. A shape the derivation does not handle gives
+# `T.TUnk`, which converts with nothing, so the answer is no and the block
+# stays trusted.
+def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
+  A.Ans.and(
+    A.Ans.and(
+      C.Conv.eq(
+        fuel, env,
+        R.Rec.derive(fuel, env, r),
+        E.Decl.type_at(
+          r,
+          R.Rec.lvl_shift(
+            List.length(&2, Nat, E.Decl.params(r)), 0n, 0n))),
+      A.Ans.of(
+        R.Rec.rule_fields_ok(
+          E.Decl.ind_ctors(
+            E.Lookup.get(
+              E.Env.find(env, E.Decl.only(E.Decl.rec_inds(r))))),
+          env,
+          E.Decl.rec_rules(r)))),
+    Kernel.rules_match(fuel, env, r, E.Decl.rec_nmin(r), 0n))
+
+# Does this declaration still have to be taken on trust?
+#
+# An inductive and its constructors are checked by the ten rules on a block.
+# What was left was the recursor, which the file states and the kernel now
+# derives, so a block whose recursor matches needs no trust. A quotient is
+# still taken on trust, because nothing here derives one.
+def Kernel.trusted_ans(+fuel: Nat, +env: E.DTable, d: E.Decl) -> Bool:
   match d:
-    case E.DInd{id, ps, ty, np, ni, ctors}:
-      True{}
-    case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
-      True{}
-    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
-      True{}
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
+      Bool.not(
+        A.Ans.is_yes(
+          Kernel.rec_verified(
+            fuel, env,
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})))
     case E.DQuot{id, ps, ty, kind}:
       True{}
     case o:
@@ -682,12 +729,22 @@ def Kernel.is_trusted(d: E.Decl) -> Bool:
 
 # Did any declaration have to be taken on trust? A caller that cares about
 # soundness should decline rather than accept when this is true.
-def Kernel.trusts(ds: List<&2, E.Decl>) -> Bool:
+#
+# The walk builds the environment as the kernel does, because a recursor can
+# only be derived against the inductive and the constructors before it.
+def Kernel.trusts_from(
+  ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable
+) -> Bool:
   match ds:
     case Nil{}:
       False{}
     case Con{+h, t}:
-      Bool.or(Kernel.is_trusted(h), Kernel.trusts(t))
+      Bool.or(
+        Kernel.trusted_ans(fuel, acc, h),
+        Kernel.trusts_from(t, fuel, E.Env.add(acc, h)))
+
+def Kernel.trusts(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> Bool:
+  Kernel.trusts_from(ds, fuel, acc)
 
 # How many declarations are there?
 def Kernel.count(ds: List<&2, E.Decl>, +acc: Nat) -> Nat:
