@@ -148,22 +148,11 @@ declines in the tutorial set.
 
 It is the largest piece of work left and the only one worth real points.
 
-**An indexed family eliminated through its own `casesOn`.** Six files answer
-`reject` where the arena expects `accept`, and all six fail on the same
-declaration: `Nat.div.go.match_1`, which eliminates `Nat.le` through
-`Nat.le.casesOn` with `Eq.refl` and `HEq.refl` arguments. Inference answers a
-definite no on its body, and ten times the budget does not change it. These
-six were hidden behind a sixty-second limit until the kernel got fast enough
-to reach them. This is the largest correctness item left.
-
 **Reduction throughput.** Reading was never the problem and the checking was.
 Three `perf` tests still time out: `app-lam` and the two `proj-*-struct`. The
 work is reduction and inference doing real work, so a faster table will not
 move them. See "Making it fast" for what did move them, and for the four
 places a guard was written and never reached.
-
-**The imax case split.** The case split on an imax whose right side is a bare
-parameter is not here, so two such atoms are still compared as syntax.
 
 **Whitespace in a reader.** A blank after a colon is handled. A blank anywhere
 else is not, and the real corpora are not promised to be formatted like the
@@ -359,38 +348,33 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | before the speed work | after |
-|---|---|---|
-| correct | 101 | 101 |
-| declined | 82 | 85 |
-| wrong | 0 | **6** |
-| error or timeout | 11 | 3 |
+| | before the speed work | after the speed work | after the level rules |
+|---|---|---|---|
+| correct | 101 | 101 | 101 |
+| declined | 82 | 85 | 87 |
+| wrong | 0 | **6** | **0** |
+| error or timeout | 11 | 3 | 7 |
 
-Read that table carefully, because it is not what it looks like.
+The middle column is the interesting one, and it is not what it looks like.
 
 The speed work did not break six files. It made eight of the eleven timeouts
-finish, and six of those eight answer `reject` on a file the arena expects to
-accept. The committed build before the speed work answers `reject` on the same
-six when it is given ten minutes instead of sixty seconds. So these are six
-wrong answers the kernel always had, and a sixty-second limit was hiding them.
+finish, and six of those eight answered `reject` on a file the arena expects
+to accept. The committed build from before the speed work answers `reject` on
+the same six when it is given ten minutes instead of sixty seconds. So those
+were six wrong answers the kernel always had, and a sixty-second limit was
+hiding them.
 
-A timeout scores as an error and a wrong answer is a false claim, so this is a
-score that went down and a kernel that got more honest about itself. The six
-are `init-prelude`, `perf/fueled-chain` and the four `perf/magma-list-*`
-tests.
+All six failed on one declaration, `Nat.div.go.match_1`, a matcher Lean builds
+for a definition by well-founded recursion. Two missing level rules did it,
+and `bend/blame.bend` named both in one run each. See "Two levels that are one
+level" below. The kernel is back to zero wrong answers, and this time the six
+files answer rather than time out.
 
-What they have in common is the first declaration each one rejects:
-`Nat.div.go.match_1`, a matcher that Lean builds for a definition by
-well-founded recursion. Inference answers a definite no on its body, and a
-budget ten times larger does not change that, so it is not the budget. The
-body eliminates `Nat.le`, an inductive family with an index, through
-`Nat.le.casesOn` with `Eq.refl` and `HEq.refl` arguments. That is the next
-thing to fix, and it is a completeness bug, not a speed one.
-
-Getting to zero wrong answers took four rounds. The score was 24 wrong when
-the three-valued answer landed; projections took it to 11, quotients and the
-native `Nat` to 2, and the last two were not missing rules at all. See below.
-Then the kernel got fast enough to find six more.
+Getting to zero wrong answers took four rounds, then a fifth. The score was 24
+wrong when the three-valued answer landed; projections took it to 11,
+quotients and the native `Nat` to 2, and the last two were not missing rules
+at all. See below. Then the kernel got fast enough to find six more, and those
+were missing rules.
 
 The climb from 74 correct to 101 is a different story and a duller one: ten
 checks on an inductive block, each worth one or two tests, none of them
@@ -493,6 +477,55 @@ change is not in the tree.
 
 What is left to win is algorithmic. The three tests that still time out are
 `perf/app-lam` and the two `perf/proj-*-struct`.
+
+## Two levels that are one level
+
+Six files answered `reject` where the arena expects `accept`, and all six
+failed on `Nat.div.go.match_1`. Both causes were universe levels, and both
+were a pair of levels that are equal under every assignment and are not the
+same syntax.
+
+`imax u v` is zero when `v` is zero and `max u v` otherwise. So:
+
+- `imax 0 v` is `v`, always. Zero when `v` is zero, which is `v`, and `max 0
+  v` otherwise, which is `v` as well. `Level.mk_imax` had the rule for a zero
+  right side and not for a zero left side.
+- `imax 1 v` is also `v`, always, and no smart constructor can see it: zero
+  when `v` is zero, and `max 1 v` otherwise, which is `v` once `v` is at least
+  one. This one needs the case split the Lean kernel does. Pick a parameter
+  standing on the right of an imax, ask the question with it set to zero and
+  again with it set to its own successor, and require both.
+
+A motive of the form `fun n => (h : p n) -> C n h` has type `Nat -> Sort (imax
+0 u)`, because its domain is a proposition, while the eliminator that takes it
+declares `Nat -> Sort u`. That was the first one. The second motive in the
+same declaration has type `Nat -> Sort (imax 1 (imax 1 u))`. That was the
+second.
+
+### The tool that found them
+
+A rejection says only that a whole value is wrong, and the value here is
+thousands of nodes. `bend/blame.bend` walks into the value and stops at the
+smallest subterm inference calls a definite no, which is a node whose own
+answer is no while no child of it is. Then it prints that node and, for an
+application, the type of each side. Both bugs took one run each:
+
+```
+SOKO_EXPORT=<an export> bend bend/blame.bend
+```
+
+```
+decl 631
+  blame: (c106{p0} (fun :c62{} => (Pi :(... #5) #0) -> ((#5 #1) #0))))
+    fn   : (Pi :(Pi :c62{} -> Sort p0) -> ...)
+    arg  : (Pi :c62{} -> Sort (imax 0 p0))
+```
+
+The walk cannot ask a helper where to go and then recurse there, because a
+match needs a parameter and Bend has no mutual recursion. So each step
+computes the next node and the next context as values and calls itself in tail
+position, and a step that finds no child to blame hands back the node it is
+on, which makes the walk stand still until the last step prints it.
 
 ## Running out of budget
 
