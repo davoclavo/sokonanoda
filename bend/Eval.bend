@@ -290,15 +290,31 @@ def Eval.can_iota(+d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term) -> Bool:
         E.Decl.rule_for(E.Decl.rec_rules(d), Eval.head_name(Eval.head(mw))))))
 
 # The term a fired rule reduces to. Guard with `Eval.can_iota`.
+#
+# The constructor's fields are its arguments past its own parameters, and the
+# count to drop is the **constructor's**, not the recursor's. For a block with
+# no nested inductive the two are the same number, which is why reading the
+# recursor's worked for every file in the arena's small set but one.
+#
+# `init-prelude` is that one. `Lean.Syntax.rec_2` eliminates a nested block
+# and states no parameters, while the auxiliary constructor `Array.mk` has
+# one, so dropping the recursor's zero took the type argument for the field.
+# The rule then never fired, the term stayed stuck, and conversion compared a
+# stuck application against a `PProd` and called them different.
 def Eval.iota_term(
-  +d: E.Decl, +ls: List<&2, L.Level>, +sp: List<&2, T.Term>, +mw: T.Term
+  +env: E.DTable, +d: E.Decl, +ls: List<&2, L.Level>,
+  +sp: List<&2, T.Term>, +mw: T.Term
 ) -> T.Term:
   +rule = Eval.rule_get(
     E.Decl.rule_for(E.Decl.rec_rules(d), Eval.head_name(Eval.head(mw))))
   Eval.rebuild(
     List.append(&2, T.Term,
       Eval.take(
-        Eval.drop(Eval.spine(mw, Nil{}), E.Decl.rec_np(d)),
+        Eval.drop(
+          Eval.spine(mw, Nil{}),
+          E.Decl.ctor_np(
+            E.Lookup.get(
+              E.Env.find(env, Eval.head_name(Eval.head(mw)))))),
         E.RecRule.nfields(rule)),
       Eval.drop(sp, 1n+Eval.major_idx(d))),
     Eval.rebuild(
@@ -531,7 +547,7 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
               T.TUnk{},
               Eval.pick_t(
               Eval.can_iota(d, sp, mw),
-              Eval.whnf(f, env, Eval.iota_term(d, ls, sp, mw), Nil{}),
+              Eval.whnf(f, env, Eval.iota_term(env, d, ls, sp, mw), Nil{}),
               Eval.pick_t(
                 Eval.quot_ready(env, d, sp, mw),
                 Eval.whnf(f, env, Eval.quot_term(d, sp, mw), Nil{}),
