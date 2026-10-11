@@ -549,19 +549,38 @@ def Kernel.missing(lk: E.Lookup) -> Bool:
 def Kernel.is_fresh(+env: E.DTable, +i: Nat) -> Bool:
   Kernel.missing(E.Env.find(env, i))
 
+# Check every declaration, each against the ones before it, with the answer
+# so far as a parameter.
+#
+# The answer travels in rather than out for the same two reasons it does in
+# `Conv.eq_all`. A definite no stops the walk, which a conjunction over the
+# recursive call cannot do, because an argument evaluates before the match
+# picks an arm. And the call is in tail position, so a file with tens of
+# thousands of declarations does not need a host frame for each one.
+def Kernel.check_from(
+  ds: List<&2, E.Decl>, a: A.Ans, +fuel: Nat, +acc: E.DTable
+) -> A.Ans:
+  match ds a:
+    case Nil{} o:
+      o
+    case Con{h, t} A.ANo{}:
+      A.ANo{}
+    case Con{+h, t} o:
+      Kernel.check_from(
+        t,
+        A.Ans.and(
+          o,
+          A.Ans.and(
+            A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
+            Kernel.check_decl(fuel, acc, h))),
+        fuel,
+        E.Env.add(acc, h))
+
 # Check every declaration, each against the ones before it. A name that is
 # already taken is rejected, which is what stops a second declaration of the
 # same constant from quietly replacing the first.
 def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> A.Ans:
-  match ds:
-    case Nil{}:
-      A.AYes{}
-    case Con{+h, t}:
-      A.Ans.and(
-        A.Ans.and(
-          A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
-          Kernel.check_decl(fuel, acc, h)),
-        Kernel.check_all(t, fuel, E.Env.add(acc, h)))
+  Kernel.check_from(ds, A.AYes{}, fuel, acc)
 
 # The kind of a declaration, for the report.
 def Kernel.kind_name(d: E.Decl) -> String:
@@ -617,14 +636,19 @@ def Kernel.why(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
       ""
 
 # One line of the report.
-def Kernel.mark(a: A.Ans, +id: Nat, +kind: String, +why: String) -> String:
+#
+# The reason takes the declaration, not a string. An argument evaluates before
+# the match picks an arm, so a `why` passed in as a string ran on every
+# declaration, and `why` for a definition infers the body three more times.
+# Taking the declaration keeps that cost on the two arms that print a reason.
+def Kernel.mark(a: A.Ans, +id: Nat, +kind: String, +fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
   match a:
     case A.AYes{}:
       "  ok     " ++ kind ++ " " ++ Nat.show(id) ++ "\n"
     case A.ANo{}:
-      "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ why ++ "\n"
+      "  REJECT " ++ kind ++ " " ++ Nat.show(id) ++ Kernel.why(fuel, env, d) ++ "\n"
     case A.AUnk{}:
-      "  unknown " ++ kind ++ " " ++ Nat.show(id) ++ why ++ "\n"
+      "  unknown " ++ kind ++ " " ++ Nat.show(id) ++ Kernel.why(fuel, env, d) ++ "\n"
 
 # Which declaration failed? Reports one line per declaration, in order, so a
 # rejection can be traced to the declaration that caused it rather than
@@ -640,7 +664,7 @@ def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> String:
           Kernel.check_decl(fuel, acc, h)),
         E.Decl.id(h),
         Kernel.kind_name(h),
-        Kernel.why(fuel, acc, h)) ++ Kernel.report(t, fuel, E.Env.add(acc, h))
+        fuel, acc, h) ++ Kernel.report(t, fuel, E.Env.add(acc, h))
 
 # Is this declaration one whose contents are not checked?
 def Kernel.is_trusted(d: E.Decl) -> Bool:
@@ -672,3 +696,35 @@ def Kernel.count(ds: List<&2, E.Decl>, +acc: Nat) -> Nat:
       acc
     case Con{h, t}:
       Kernel.count(t, 1n+acc)
+
+# Put one declaration's line in front of the rest of the walk. A match needs
+# a parameter, so the pair the walk returns arrives as one.
+def Kernel.run_join(line: String, p: A.Ans & String) -> A.Ans & String:
+  (ra, rs) = p
+  (ra, line ++ rs)
+
+# Check every declaration once, and build the report from the same walk.
+#
+# `Kernel.report` and `Kernel.check_all` each walk the list and check every
+# declaration, so a run that wants both answers checks the file twice. This
+# walks it once and returns the verdict beside the report. It stops at the
+# first rejection, as `Kernel.check_from` does, which is also what makes the
+# report usable: `Kernel.why` runs on the declaration that failed and on no
+# other.
+def Kernel.run_from(
+  ds: List<&2, E.Decl>, a: A.Ans, +fuel: Nat, +acc: E.DTable
+) -> A.Ans & String:
+  match ds a:
+    case Nil{} o:
+      (o, "")
+    case Con{h, t} A.ANo{}:
+      (A.ANo{}, "")
+    case Con{+h, t} o:
+      +b : A.Ans = A.Ans.and(
+        A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
+        Kernel.check_decl(fuel, acc, h))
+      line : String = Kernel.mark(b, E.Decl.id(h), Kernel.kind_name(h), fuel, acc, h)
+      Kernel.run_join(line, Kernel.run_from(t, A.Ans.and(o, b), fuel, E.Env.add(acc, h)))
+
+def Kernel.run(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> A.Ans & String:
+  Kernel.run_from(ds, A.AYes{}, fuel, acc)

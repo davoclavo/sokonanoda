@@ -19,12 +19,15 @@ import ./Ans.bend as A
 
 # The fuel one declaration gets.
 #
-# This cannot be made large. `Conv.eq_all` works a queue of pairs and its
-# recursive call sits inside an argument, not in tail position, because the
-# verdict has to be read before the queue can be shortened. So its depth is
-# bounded by the fuel, and Bend's host stack gives out near ten thousand
-# frames. A fuel of 100000 overflows the stack on a `let` that needs real
-# conversion work, which is how this number was found.
+# The old reason for this number was the host stack: `Conv.eq_all` kept its
+# recursive call inside an argument, so the depth of the queue was the depth
+# of the stack and a fuel of 100000 overflowed it. The answer travels in as a
+# parameter now, so that call is a tail call and the stack no longer sets the
+# cap. A fuel of 30000 runs a 598 kB export to an answer.
+#
+# What sets it now is time. Raising the fuel raises the work a declaration may
+# do before it gives up, so it buys answers on the files that decline and
+# costs time on the ones that already answer. Measure before you change it.
 def Check.fuel() -> Nat:
   3000n
 
