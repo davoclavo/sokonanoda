@@ -374,12 +374,24 @@ tarball, 195 attempted and one too large to read:
 |---|---|---|---|---|
 | correct | 101 | 101 | 173 | **186** |
 | declined | 82 | 87 | 17 | **0** |
-| wrong | 0 | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 | 9 |
+| wrong | 0 | 0 | 0 | **1** |
+| error or timeout | 11 | 7 | 5 | 8 |
 
-**Every file it reads now gets an answer, and every answer is correct.** The
-nine that are not read are eight `perf` tests and `init-prelude`, all of which
-run past sixty seconds, plus one more too large to read at all.
+The one wrong answer is `init-prelude`, and it arrived the way the other six
+did: a kernel that got faster reached a declaration it had never reached
+before. It rejects `Lean.Syntax.brecOn_2.go`, which is the machinery Lean
+builds for a **nested** inductive, and nothing here derives one. `blame.bend`
+names the pair conversion cannot settle:
+
+```
+decl 2198
+  blame: ((#3 ((Array.mk Lean.Syntax) #1)) #0)
+    fn   : (Pi :(Lean.Syntax.below_1 .. ((Array.mk Lean.Syntax) #1)) -> ..)
+    arg  : ((PProd ..) (Lean.Syntax.below_2 ..))
+```
+
+That is the open item. The eight that are not read are all `perf` tests, plus
+one more too large to read at all.
 
 The jump in the last column is the recursor derivation, which is described
 below. The middle column hides a story, and it is not what it looks like.
@@ -575,6 +587,57 @@ side and not a telescope, so they all lift by the same amount.
 `bend/derive.bend` reports, per recursor, whether the derived type and every
 derived rule converts with what the file states. It changes no verdict. It is
 what turned "the derivation is probably right" into a number, twice.
+
+## What Lean never looks at
+
+A declaration the exporter marks `unsafe` or `partial` is one Lean's kernel
+never reads. So a kernel that checks it is not stricter, it is wrong:
+`unsafe def loop : False := loop` is a file Lean accepts, and strip the
+theorem from the arena's `140_falseFromUnsafe` and this kernel answered
+`reject`.
+
+`E.DUnsafe` keeps such a declaration as its type and nothing else. What makes
+that sound is the other half of Lean's rule, which this kernel did not have:
+**a safe declaration may not mention an unsafe one.** `Kernel.safe_uses`
+walks a declaration's type and value and looks each constant up. So
+`140_falseFromUnsafe` and `141_falseFromPartial` are rejected for the reason
+the arena names, where before they were rejected by accident, because the
+unsafe body happens to be a forward reference to itself.
+
+### A nested block has more than one recursor
+
+Lean gives a block with a nested inductive several eliminators, names them
+`I.rec_1`, `I.rec_2` and so on, and states more motives than the recursor
+lists inductives, because each auxiliary type needs one. Two rules here were
+proxies written against the arena's attacks, and both rejected such a
+recursor.
+
+`Parse.upd_rec` recorded only a name whose last component is exactly `rec`. It
+takes one beginning with `rec_` now, which is looser than Lean and still
+refuses the three attacks the rule is for: `extra-rec` names its rogue
+eliminator `False.rogue`, and `misnamed_rec_user` and `dup_rec_def2` each name
+theirs `not_rec`.
+
+`Kernel.rec_counts_ok` compared the minor count with the constructors of the
+inductives it can name, which a nested block makes impossible. The skip is
+**one-sided** on purpose: a nested block states more motives than types, while
+`073_BogusRecursor` states fewer, zero against one. A two-sided test let that
+file through to the trust path and it answered `declined` where it had
+answered `reject`.
+
+### One commit that was half lost
+
+"Check a file once, and stop at the first rejection" went in with only half of
+itself. A `git checkout -- bend/check.bend` during a measurement in the same
+iteration discarded the uncommitted entry point, and what was committed still
+called `Kernel.report` and then `Kernel.check_all`. So every run for the next
+several hours checked the file about five times to answer once, and every
+measurement taken after it carried that.
+
+Restoring the entry point is 1.64x. `Kernel.report` is deleted rather than
+fixed, because the two walks had already drifted: the report said `ok` on a
+declaration the verdict rejected, having never been given the universe and
+safety rules. One walk cannot drift.
 
 ## Two attacks nobody wrote
 
