@@ -353,6 +353,14 @@ def Decl.ctor_ind(d: Decl) -> Nat:
     case o:
       0n
 
+# A constructor's type as written, with its level parameters still in place.
+def Decl.ctor_ty(d: Decl) -> T.Term:
+  match d:
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      ty
+    case o:
+      T.TUnk{}
+
 def Decl.ctor_nf(d: Decl) -> Nat:
   match d:
     case DCtor{id, ps, ty, ind, cidx, np, nf}:

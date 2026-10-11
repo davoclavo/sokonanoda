@@ -41,6 +41,45 @@ def Kernel.is_prop(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
     I.Infer.sort_ans(w),
     A.Ans.of(L.Level.is_zero(I.Infer.sort_level(w))))
 
+# The checks on an inductive block that need no derivation
+# -------------------------------------------------------
+#
+# A block states more than it proves. These three are the parts a kernel can
+# settle by reading, without deriving the recursor, and each one is an attack
+# the arena makes.
+
+# Is this name an inductive in the environment?
+def Kernel.is_ind_name(+env: E.DTable, +i: Nat) -> Bool:
+  E.Decl.is_ind(E.Lookup.get(E.Env.find(env, i)))
+
+# A constructor must build an inductive that exists. The arena's
+# `orphan-ctor` names one that does not.
+def Kernel.ctor_ind_ok(+env: E.DTable, +d: E.Decl) -> Bool:
+  Kernel.is_ind_name(env, E.Decl.ctor_ind(d))
+
+# A constructor's type opens with one binder for each parameter and one for
+# each field, and nothing else: its result is an application of its own
+# inductive, which is not a binder. The arena's `ctor-num-fields` states a
+# count that the type does not have.
+def Kernel.ctor_arity_ok(+d: E.Decl) -> Bool:
+  Nat.is_eq(
+    T.Term.pi_count(E.Decl.ctor_ty(d), 0n),
+    Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)))
+
+# A recursor eliminates at least one inductive, and every one it names must
+# exist. The arena's `orphan-rec` names none at all.
+def Kernel.rec_inds_ok(+env: E.DTable, +ns: List<&2, Nat>) -> Bool:
+  match ns:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      Bool.and(Kernel.is_ind_name(env, h), Kernel.rec_inds_ok(env, t))
+
+def Kernel.rec_ok(+env: E.DTable, +d: E.Decl) -> Bool:
+  Bool.and(
+    Bool.not(E.Decl.is_nil(E.Decl.rec_inds(d))),
+    Kernel.rec_inds_ok(env, E.Decl.rec_inds(d)))
+
 # Check one declaration against the declarations before it.
 def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
   match d:
@@ -66,13 +105,23 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
       A.Ans.and(
         A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
-    case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
+    case E.DCtor{+id, +ps, +ty, +ind, +cidx, +np, +nf}:
       A.Ans.and(
-        A.Ans.of(E.Decl.no_dupes(ps)),
+        A.Ans.of(
+          Bool.and(
+            E.Decl.no_dupes(ps),
+            Bool.and(
+              Kernel.ctor_ind_ok(env, E.DCtor{id, ps, ty, ind, cidx, np, nf}),
+              Kernel.ctor_arity_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf})))),
         Kernel.is_type(fuel, env, ty))
-    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds}:
       A.Ans.and(
-        A.Ans.of(E.Decl.no_dupes(ps)),
+        A.Ans.of(
+          Bool.and(
+            E.Decl.no_dupes(ps),
+            Kernel.rec_ok(
+              env,
+              E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}))),
         Kernel.is_type(fuel, env, ty))
     case E.DQuot{id, ps, ty, kind}:
       A.Ans.and(

@@ -95,6 +95,16 @@ def Term.same(a: Term, b: Term) -> Bool:
     case x y:
       False{}
 
+# How many binders a telescope opens with. The result type of a constructor
+# is an application of its inductive and never a pi, so this counts exactly
+# the parameters and the fields.
+def Term.pi_count(t: Term, +acc: Nat) -> Nat:
+  match t:
+    case TPi{ty, bd}:
+      Term.pi_count(bd, 1n+acc)
+    case x:
+      acc
+
 # Add `d` to every free variable whose index is at least `cut`.
 def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
   match t:
