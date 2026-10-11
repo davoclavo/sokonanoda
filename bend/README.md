@@ -47,7 +47,8 @@ refuse.
 | `Level.bend` | universe levels, the smart constructors, normalization, substitution |
 | `Term.bend` | terms with de Bruijn indices, lifting, instantiation, level substitution |
 | `Env.bend` | declarations and the environment |
-| `Eval.bend` | weak head normal form: beta, delta, zeta |
+| `Eval.bend` | weak head normal form: beta, delta, zeta, iota, projections, quotients, native `Nat` |
+| `Ans.bend` | yes, no, and "I ran out of budget" |
 | `Shape.bend` | the type of a term, without checking it |
 | `ind.bend` | dumps an inductive block, to show the reader handles it |
 | `Conv.bend` | definitional equality, as a worklist |
@@ -59,7 +60,9 @@ refuse.
 | `Kernel.bend` | checks an environment, with a per-declaration report |
 | `read.bend` | classifies every line of a real export and tallies the kinds |
 | `check.bend` | reads a real export and gives a verdict |
-| `main.bend` | the driver and its three test environments |
+| `Show.bend` | prints a term, which is how the projection bug was found |
+| `dbg.bend` | prints every stored type, and declared against inferred |
+| `main.bend` | the driver and its hand-built test environments |
 | `LAWS.bend` | the laws the kernel must obey |
 | `PROOF.bend` | their proofs |
 
@@ -119,51 +122,61 @@ So such a file answers `declined`, never `accept`. The arena's `BogusRecursor`,
 `indNeg` and `typeWithTooHighTypeField` are exactly the attacks that check
 would stop, and all three currently decline rather than reject.
 
-**Eta for a structure that carries data.** A recursor whose inductive has one
-constructor taking no fields now reduces even when the major premise is not
-written as that constructor, which covers both the K rule and eta for a
-one-element structure. A constructor that does carry data needs projections to
-write, and those are not here.
-
-**Projections.** Written and working, but not yet on the arena's cases. The
-term, its reduction and its type are all in, and four regression tests in
-`main.bend` cover a structure with and without parameters, in both directions.
-Every arena projection test still rejects, and the inferred type differs from
-the declared one as syntax, so the fault is in the type a projection is given
-and not in conversion. Six hand-built shapes all pass: a structure with no
-parameters and with two, a structure projected from a constructor application
-and from a variable, and a structure that takes a level parameter. Whatever
-the real exports do differently is not any of those, and finding it needs a
-way to print a term, which this kernel does not have. That is the next thing
-to build here.
-
-Writing those tests did catch a real bug in the typing: `proj_base` applied the
-constructor's type to the structure's parameters, where it had to instantiate
-them. A pi applied to an argument is not a beta-redex, so reduction left it
-untouched and the next step looked for a binder and found an application. The
-first hand-written test had no parameters, so it could not see the mistake.
-
-**Quotients.** Not read at all.
-
-**A native `Nat`.** A literal is read, by desugaring it into that many
-successors of zero, which needs the ids of `Nat`, `Nat.zero` and `Nat.succ` and
-is the only place this kernel looks at a name's characters. The arena's native
-`Nat` instead treats a literal as a primitive with arithmetic built into the
-kernel, so a large literal here is rejected rather than read: past a cap of
-4096 the reader answers a loose variable, which no inference accepts.
+This is now the only thing between most of the declines and a verdict. It is
+also the largest piece of work left.
 
 **Scale.** The reader works, but its tables are lists, so a lookup is linear
 and a file with fifty thousand expressions is far too slow. `Array` is the
-answer, and it is the same change the memory ceiling below needs.
+answer, and it is the same change the memory ceiling below needs. Ten `perf`
+tests time out for this reason and one is too large to read at all.
 
-**Eta, and the imax case split.** Eta for functions and for structures is not
-here. Neither is the case split on an imax whose right side is a bare
-parameter, so two such atoms are still compared as syntax.
+**The imax case split.** The case split on an imax whose right side is a bare
+parameter is not here, so two such atoms are still compared as syntax.
 
 **Performance.** Bend has no `U64`, so the parent's packed pointers and
 hash-consed terms cannot be carried over, and the environment is a list
 searched linearly where the parent resolves a constant in one load. The point
 of this folder is the proofs, not the clock.
+
+## What was missing and now works
+
+**Projections.** The term, its reduction and its type are all in. The typing
+needed one fix: `proj_base` applied the constructor's type to the structure's
+parameters where it had to instantiate them. A pi applied to an argument is
+not a beta-redex, so reduction left it untouched and the next step looked for
+a binder and found an application.
+
+That was not what held the arena's cases back, though. Every projection test
+still rejected afterwards, and narrowing by construction had run out: six
+hand-built shapes all passed. Building a term printer settled it in one line.
+The inferred type of `x.0` was the structure itself, which is the type of
+`TVar{0}`, the fallthrough for a node the parser does not know. An earlier
+edit had wired the `letE` case straight to the literal case, skipping
+projections entirely. The machinery had always been correct and nothing ever
+called it. Seven tests turned on that one line.
+
+**Quotients.** All four declarations have the shape of an axiom plus a `kind`
+tag, and the two reduction rules differ only in where the quotient sits among
+the arguments. Six tests.
+
+**Eta for a structure that carries data.** The rule rewrites the side that is
+not a constructor application into one, taking the parameters from its type
+and the fields from its own projections, and leaves the rest to the structural
+case. That way the parameters are compared too and nothing in the rule has to
+know they match.
+
+**A native `Nat`.** A literal used to be desugared into that many successors
+of zero, capped at 4096, and past the cap the reader answered a loose variable
+that no inference accepts. The arena writes `1000000`. Now a literal is one
+term carrying the names of `Nat`, `Nat.zero` and `Nat.succ`, a declaration may
+carry an op code for one of eight arithmetic rules, and reduction applies the
+rule to two literals.
+
+Two things only the tests showed. Small literals stopped matching `Nat.zero`,
+which broke four support definitions that had passed before, so a literal now
+bridges to constructor form on demand. And the arena does not write bare
+literals: the arguments arrive as `OfNat.ofNat Nat 1000000 ..`, so the rule
+has to reduce them first.
 
 ## Checking a real export
 
@@ -184,24 +197,24 @@ declarations 7
 verdict accept
 ```
 
-Against the arena's tutorial tests, with quotients, projections and literals
-left out, that is 119 tests:
+Against all 141 of the arena's tutorial tests, with nothing left out:
 
 | | count |
 |---|---|
 | correct accept | 29 |
-| correct reject | 25 |
-| honest decline, an inductive block was trusted | 65 |
+| correct reject | 29 |
+| honest decline, an inductive block was trusted | 83 |
 | wrongly rejected | **0** |
 | wrongly accepted | **0** |
+| error or timeout | **0** |
 
 **Every verdict it gives is correct.** A decline is the arena's exit code 2 and
-scores nothing, so 54 of the 119 are verdicts and the other 65 are the work
-that remains. Nothing times out.
+scores nothing, so 58 of the 141 are verdicts and the other 83 are the work
+that remains. Nothing times out and nothing errors.
 
 On the 37 tests that need no inductive block, it is 37 correct.
 
-The single thing standing between the 65 declines and 65 verdicts is deriving
+The single thing standing between the 83 declines and 83 verdicts is deriving
 the recursor from the inductive specification and comparing the two. Nothing
 else is missing for them.
 
@@ -266,14 +279,18 @@ tarball, 195 attempted and one too large to read:
 
 | | count |
 |---|---|
-| correct | 80 |
-| declined | 79 |
-| wrong | 24 |
-| error or timeout | 12 |
+| correct | 78 |
+| declined | 106 |
+| wrong | **0** |
+| error or timeout | 11 |
 
-Every one of the 24 is a wrong rejection, never a wrong acceptance. They are
-eleven projection tests, six quotient tests, three that need arithmetic on a
-native `Nat`, and four deep `perf` tests.
+**Every verdict it gives is correct, on the whole set and not only the
+tutorial part.** The 11 are ten `perf` tests that time out and one more that is
+too large to read, all for the scale reason above.
+
+Getting to zero wrong answers took four rounds. The score was 24 wrong when
+the three-valued answer landed; projections took it to 11, quotients and the
+native `Nat` to 2, and the last two were not missing rules at all. See below.
 
 The seven real-world corpora are not in that tarball and cannot be read at
 all, for the memory reason below. So this kernel is not ready to enter the
@@ -292,6 +309,34 @@ does not know, and `Ans` carries that third value through conversion,
 inference and the kernel. A definite no still wins over not knowing, because a
 declaration that fails one check is wrong whatever the others would have said.
 That turned five wrong answers into honest declines.
+
+Carrying the third value is not enough on its own. The last two wrong answers
+on the whole set were both this same bug surviving in a corner, and neither
+was a missing rule.
+
+**A stuck constant.** When a recursor's major premise could not be reduced,
+the constant case rebuilt the constant and handed it back. A rebuilt constant
+looks stuck, and two stuck terms that differ are a definite no. The projection
+case had guarded this from the start and the constant case never did. That was
+`folded-constant-first`.
+
+**A pi read off an unknown.** `Infer.pi_dom` answers with the dummy when its
+argument is not a pi, and the dummy is a loose variable, which converts with
+nothing. So when inference of a function ran out, the argument's type was
+compared against a loose variable and conversion said no. The type of
+`beta-ladder` is two thousand lambdas deep against a budget of three
+thousand, so it ran out exactly that way. A term reduction gave up on now
+answers with itself.
+
+Both fixes make the kernel less capable and more honest. Two rejections became
+declines, which is the right direction: a decline scores nothing, and a wrong
+answer is a false claim.
+
+**A number too large to hold.** Not a budget problem but the same principle. A
+Bend `Nat` holds up to 2^48-1 and Lean's prelude writes `18446744073709551616`
+for the size of a `UInt64`. Reading it crashed the kernel, and a crash is the
+one answer worse than not knowing. The reader now saturates at a cap and a
+literal that reaches it is read as unknown.
 
 ## Reading an export
 
