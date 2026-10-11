@@ -683,3 +683,20 @@ it runs past sixty, and that run is what found `2 ^ 64` crashing the runtime.
 It is also the broadest correctness check available: at a small budget every
 declaration either passes or declines, so **any rejection is a bug**. Use it
 after any change to the rules, and not only the arena's 195 files.
+
+### Honesty has a price, and here it is measured
+
+| hypothesis | status | result |
+|---|---|---|
+| B19 a stuck application is no evidence of a difference | **rejected** | `Conv.structural` answering unknown instead of no when either side is an application or projection not headed by a constructor costs eight files: seven rejections become declines (`k-rec-conv`, `nat-rec-k-lie`, `rec-missing-ih`, `100_ruleKbad`, `101_ruleKAcc`, `116_funEtaBad`, `125_accRecNoEta`) and `perf/church-numerals` stops being accepted. 186 correct -> 178 |
+
+B19 is worth understanding rather than just dropping. Lean's kernel has no
+third answer and says false when conversion fails, and it is right to, because
+its reduction is complete. This kernel's no on a stuck mismatch is a bet that
+its own reduction is complete enough. The corpus says the bet pays eight times
+over, and `grind-ring-5` says it does not always pay.
+
+So the fix for a stuck mismatch is to make reduction more complete, not to
+weaken the verdict. That needs a blame tool for conversion, not for inference:
+`bend/blame.bend` walks into a term whose **inference** is a definite no, and
+nothing yet walks into a pair whose **conversion** is one.
