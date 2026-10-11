@@ -29,11 +29,16 @@ def Kernel.is_type(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
     I.Infer.sort_ans(V.Eval.whnf(fuel, env, I.Infer.res_ty(r), Nil{})))
 
 # Does `v` have type `ty`?
+#
+# The conversion is skipped when inference has already answered no. That is
+# not only the cost of a pass nobody needs: `I.Infer.res_ty` of a definite no
+# is the dummy, a loose variable, and comparing it against the declared type
+# reports a second failure that is an artefact of the first. `bend/why.bend`
+# on a 10 MB export spent its whole walk on that artefact before this.
 def Kernel.has_type(+fuel: Nat, +env: E.DTable, v: T.Term, ty: T.Term) -> A.Ans:
   +r = I.Infer.infer(fuel, env, Nil{}, v)
-  A.Ans.and(
-    I.Infer.res_ans(r),
-    C.Conv.eq(fuel, env, I.Infer.res_ty(r), ty))
+  C.Conv.eq_unless_no(
+    I.Infer.res_ans(r), fuel, env, Nil{}, I.Infer.res_ty(r), ty)
 
 # Is this term a Prop, that is, does its own type reduce to `Sort 0`?
 # A theorem's type must be one.
