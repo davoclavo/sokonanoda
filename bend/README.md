@@ -138,26 +138,26 @@ be stated and then mechanically proven, in the same language as the code.
 
 Honestly and in order of size.
 
-**Quotients.** Four declarations, `Quot`, `Quot.mk`, `Quot.lift` and
-`Quot.ind`, are read and taken on trust. Nothing checks that the file states
-the types Lean states for them, so a file that declares them answers
-`declined`. That is six of the seventeen remaining declines and the cheapest
-points left: their types are fixed, so the check is a comparison and not a
-derivation.
+**Throughput.** Nine files run past sixty seconds: `init-prelude`, which is
+3.7 MB, and eight `perf` tests. Nothing else is in the way of an answer.
 
 **A mutual block, a nested inductive, and a recursor with an unusual level
-list.** The derivation hands these back as `T.TUnk`, which converts with
-nothing, so such a block stays trusted and the file declines. None of the
-arena's readable good files needs them.
+list.** The recursor derivation hands these back as `T.TUnk`, which converts
+with nothing, so such a block stays trusted and the file declines rather than
+accepts. None of the arena's readable good files needs them, so nothing
+measures this gap yet.
+
+**The real corpora.** The seven real-world exports are not in the arena's
+tarball and cannot be read at all, for the memory reason below. That is the
+gap between this kernel and the arena, and it is not a matter of a few more
+rules.
 
 Here is where the 124 `good` files small enough to read now stand:
 
 | the answer | count |
 |---|---|
-| accept | **102** |
-| declined, and the only thing missing is quotients | 6 |
-| declined, the budget ran out | 11 |
-| timed out | 5 |
+| accept | **115** |
+| timed out | 9 |
 
 **Reduction throughput.** Reading was never the problem and the checking was.
 Three `perf` tests still time out: `app-lam` and the two `proj-*-struct`. The
@@ -359,12 +359,16 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | before the speed work | after the level rules | after the recursor |
-|---|---|---|---|
-| correct | 101 | 101 | **173** |
-| declined | 82 | 87 | 17 |
-| wrong | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 |
+| | before the speed work | after the level rules | after the recursor | now |
+|---|---|---|---|---|
+| correct | 101 | 101 | 173 | **186** |
+| declined | 82 | 87 | 17 | **0** |
+| wrong | 0 | 0 | 0 | **0** |
+| error or timeout | 11 | 7 | 5 | 9 |
+
+**Every file it reads now gets an answer, and every answer is correct.** The
+nine that are not read are eight `perf` tests and `init-prelude`, all of which
+run past sixty seconds, plus one more too large to read at all.
 
 The jump in the last column is the recursor derivation, which is described
 below. The middle column hides a story, and it is not what it looks like.
@@ -560,6 +564,26 @@ side and not a telescope, so they all lift by the same amount.
 `bend/derive.bend` reports, per recursor, whether the derived type and every
 derived rule converts with what the file states. It changes no verdict. It is
 what turned "the derivation is probably right" into a number, twice.
+
+## The four quotient types
+
+A quotient is not derived from anything. Lean's kernel adds `Quot`, `Quot.mk`,
+`Quot.lift` and `Quot.ind` with types it writes itself, and a file states
+them, so a kernel that takes the statement on trust will accept a proof the
+quotient should not allow. `bend/Quo.bend` holds those four types and the
+kernel compares.
+
+Two names are needed and neither is in the kernel. `Quot` and `Quot.mk` come
+from the file, by the kind each quotient line states. `Eq` comes from the
+reader, which finds it by its spelling as it already finds `Nat`, `Bool` and
+the eight native `Nat` definitions: the type of `Quot.lift` says that a
+function respects the relation, and it says so with `Eq`.
+
+A quotient whose type does not match leaves the file **declined**, not
+rejected. The comparison depends on the reader having found `Eq`, and a reader
+that missed it should cost an acceptance rather than cause a false rejection.
+A file whose `Quot.lift` type is replaced by another expression answers
+`declined` where it answered `accept`, which is the check working.
 
 ## Two levels that are one level
 
