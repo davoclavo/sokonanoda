@@ -48,9 +48,8 @@ file that takes twenty milliseconds with it set, and the first run of a
 freshly written binary pays a cold start that is easy to mistake for the real
 cost. Both of those cost a measurement each before the numbers above settled.
 
-Twelve times faster does not rescue the eleven tests that time out. Every one
-of them still times out when built, at a limit of two minutes. They need less
-work, not faster work.
+A built binary alone does not rescue a test that times out. The next section
+does.
 
 `main.bend` prints:
 
@@ -149,13 +148,19 @@ declines in the tutorial set.
 
 It is the largest piece of work left and the only one worth real points.
 
-**Reduction throughput.** Reading is no longer the problem: the level table,
-the expression table and the environment are tries now, and the arena's 3.7 MB
-`init-prelude` reads in two seconds where it took twenty-nine. What it then
-spends minutes on is the checking itself, and that is reduction and inference
-doing real work. Ten `perf` tests time out there, and a faster table will not
-move any of them. This was worth measuring rather than assuming: the
-environment lookup was the obvious suspect and it was not the cause.
+**An indexed family eliminated through its own `casesOn`.** Six files answer
+`reject` where the arena expects `accept`, and all six fail on the same
+declaration: `Nat.div.go.match_1`, which eliminates `Nat.le` through
+`Nat.le.casesOn` with `Eq.refl` and `HEq.refl` arguments. Inference answers a
+definite no on its body, and ten times the budget does not change it. These
+six were hidden behind a sixty-second limit until the kernel got fast enough
+to reach them. This is the largest correctness item left.
+
+**Reduction throughput.** Reading was never the problem and the checking was.
+Three `perf` tests still time out: `app-lam` and the two `proj-*-struct`. The
+work is reduction and inference doing real work, so a faster table will not
+move them. See "Making it fast" for what did move them, and for the four
+places a guard was written and never reached.
 
 **The imax case split.** The case split on an imax whose right side is a bare
 parameter is not here, so two such atoms are still compared as syntax.
@@ -354,22 +359,40 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | count |
-|---|---|
-| correct | 99 |
-| declined | 85 |
-| wrong | **0** |
-| error or timeout | 11 |
+| | before the speed work | after |
+|---|---|---|
+| correct | 101 | 101 |
+| declined | 82 | 85 |
+| wrong | 0 | **6** |
+| error or timeout | 11 | 3 |
 
-**Every verdict it gives is correct, on the whole set and not only the
-tutorial part.** The 11 are ten `perf` tests that time out and one more that is
-too large to read, all for the scale reason above.
+Read that table carefully, because it is not what it looks like.
+
+The speed work did not break six files. It made eight of the eleven timeouts
+finish, and six of those eight answer `reject` on a file the arena expects to
+accept. The committed build before the speed work answers `reject` on the same
+six when it is given ten minutes instead of sixty seconds. So these are six
+wrong answers the kernel always had, and a sixty-second limit was hiding them.
+
+A timeout scores as an error and a wrong answer is a false claim, so this is a
+score that went down and a kernel that got more honest about itself. The six
+are `init-prelude`, `perf/fueled-chain` and the four `perf/magma-list-*`
+tests.
+
+What they have in common is the first declaration each one rejects:
+`Nat.div.go.match_1`, a matcher that Lean builds for a definition by
+well-founded recursion. Inference answers a definite no on its body, and a
+budget ten times larger does not change that, so it is not the budget. The
+body eliminates `Nat.le`, an inductive family with an index, through
+`Nat.le.casesOn` with `Eq.refl` and `HEq.refl` arguments. That is the next
+thing to fix, and it is a completeness bug, not a speed one.
 
 Getting to zero wrong answers took four rounds. The score was 24 wrong when
 the three-valued answer landed; projections took it to 11, quotients and the
 native `Nat` to 2, and the last two were not missing rules at all. See below.
+Then the kernel got fast enough to find six more.
 
-The climb from 74 correct to 99 is a different story and a duller one: ten
+The climb from 74 correct to 101 is a different story and a duller one: ten
 checks on an inductive block, each worth one or two tests, none of them
 needing the recursor derived. The order they landed in was the order of
 cheapness, not of importance.
@@ -377,6 +400,99 @@ cheapness, not of importance.
 The seven real-world corpora are not in that tarball and cannot be read at
 all, for the memory reason below. So this kernel is not ready to enter the
 arena, and the gap is not a matter of a few more tests.
+
+## Making it fast
+
+Twenty times faster, in one afternoon, from one bug written four ways.
+
+| | start | one walk | plus short circuits | plus the guards |
+|---|---|---|---|---|
+| `perf/church-numerals` | 23.8 s | 16.6 s | 7.6 s | **0.021 s** |
+| `perf/let-ladder` | 10.3 s | 9.9 s | 2.3 s | **1.56 s** |
+| `perf/folded-constant-last` | 0.89 s | 0.59 s | 0.30 s | **0.094 s** |
+| `bad/bugs/rec-of-subst-prop` | 2.95 s | 1.19 s | 0.13 s | **0.12 s** |
+| ten files together | 41.2 s | 29.8 s | 10.9 s | **2.08 s** |
+
+Built binaries, `--threads 8`, medians of three, both columns of a comparison
+measured in one run. The machine drifts enough between runs that a number from
+one hour does not belong beside a number from the next.
+
+### One bug, written four ways
+
+Bend evaluates an argument before the match that picks an arm. So a helper
+that chooses between two terms on a computed `Bool` evaluates **both** of
+them. The file knew this. `Eval.quot_term` and `Eval.unfold_decl` were already
+written to hand back a cheap sort on the branch that is about to be thrown
+away, and a comment says why. The same bug was still live in four other
+places, and each one cost more than the whole reader.
+
+**A beta step copied the value once per variable.** `Term.subst` read the lift
+through `Term.pick`, so every variable in the body walked and rebuilt the
+whole value, matching or not. A body with a thousand variables copied a
+thousand values to use one. This is the one that took church numerals from
+7.6 seconds to 21 milliseconds.
+
+**Proof irrelevance ran on every pair.** `Conv.maybe_proof` is a syntactic
+test written to keep the inference passes off pairs that cannot be two proofs,
+and `Conv.irrel` read it through `Conv.pick_step`, which evaluates both
+branches. So every pair paid for the two inference passes the test was there
+to prevent. The guard was right and unreachable.
+
+**The K rule inferred the type of an argument of every application.** Not of
+every recursor application: of every application, because the subject was an
+argument of the pick as well.
+
+**A conjunction cannot stop early.** `A.Ans.and(step, eq_all(rest))` has to
+work the whole queue even after a definite no, because the recursive call is
+an argument. A helper that matched the step would have to call `eq_all` from
+above it, and Bend has no mutual recursion. The answer travels in as a
+parameter instead, which a match can inspect: a definite no returns at once,
+and the call becomes a tail call. The same change in `Kernel.check_from` stops
+a bad file at the declaration that failed.
+
+The lesson is not "Bend is eager". It is that in Bend a guard is only a guard
+if something **matches** on it. A guard read through an argument is a comment.
+
+### The report was most of the work
+
+`main` called `Kernel.report` and then `Kernel.check_all`, and each one walks
+the list and checks every declaration. `Kernel.why` ran on every declaration
+too, through an argument of `Kernel.mark`, and for a definition it infers the
+body three more times. A file was checked about five times to answer once.
+That is the "one walk" column above, and it is worth 1.5x on its own.
+
+The report is off now unless `SOKO_REPORT` is set, and it stops at the first
+rejection, which is also what makes it usable: `SOKO_REPORT=1` on a 598 kB
+export names the declaration that failed in a second, where the old report ran
+for five minutes without finishing.
+
+### The GPU is the wrong tool here, and Bend's own numbers say so
+
+`bend guide` is clear that a `!` call ships work to a cube of 16384 lanes and
+that the GPU wants uniform numeric work. Three things rule it out for a
+kernel.
+
+A P-core is about 75 times a GPU lane on serial work, by the shader guide's
+own cost model. A value that every lane reads costs an atomic per read, and
+the environment trie is exactly such a value. And the lanes must be balanced,
+while the cost of checking one declaration in this corpus spans three orders
+of magnitude.
+
+Bend's own pinned benchmarks confirm the shape. On an M4 Max the two that
+search rather than compute, `queens` and `lexer`, are the two the GPU loses:
+0.455 s on parallel CPU against 0.933 s on the GPU, and 0.198 s against
+1.075 s. A kernel is a search.
+
+Parallel CPU is a different matter: those pins show about eleven times over
+one core. But the grain has to be right. A parallel call in the application
+arm of `Infer.infer`, where the function's type and the argument's type are
+genuinely independent, measured 0.99x, which is a loss. The two sides are
+nothing like balanced, the tasks are tiny, and the files that take the time
+hold two to ten declarations, so there is no coarse grain to fork either. That
+change is not in the tree.
+
+What is left to win is algorithmic. The three tests that still time out are
+`perf/app-lam` and the two `perf/proj-*-struct`.
 
 ## Running out of budget
 

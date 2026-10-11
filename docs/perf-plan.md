@@ -597,3 +597,31 @@ Five of the seven hypotheses tested are rejected, and the rejections agree.
 - <https://arxiv.org/pdf/1701.04391>
 - <https://link.springer.com/article/10.1007/s10990-007-9014-0>
 - <https://www.abhik.ai/concepts/systems/transparent-huge-pages>
+
+## The Bend kernel in bend/
+
+A separate rig from the Rust checker above. The binary is built, not
+interpreted, and every number is a median of three with `--threads 8`.
+
+```
+bend bend/check.bend -o /tmp/a            # the base
+# apply the change
+bend bend/check.bend -o /tmp/b
+# time the two in one run, never across runs
+```
+
+| hypothesis | status | result |
+|---|---|---|
+| B1 the GPU helps | rejected | a P-core is ~75x a lane on serial work, a shared `+` value costs an atomic per read, and Bend's own pins lose on `queens` and `lexer`, the two benches that search |
+| B2 a parallel call in the application arm helps | rejected | 0.99x. The two sides are unbalanced, the tasks are tiny, and the slow files hold two to ten declarations |
+| B3 the file is checked more than once | confirmed | `report` and `check_all` each walk and check; `why` ran through an argument of `mark`. One walk: 1.48x |
+| B4 a guard read through a pick is not a guard | confirmed | four places. `Term.subst`, `Conv.irrel`, `Conv.k_fix` and the `Ans.and` over `eq_all`. Together 5.3x on top of B3 |
+| B5 raising the fuel is now safe for the stack | confirmed | `Conv.eq_all` is a tail call, so 30000 runs a 598 kB export. Time is the cap now, not the stack. Not changed; measure before you do |
+| B6 the remaining timeouts are a reduction problem | open | `perf/app-lam` and the two `perf/proj-*-struct` |
+
+B1 and B2 are the two the landing page suggests first. Both lose here, and
+both are cheap to measure, so measure them before you write them.
+
+B4 is the one worth remembering. Bend evaluates an argument before the match
+picks an arm, so a helper that chooses between two values on a computed `Bool`
+evaluates both. A guard only guards when something **matches** on it.
