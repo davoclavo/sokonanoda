@@ -405,6 +405,14 @@ def Decl.is_one(xs: List<&2, Nat>) -> Bool:
     case Con{h, t}:
       Decl.is_nil(t)
 
+# How many rules a recursor states.
+def Decl.rules_len(rs: List<&2, RecRule>, +acc: Nat) -> Nat:
+  match rs:
+    case Nil{}:
+      acc
+    case Con{h, t}:
+      Decl.rules_len(t, 1n+acc)
+
 # One rule's parts.
 def RecRule.ctor(r: RecRule) -> Nat:
   match r:

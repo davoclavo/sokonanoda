@@ -357,6 +357,53 @@ def Kernel.ctor_univ(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
         E.Decl.ind_ty(E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d)))),
         Nil{})))
 
+# A recursor's counts must match the block it eliminates.
+#
+# These are the numbers the recursor states about itself, and the block it
+# names says what each one has to be: one motive for each inductive, one minor
+# premise for each constructor of all of them, one rule for each minor
+# premise, and the same parameters and indices as the inductive.
+#
+# Nothing here derives anything. It is the cheap half of the check that a
+# derivation would make, and it is enough for the arena's `BogusRecursor`,
+# which declares a recursor for a one-constructor type with no motive, no
+# minor premise and no rule at all.
+def Kernel.ctors_total(ns: List<&2, Nat>, +env: E.DTable, +acc: Nat) -> Nat:
+  match ns:
+    case Nil{}:
+      acc
+    case Con{h, t}:
+      Kernel.ctors_total(
+        t,
+        env,
+        Nat.add(
+          acc,
+          E.Decl.len(
+            E.Decl.ind_ctors(E.Lookup.get(E.Env.find(env, h))))))
+
+def Kernel.rec_counts_ok(+env: E.DTable, +d: E.Decl) -> Bool:
+  Bool.and(
+    Bool.and(
+      Nat.is_eq(E.Decl.rec_nm(d), E.Decl.len(E.Decl.rec_inds(d))),
+      Nat.is_eq(
+        E.Decl.rec_nmin(d),
+        Kernel.ctors_total(E.Decl.rec_inds(d), env, 0n))),
+    Bool.and(
+      Nat.is_eq(
+        E.Decl.rules_len(E.Decl.rec_rules(d), 0n),
+        E.Decl.rec_nmin(d)),
+      Bool.and(
+        Nat.is_eq(
+          E.Decl.rec_np(d),
+          E.Decl.ind_np(
+            E.Lookup.get(
+              E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))),
+        Nat.is_eq(
+          E.Decl.rec_ni(d),
+          E.Decl.ind_ni(
+            E.Lookup.get(
+              E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))))))
+
 # A recursor on a proposition with more than one constructor may eliminate
 # only into a proposition.
 #
@@ -468,9 +515,13 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
           A.Ans.of(
             Bool.and(
               E.Decl.no_dupes(ps),
-              Kernel.rec_ok(
-                env,
-                E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))),
+              Bool.and(
+                Kernel.rec_ok(
+                  env,
+                  E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}),
+                Kernel.rec_counts_ok(
+                  env,
+                  E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})))),
           Kernel.rec_elim(
             fuel, env,
             E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})),
