@@ -219,14 +219,50 @@ def Reader.has(+key: String, +line: List<&2, U32>) -> Bool:
       Reader.keybytes(key),
       line))
 
-# The bytes after `key`, or empty when the key is absent.
+# Drop the blanks a formatted export puts after a colon. `go` says the head
+# is one; start it with `Reader.at_blank`.
+#
+# The arena ships one file written as `{"ie": 4, ..}` with a space, and
+# without this the value of every field in it reads as zero. The index a line
+# states is the one the format means, and it may be sparse, so reading it
+# wrongly is not an option: the arena's `sparse-name-index` holds one
+# expression numbered four.
+def Reader.at_blank(+xs: List<&2, U32>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case Con{c, r}:
+      Bool.or(U32.is_eq(c, 32), U32.is_eq(c, 9))
+
+def Reader.skip_blanks(fuel: Nat, go: Bool, xs: List<&2, U32>) -> List<&2, U32>:
+  match fuel:
+    case 0n:
+      xs
+    case 1n+f:
+      match go:
+        case False{}:
+          xs
+        case True{}:
+          match xs:
+            case Nil{}:
+              Nil{}
+            case Con{c, +r}:
+              Reader.skip_blanks(f, Reader.at_blank(r), r)
+
+def Reader.blanks_off(+xs: List<&2, U32>) -> List<&2, U32>:
+  Reader.skip_blanks(Reader.line_fuel(), Reader.at_blank(xs), xs)
+
+# The bytes after `key`, with any blanks after the colon dropped, or empty
+# when the key is absent.
 def Reader.after(+key: String, +line: List<&2, U32>) -> List<&2, U32>:
-  Reader.pos_of(
-    B.Bytes.find(
-      Reader.line_fuel(),
-      B.Bytes.is_hit(Reader.keybytes(key), line),
-      Reader.keybytes(key),
-      line))
+  Reader.blanks_off(
+    Reader.pos_of(
+      B.Bytes.find(
+        Reader.line_fuel(),
+        B.Bytes.is_hit(Reader.keybytes(key), line),
+        Reader.keybytes(key),
+        line)))
+
 
 # Take bytes up to, but not including, `b`. `stop` says the head is `b`.
 def Reader.upto(fuel: Nat, stop: Bool, +acc: List<&2, U32>, +b: U32, xs: List<&2, U32>) -> List<&2, U32>:
@@ -476,12 +512,4 @@ def Reader.is_true(+key: String, +line: List<&2, U32>) -> Bool:
 
 # The number that follows `key` in this line, or zero.
 def Reader.field(+key: String, +line: List<&2, U32>) -> Nat:
-  Reader.num_of(
-    B.Bytes.number(
-      Reader.line_fuel(),
-      Reader.pos_of(
-        B.Bytes.find(
-          Reader.line_fuel(),
-          B.Bytes.is_hit(B.Bytes.of_string("\"" ++ key ++ "\":"), line),
-          B.Bytes.of_string("\"" ++ key ++ "\":"),
-          line))))
+  Reader.num_of(B.Bytes.number(Reader.line_fuel(), Reader.after(key, line)))
