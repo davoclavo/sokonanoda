@@ -727,6 +727,34 @@ def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("prop", Kernel.is_prop(fuel, env, ty)) ++
       Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
+    case E.DCtor{+id, +ps, +ty, +ind, +cidx, +np, +nf}:
+      Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
+      Kernel.flag(
+        "univ",
+        Kernel.ctor_univ(
+          fuel, env, E.DCtor{id, ps, ty, ind, cidx, np, nf})) ++
+      Kernel.flag(
+        "ind",
+        A.Ans.of(
+          Kernel.ctor_ind_ok(
+            env, E.DCtor{id, ps, ty, ind, cidx, np, nf}))) ++
+      Kernel.flag(
+        "arity",
+        A.Ans.of(
+          Kernel.ctor_arity_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}))) ++
+      Kernel.flag(
+        "result",
+        A.Ans.of(
+          Kernel.ctor_result_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}))) ++
+      Kernel.flag(
+        "index",
+        A.Ans.of(
+          Kernel.ctor_index_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}))) ++
+      Kernel.flag(
+        "positive",
+        A.Ans.of(
+          Kernel.ctor_pos_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}))) ++
+      Kernel.flag("type", Kernel.is_type(fuel, env, ty))
     case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag(

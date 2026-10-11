@@ -358,10 +358,6 @@ def Level.nf_le(xs: List<&2, Atom>, +ys: List<&2, Atom>) -> Bool:
     case Con{+h, t}:
       Bool.and(Level.atom_le_any(ys, h), Level.nf_le(t, ys))
 
-# Is `a` no greater than `b` under every assignment of their parameters?
-def Level.leq(+fuel: Nat, a: Level, b: Level) -> Bool:
-  Level.nf_le(Level.nf(fuel, a), Level.nf(fuel, b))
-
 # The imax case split
 # -------------------
 #
@@ -475,6 +471,45 @@ def Level.eq(+fuel: Nat, +a: Level, +b: Level) -> Bool:
 # smaller than the number of declared parameters would be read as one of
 # them: a file could use a universe it never declared and have it taken for a
 # universe it did. `Level.pars_ok` is what refuses the marker.
+# Is `a` no greater than `b` under every assignment of their parameters?
+#
+# The normal form decides this for everything except an imax whose right side
+# is a bare parameter, which compares as one opaque atom and so matches
+# nothing. That is too strict, and the split is the same one equality needs:
+# ask the question with the parameter at zero and again at its own successor,
+# and require both.
+#
+# `init-prelude` is what asks for it. The field of `Trans.mk` is `forall a b
+# c, r a b -> s b c -> t a c`, whose sort is a tower of imax over six
+# parameters, and `Trans` lives in the max of the same six. The field does fit
+# and no normal form can see it.
+def Level.split_le(+fuel: Nat, +a: Level, +b: Level) -> Maybe<&2, Nat>:
+  Level.split_if(
+    Level.nf_le(Level.nf(fuel, a), Level.nf(fuel, b)),
+    Level.imax_par(a, Level.imax_par(b, None{})))
+
+def Level.leq_go(
+  +fuel: Nat, m: Maybe<&2, Nat>, +a: Level, +b: Level
+) -> Bool:
+  match fuel:
+    case 0n:
+      Level.nf_le(Level.nf(0n, a), Level.nf(0n, b))
+    case 1n+f:
+      match m:
+        case None{}:
+          Level.nf_le(Level.nf(f, a), Level.nf(f, b))
+        case Some{+i}:
+          +a0 : Level = Level.subst_par(a, i, LZero{})
+          +b0 : Level = Level.subst_par(b, i, LZero{})
+          +a1 : Level = Level.subst_par(a, i, LSucc{LPar{i}})
+          +b1 : Level = Level.subst_par(b, i, LSucc{LPar{i}})
+          Bool.and(
+            Level.leq_go(f, Level.split_le(f, a0, b0), a0, b0),
+            Level.leq_go(f, Level.split_le(f, a1, b1), a1, b1))
+
+def Level.leq(+fuel: Nat, +a: Level, +b: Level) -> Bool:
+  Level.leq_go(fuel, Level.split_le(fuel, a, b), a, b)
+
 def Level.bad_par() -> Nat:
   1000000n
 
