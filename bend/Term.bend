@@ -37,6 +37,23 @@ type Term is Data:
   # So reduction hands back this instead, and everything that meets it answers
   # "I do not know" rather than yes or no.
   TUnk{}
+  # A reference to an expression of the export's own table.
+  #
+  # The table holds each expression once, and the export's expressions form a
+  # graph: one expression is named by many others. This kernel read that graph
+  # as a tree, which copies a subterm once per reference, because Bend is
+  # affine and a value read twice is copied. An 869 kB export built 206
+  # million nodes that way, and a 1.3 MB one could not be read at all.
+  #
+  # A reference is one word. `Eval.whnf` resolves it against the table, and
+  # what it finds has references for its own children, so every step is
+  # shallow.
+  #
+  # The parser emits one only for an expression with no free variable in it. A
+  # closed term is the same term in every scope, so `Term.subst` and
+  # `Term.lift` leave a reference alone and cost nothing, which is what makes
+  # this sound as well as cheap.
+  TRef{i: Nat}
 
 # Choose between two terms on a computed Bool.
 def Term.pick(b: Bool, x: Term, y: Term) -> Term:
@@ -63,114 +80,6 @@ def Term.is_unk(t: Term) -> Bool:
       True{}
     case x:
       False{}
-
-# Structural equality of two terms.
-#
-# This is equality of syntax, not of meaning, and that is what it is for: a
-# guard that must never say yes to two terms that differ.
-#
-# It is a worklist and not a plain recursion, for the same reason
-# `Conv.eq_all` is one. `Bool.and` evaluates both of its sides, because an
-# argument evaluates before the match picks an arm, so `and(same(f1, f2),
-# same(a1, a2))` walked the whole of both terms even when the heads already
-# differed. Conversion asks this of every pair it takes off its queue, and
-# most of those pairs differ, so most of that walking was waste.
-#
-# The answer so far travels in as a parameter, which a match can inspect, so
-# a difference stops the walk. The budget bounds what one question may cost,
-# and running out answers no: this is a guard, and a guard that gives up must
-# give up on the side that does more work rather than less.
-
-# One pair still to be compared.
-type TwoT is Data:
-  MkTT{a: Term, b: Term}
-
-# What comparing the heads of one pair settles.
-type SameStep is Data:
-  SDiff{}
-  SNext{ps: List<&2, TwoT>}
-
-def Term.step_ok(s: SameStep) -> Bool:
-  match s:
-    case SDiff{}:
-      False{}
-    case SNext{ps}:
-      True{}
-
-def Term.step_next(s: SameStep) -> List<&2, TwoT>:
-  match s:
-    case SDiff{}:
-      Nil{}
-    case SNext{ps}:
-      ps
-
-def Term.same_of(b: Bool) -> SameStep:
-  match b:
-    case True{}:
-      SNext{Nil{}}
-    case False{}:
-      SDiff{}
-
-def Term.same_proj(ok: Bool, s1: Term, s2: Term) -> SameStep:
-  match ok:
-    case True{}:
-      SNext{[MkTT{s1, s2}]}
-    case False{}:
-      SDiff{}
-
-# The heads of one pair, and the pairs they leave behind.
-def Term.same_step(a: Term, b: Term) -> SameStep:
-  match a b:
-    case TVar{i} TVar{j}:
-      Term.same_of(Nat.is_eq(i, j))
-    case TSort{x} TSort{y}:
-      Term.same_of(L.Level.same(x, y))
-    case TConst{n1, l1} TConst{n2, l2}:
-      Term.same_of(
-        Bool.and(Nat.is_eq(n1, n2), Term.same_levels(l1, l2)))
-    case TApp{f1, a1} TApp{f2, a2}:
-      SNext{[MkTT{f1, f2}, MkTT{a1, a2}]}
-    case TLam{t1, b1} TLam{t2, b2}:
-      SNext{[MkTT{t1, t2}, MkTT{b1, b2}]}
-    case TPi{t1, b1} TPi{t2, b2}:
-      SNext{[MkTT{t1, t2}, MkTT{b1, b2}]}
-    case TProj{n1, i1, s1} TProj{n2, i2, s2}:
-      Term.same_proj(
-        Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)), s1, s2)
-    case TNat{v1, m1, z1, s1} TNat{v2, m2, z2, s2}:
-      Term.same_of(Nat.is_eq(v1, v2))
-    case TLet{t1, v1, b1} TLet{t2, v2, b2}:
-      SNext{[MkTT{t1, t2}, MkTT{v1, v2}, MkTT{b1, b2}]}
-    case TUnk{} TUnk{}:
-      SNext{Nil{}}
-    case x y:
-      SDiff{}
-
-def Term.same_all(+fuel: Nat, ok: Bool, work: List<&2, TwoT>) -> Bool:
-  match fuel:
-    case 0n:
-      False{}
-    case 1n+f:
-      match ok work:
-        case False{} w:
-          False{}
-        case True{} Nil{}:
-          True{}
-        case True{} Con{MkTT{a, b}, rest}:
-          +st : SameStep = Term.same_step(a, b)
-          Term.same_all(
-            f,
-            Term.step_ok(st),
-            List.append(&2, TwoT, Term.step_next(st), rest))
-
-# How many pairs one question may cost. Large enough that no pair in the
-# arena's corpus reaches it, and small enough that a pathological pair cannot
-# cost the whole run.
-def Term.same_budget() -> Nat:
-  1000000n
-
-def Term.same(a: Term, b: Term) -> Bool:
-  Term.same_all(Term.same_budget(), True{}, [MkTT{a, b}])
 
 # How many binders a telescope opens with. The result type of a constructor
 # is an application of its inductive and never a pi, so this counts exactly
@@ -217,6 +126,9 @@ def Term.occurs(t: Term, +n: Nat) -> Bool:
       False{}
 
 # Does the constant `n` appear in any of these terms?
+    case TRef{i}:
+      False{}
+
 def Term.occurs_any(ts: List<&2, Term>, +n: Nat) -> Bool:
   match ts:
     case Nil{}:
@@ -261,12 +173,51 @@ def Term.pars_ok(t: Term, +n: Nat) -> Bool:
       True{}
     case TProj{tn, idx, st}:
       Term.pars_ok(st, n)
+    case TRef{i}:
+      True{}
+
+# Does this term hold a variable bound `d` binders out or further?
+#
+# With `d` at zero that asks whether the term is closed. The parser asks it of
+# every expression it stores, because a closed and level-free expression is
+# one a reference may stand for. A reference answers no, which is sound and is
+# what makes the test cost nothing: an entry whose children are references is
+# a shallow node.
+def Term.has_free(t: Term, +d: Nat) -> Bool:
+  match t:
+    case TVar{+i}:
+      Nat.is_le(d, i)
+    case TSort{l}:
+      False{}
+    case TConst{n, ls}:
+      False{}
+    case TApp{f, a}:
+      Bool.or(Term.has_free(f, d), Term.has_free(a, d))
+    case TLam{ty, bd}:
+      Bool.or(Term.has_free(ty, d), Term.has_free(bd, 1n+d))
+    case TPi{ty, bd}:
+      Bool.or(Term.has_free(ty, d), Term.has_free(bd, 1n+d))
+    case TLet{ty, v, bd}:
+      Bool.or(
+        Bool.or(Term.has_free(ty, d), Term.has_free(v, d)),
+        Term.has_free(bd, 1n+d))
+    case TNat{v, m, z, c}:
+      False{}
+    case TUnk{}:
+      False{}
+    case TProj{tn, idx, st}:
+      Term.has_free(st, d)
+    case TRef{i}:
+      False{}
 
 # Does this term use the variable bound `d` binders out?
 #
 # The Lean kernel calls this a loose bound variable. A projection out of a
 # proposition needs it: a field before the one projected has to be a proof
 # only when the rest of the constructor's telescope uses it.
+    case TRef{i}:
+      True{}
+
 def Term.has_bvar(t: Term, +d: Nat) -> Bool:
   match t:
     case TVar{+i}:
@@ -293,6 +244,9 @@ def Term.has_bvar(t: Term, +d: Nat) -> Bool:
       Term.has_bvar(st, d)
 
 # Add `d` to every free variable whose index is at least `cut`.
+    case TRef{i}:
+      False{}
+
 def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
   match t:
     case TVar{+i}:
@@ -319,6 +273,9 @@ def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
 # Lift a value into the scope it lands in, unless it lands in the scope it
 # was written in. A lift by zero is the value itself, and `Term.lift` would
 # walk and rebuild the whole of it to find that out.
+    case TRef{i}:
+      TRef{i}
+
 def Term.lift_by(at_top: Bool, v: Term, +cut: Nat) -> Term:
   match at_top:
     case True{}:
@@ -367,6 +324,9 @@ def Term.subst(t: Term, +v: Term, +cut: Nat) -> Term:
 
 # Instantiate the body of a binder with `v`, which is the common case of
 # `Term.subst` at depth zero.
+    case TRef{i}:
+      TRef{i}
+
 def Term.inst(bd: Term, +v: Term) -> Term:
   Term.subst(bd, v, 0n)
 
@@ -413,6 +373,9 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TProj{tn, idx, Term.remap_levels(st, ps)}
 
 # Substitute a declaration's level parameters throughout a term.
+    case TRef{i}:
+      TRef{i}
+
 def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
   match t:
     case TVar{i}:
@@ -435,3 +398,5 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TUnk{}
     case TProj{tn, idx, st}:
       TProj{tn, idx, Term.subst_levels(st, vs)}
+    case TRef{i}:
+      TRef{i}

@@ -584,12 +584,32 @@ def Lookup.get(lk: Lookup) -> Decl:
 # determines the slot, so this cannot fail, and it is free: the declaration
 # carries its own name. It is the difference between a table that loses an
 # entry and one that answers under the wrong name.
-type DTable is Data:
+type DTree is Data:
   DTip{}
-  DNode{v: Maybe<&2, Decl>, lo: DTable, hi: DTable}
+  DNode{v: Maybe<&2, Decl>, lo: DTree, hi: DTree}
+
+# What the kernel carries everywhere: the declarations, and the export's own
+# expression table.
+#
+# The table is here rather than in a parameter of its own because `Eval.whnf`
+# is the only thing that reads it and every path to `Eval.whnf` already
+# carries the environment. Keeping the name `DTable` is deliberate: a hundred
+# and forty signatures name it and none of them had to change.
+type DTable is Data:
+  MkDT{ds: DTree, ex: Tb.ETable}
 
 def Env.empty() -> DTable:
-  DTip{}
+  MkDT{DTip{}, Tb.ETable.new()}
+
+# An environment over an export's expression table.
+def Env.over(+ex: Tb.ETable) -> DTable:
+  MkDT{DTip{}, ex}
+
+# The expression the table holds under this index.
+def Env.expr(+env: DTable, +i: Nat) -> T.Term:
+  match env:
+    case MkDT{ds, +ex}:
+      Tb.Table.read(ex, i)
 
 def Env.found(m: Maybe<&2, Decl>, +i: Nat) -> Lookup:
   match m:
@@ -598,7 +618,7 @@ def Env.found(m: Maybe<&2, Decl>, +i: Nat) -> Lookup:
     case Some{+d}:
       Env.pick(Nat.is_eq(Decl.id(d), i), LFound{d}, LMissing{})
 
-def Env.at(t: DTable, +i: Nat) -> Lookup:
+def Env.at(t: DTree, +i: Nat) -> Lookup:
   match t:
     case DTip{}:
       LMissing{}
@@ -608,7 +628,7 @@ def Env.at(t: DTable, +i: Nat) -> Lookup:
 # The declaration named `i`, or nothing. `stop` says the path ends at this
 # node and `b` says which half it takes otherwise.
 def Env.get(
-  n: Nat, stop: Bool, b: Bool, t: DTable, +i: Nat, +name: Nat
+  n: Nat, stop: Bool, b: Bool, t: DTree, +i: Nat, +name: Nat
 ) -> Lookup:
   match n:
     case 0n:
@@ -645,8 +665,8 @@ def Env.get(
                     name)
 
 def Env.put(
-  n: Nat, stop: Bool, b: Bool, t: DTable, +i: Nat, +d: Decl
-) -> DTable:
+  n: Nat, stop: Bool, b: Bool, t: DTree, +i: Nat, +d: Decl
+) -> DTree:
   match n:
     case 0n:
       t
@@ -711,23 +731,31 @@ def Env.put(
 
 # Look up a name.
 def Env.find(+env: DTable, +i: Nat) -> Lookup:
-  Env.get(
-    Tb.Table.bits(),
-    Tb.Table.here(Tb.Table.path(i)),
-    Tb.Table.low(Tb.Table.path(i)),
-    env,
-    Tb.Table.path(i),
-    i)
+  match env:
+    case MkDT{+ds, ex}:
+      Env.get(
+        Tb.Table.bits(),
+        Tb.Table.here(Tb.Table.path(i)),
+        Tb.Table.low(Tb.Table.path(i)),
+        ds,
+        Tb.Table.path(i),
+        i)
 
-# Add a declaration under its own name.
+# Add a declaration under its own name. The expression table moves into the
+# new environment rather than being copied, which an affine language gives
+# for nothing.
 def Env.add(+env: DTable, +d: Decl) -> DTable:
-  Env.put(
-    Tb.Table.bits(),
-    Tb.Table.here(Tb.Table.path(Decl.id(d))),
-    Tb.Table.low(Tb.Table.path(Decl.id(d))),
-    env,
-    Tb.Table.path(Decl.id(d)),
-    d)
+  match env:
+    case MkDT{+ds, ex}:
+      MkDT{
+        Env.put(
+          Tb.Table.bits(),
+          Tb.Table.here(Tb.Table.path(Decl.id(d))),
+          Tb.Table.low(Tb.Table.path(Decl.id(d))),
+          ds,
+          Tb.Table.path(Decl.id(d)),
+          d),
+        ex}
 
 
 # Every declaration of a list, under its own name. For a hand-built

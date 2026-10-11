@@ -524,6 +524,11 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           ROk{T.TConst{nm, Nil{}}}
         case T.TUnk{}:
           RUnk{}
+        case T.TRef{+i}:
+          # A reference is resolved against the table and asked again. What
+          # the table holds has references for its own children, so this costs
+          # one step however large the expression it names.
+          Infer.infer(f, env, ctx, E.Env.expr(env, i))
         case T.TProj{tn, +idx, +st}:
           +sty = V.Eval.whnf(
             f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{})

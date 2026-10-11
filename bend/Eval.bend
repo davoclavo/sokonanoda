@@ -608,6 +608,37 @@ def Eval.prim_term(
 # shortage of budget is reported as a rejection. The projection case has
 # always done this; the constant case did not, and that is what made the
 # arena's `beta-ladder` and `folded-constant-first` reject.
+# How deep a chain of references may run. The table never stores a bare
+# reference, so one step is enough and this is only a bound.
+def Eval.deref_budget() -> Nat:
+  64n
+
+# Resolve a reference against the table.
+#
+# This is deliberately outside the reduction budget. Resolving is not a
+# reduction step, and charging the declaration's fuel for it was expensive
+# enough to matter: `perf/church-numerals` went from accepted to out of budget
+# when every resolution cost a step.
+#
+# The resolution happens in the caller rather than in an arm of `Eval.whnf`,
+# because an arm would have to call `Eval.whnf` again and Bend needs a
+# shrinking argument for that. So every call hands `Eval.whnf` a term whose
+# head is already resolved, and `Eval.whnf` needs no arm for a reference at
+# all.
+def Eval.deref(+n: Nat, +env: E.DTable, t: T.Term) -> T.Term:
+  match n:
+    case 0n:
+      t
+    case 1n+k:
+      match t:
+        case T.TRef{+i}:
+          Eval.deref(k, env, E.Env.expr(env, i))
+        case o:
+          o
+
+def Eval.dr(+env: E.DTable, t: T.Term) -> T.Term:
+  Eval.deref(Eval.deref_budget(), env, t)
+
 def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
     case 0n:
@@ -620,47 +651,52 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
           Eval.rebuild(sp, T.TSort{l})
         case T.TConst{+n, +ls}:
           +d = E.Lookup.get(E.Env.find(env, n))
-          +mw = Eval.lit_ctor(Eval.whnf(f, env, Eval.major_or_sort(d, sp), Nil{}))
-          +px = Eval.whnf(f, env, Eval.prim_arg(d, sp, 0n), Nil{})
-          +py = Eval.whnf(f, env, Eval.prim_arg(d, sp, 1n), Nil{})
+          +mw = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, Eval.major_or_sort(d, sp)), Nil{}))
+          +px = Eval.whnf(f, env, Eval.dr(env, Eval.prim_arg(d, sp, 0n)), Nil{})
+          +py = Eval.whnf(f, env, Eval.dr(env, Eval.prim_arg(d, sp, 1n)), Nil{})
           Eval.pick_t(
             Eval.prim_ready(d, sp, px, py),
-            Eval.whnf(f, env, Eval.prim_term(d, sp, px, py), Nil{}),
+            Eval.whnf(f, env, Eval.dr(env, Eval.prim_term(d, sp, px, py)), Nil{}),
             Eval.pick_t(
             E.Decl.is_def(d),
-            Eval.whnf(f, env, Eval.unfold_decl(d, ls), sp),
+            Eval.whnf(f, env, Eval.dr(env, Eval.unfold_decl(d, ls)), sp),
             Eval.pick_t(
               T.Term.is_unk(mw),
               T.TUnk{},
               Eval.pick_t(
               Eval.can_iota(d, sp, mw),
-              Eval.whnf(f, env, Eval.iota_term(env, d, ls, sp, mw), Nil{}),
+              Eval.whnf(f, env, Eval.dr(env, Eval.iota_term(env, d, ls, sp, mw)), Nil{}),
               Eval.pick_t(
                 Eval.quot_ready(env, d, sp, mw),
-                Eval.whnf(f, env, Eval.quot_term(d, sp, mw), Nil{}),
+                Eval.whnf(f, env, Eval.dr(env, Eval.quot_term(d, sp, mw)), Nil{}),
                 Eval.rebuild(sp, T.TConst{n, ls}))))))
         case T.TApp{g, a}:
-          Eval.whnf(f, env, g, Con{a, sp})
+          Eval.whnf(f, env, Eval.dr(env, g), Con{a, sp})
         case T.TLam{ty, bd}:
           match sp:
             case Nil{}:
               T.TLam{ty, bd}
             case Con{a, rest}:
-              Eval.whnf(f, env, T.Term.inst(bd, a), rest)
+              Eval.whnf(f, env, Eval.dr(env, T.Term.inst(bd, a)), rest)
         case T.TPi{ty, bd}:
           Eval.rebuild(sp, T.TPi{ty, bd})
         case T.TLet{ty, v, bd}:
-          Eval.whnf(f, env, T.Term.inst(bd, v), sp)
+          Eval.whnf(f, env, Eval.dr(env, T.Term.inst(bd, v)), sp)
         case T.TNat{v, nm, zr, sc}:
           Eval.rebuild(sp, T.TNat{v, nm, zr, sc})
         case T.TUnk{}:
           T.TUnk{}
+        case T.TRef{+i}:
+          # A caller that did not resolve first. Every call inside this def
+          # resolves, so this fires once for a term handed in from outside and
+          # costs one step, not one step per use.
+          Eval.whnf(f, env, E.Env.expr(env, i), sp)
         case T.TProj{tn, +idx, st}:
-          +sw = Eval.lit_ctor(Eval.whnf(f, env, st, Nil{}))
+          +sw = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, st), Nil{}))
           Eval.pick_t(
             T.Term.is_unk(sw),
             T.TUnk{},
             Eval.pick_t(
               Eval.proj_ready(env, idx, sw),
-              Eval.whnf(f, env, Eval.proj_field(env, idx, sw), sp),
+              Eval.whnf(f, env, Eval.dr(env, Eval.proj_field(env, idx, sw)), sp),
               Eval.rebuild(sp, T.TProj{tn, idx, sw})))

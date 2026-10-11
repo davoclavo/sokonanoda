@@ -247,6 +247,9 @@ def Shape.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           SOk{T.TConst{nm, Nil{}}}
         case T.TUnk{}:
           SBad{}
+        case T.TRef{+i}:
+          # A reference is resolved against the table and asked again.
+          Shape.infer(f, env, ctx, E.Env.expr(env, i))
         case T.TProj{tn, +idx, +st}:
           Shape.proj_from(
             f, env,

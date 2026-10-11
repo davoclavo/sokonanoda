@@ -131,6 +131,128 @@ def Conv.step_of(b: Bool) -> Step:
     case False{}:
       SNo{}
 
+# Structural equality of two terms.
+# A reference against anything else resolves, so a value that holds one still
+# matches a type that was expanded. Without that the test fails on every pair
+# and `perf/church-numerals` runs out of budget. Two references to one entry
+# are equal without resolving at all, which is the cheap case and the common
+# one.
+
+#
+# This is equality of syntax, not of meaning, and that is what it is for: a
+# guard that must never say yes to two terms that differ.
+#
+# It is a worklist and not a plain recursion, for the same reason
+# `Conv.eq_all` is one. `Bool.and` evaluates both of its sides, because an
+# argument evaluates before the match picks an arm, so `and(same(f1, f2),
+# same(a1, a2))` walked the whole of both terms even when the heads already
+# differed. Conversion asks this of every pair it takes off its queue, and
+# most of those pairs differ, so most of that walking was waste.
+#
+# The answer so far travels in as a parameter, which a match can inspect, so
+# a difference stops the walk. The budget bounds what one question may cost,
+# and running out answers no: this is a guard, and a guard that gives up must
+# give up on the side that does more work rather than less.
+
+# One pair still to be compared.
+type TwoT is Data:
+  MkTT{a: T.Term, b: T.Term}
+
+# What comparing the heads of one pair settles.
+type SameStep is Data:
+  SDiff{}
+  SNext{ps: List<&2, TwoT>}
+
+def Conv.step_ok(s: SameStep) -> Bool:
+  match s:
+    case SDiff{}:
+      False{}
+    case SNext{ps}:
+      True{}
+
+def Conv.step_next(s: SameStep) -> List<&2, TwoT>:
+  match s:
+    case SDiff{}:
+      Nil{}
+    case SNext{ps}:
+      ps
+
+def Conv.same_of(b: Bool) -> SameStep:
+  match b:
+    case True{}:
+      SNext{Nil{}}
+    case False{}:
+      SDiff{}
+
+def Conv.same_proj(ok: Bool, s1: T.Term, s2: T.Term) -> SameStep:
+  match ok:
+    case True{}:
+      SNext{[MkTT{s1, s2}]}
+    case False{}:
+      SDiff{}
+
+# The heads of one pair, and the pairs they leave behind.
+def Conv.same_step(+env: E.DTable, a: T.Term, b: T.Term) -> SameStep:
+  match a b:
+    case T.TVar{i} T.TVar{j}:
+      Conv.same_of(Nat.is_eq(i, j))
+    case T.TSort{x} T.TSort{y}:
+      Conv.same_of(L.Level.same(x, y))
+    case T.TConst{n1, l1} T.TConst{n2, l2}:
+      Conv.same_of(
+        Bool.and(Nat.is_eq(n1, n2), T.Term.same_levels(l1, l2)))
+    case T.TApp{f1, a1} T.TApp{f2, a2}:
+      SNext{[MkTT{f1, f2}, MkTT{a1, a2}]}
+    case T.TLam{t1, b1} T.TLam{t2, b2}:
+      SNext{[MkTT{t1, t2}, MkTT{b1, b2}]}
+    case T.TPi{t1, b1} T.TPi{t2, b2}:
+      SNext{[MkTT{t1, t2}, MkTT{b1, b2}]}
+    case T.TProj{n1, i1, s1} T.TProj{n2, i2, s2}:
+      Conv.same_proj(
+        Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)), s1, s2)
+    case T.TNat{v1, m1, z1, s1} T.TNat{v2, m2, z2, s2}:
+      Conv.same_of(Nat.is_eq(v1, v2))
+    case T.TLet{t1, v1, b1} T.TLet{t2, v2, b2}:
+      SNext{[MkTT{t1, t2}, MkTT{v1, v2}, MkTT{b1, b2}]}
+    case T.TUnk{} T.TUnk{}:
+      SNext{Nil{}}
+    case T.TRef{i} T.TRef{j}:
+      Conv.same_of(Nat.is_eq(i, j))
+    case T.TRef{+i} y:
+      SNext{[MkTT{E.Env.expr(env, i), y}]}
+    case x T.TRef{+j}:
+      SNext{[MkTT{x, E.Env.expr(env, j)}]}
+    case x y:
+      SDiff{}
+
+def Conv.same_all(
+  +fuel: Nat, +env: E.DTable, ok: Bool, work: List<&2, TwoT>
+) -> Bool:
+  match fuel:
+    case 0n:
+      False{}
+    case 1n+f:
+      match ok work:
+        case False{} w:
+          False{}
+        case True{} Nil{}:
+          True{}
+        case True{} Con{MkTT{a, b}, rest}:
+          +st : SameStep = Conv.same_step(env, a, b)
+          Conv.same_all(
+            f, env,
+            Conv.step_ok(st),
+            List.append(&2, TwoT, Conv.step_next(st), rest))
+
+# How many pairs one question may cost. Large enough that no pair in the
+# arena's corpus reaches it, and small enough that a pathological pair cannot
+# cost the whole run.
+def Conv.same_budget() -> Nat:
+  1000000n
+
+def Conv.same(+env: E.DTable, a: T.Term, b: T.Term) -> Bool:
+  Conv.same_all(Conv.same_budget(), env, True{}, [MkTT{a, b}])
+
 # Compare two lists of levels pairwise.
 def Conv.levels_eq(+fuel: Nat, xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> Bool:
   match xs ys:
@@ -384,7 +506,7 @@ def Conv.k_fits(
   +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
   +d: E.Decl, +ty: T.Term
 ) -> Bool:
-  T.Term.same(
+  Conv.same(env,
     V.Eval.whnf(
       fuel, env,
       S.Shape.ty(S.Shape.infer(fuel, env, ctx, Conv.k_ctor(env, d, ty))),
@@ -703,7 +825,7 @@ def Conv.same_or(
 def Conv.classify_pair(+fuel: Nat, +env: E.DTable, p: TPair) -> Step:
   match p:
     case MkPair{+ctx, +a, +b}:
-      Conv.same_or(T.Term.same(a, b), fuel, env, ctx, a, b)
+      Conv.same_or(Conv.same(env, a, b), fuel, env, ctx, a, b)
     case MkDeep{+ctx, a, b}:
       Conv.classify_work(fuel, env, ctx, a, b)
 

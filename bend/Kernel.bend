@@ -604,24 +604,49 @@ def Kernel.pars_ok(+d: E.Decl) -> Bool:
 #
 # A constant that is not in the environment yet answers no, because the
 # ordered check rejects a forward reference on its own.
-def Kernel.uses_unsafe(t: T.Term, +env: E.DTable) -> Bool:
-  match t:
-    case T.TConst{+n, ls}:
-      E.Decl.is_unsafe(E.Lookup.get(E.Env.find(env, n)))
-    case T.TApp{f, a}:
-      Bool.or(Kernel.uses_unsafe(f, env), Kernel.uses_unsafe(a, env))
-    case T.TLam{ty, bd}:
-      Bool.or(Kernel.uses_unsafe(ty, env), Kernel.uses_unsafe(bd, env))
-    case T.TPi{ty, bd}:
-      Bool.or(Kernel.uses_unsafe(ty, env), Kernel.uses_unsafe(bd, env))
-    case T.TLet{ty, v, bd}:
-      Bool.or(
-        Bool.or(Kernel.uses_unsafe(ty, env), Kernel.uses_unsafe(v, env)),
-        Kernel.uses_unsafe(bd, env))
-    case T.TProj{tn, idx, st}:
-      Kernel.uses_unsafe(st, env)
-    case o:
+#
+# A reference is resolved rather than read as a leaf. Without that the rule is
+# blind and `140_falseFromUnsafe` is accepted. Resolving is not a structural
+# step, so the walk carries a budget, and running out answers no, which is the
+# permissive side and cannot turn an unknown into a rejection.
+def Kernel.uses_unsafe(+fuel: Nat, t: T.Term, +env: E.DTable) -> Bool:
+  match fuel:
+    case 0n:
       False{}
+    case 1n+f:
+      match t:
+        case T.TRef{+i}:
+          Kernel.uses_unsafe(f, E.Env.expr(env, i), env)
+        case T.TConst{+n, ls}:
+          E.Decl.is_unsafe(E.Lookup.get(E.Env.find(env, n)))
+        case T.TApp{g, a}:
+          Bool.or(
+            Kernel.uses_unsafe(f, g, env),
+            Kernel.uses_unsafe(f, a, env))
+        case T.TLam{ty, bd}:
+          Bool.or(
+            Kernel.uses_unsafe(f, ty, env),
+            Kernel.uses_unsafe(f, bd, env))
+        case T.TPi{ty, bd}:
+          Bool.or(
+            Kernel.uses_unsafe(f, ty, env),
+            Kernel.uses_unsafe(f, bd, env))
+        case T.TLet{ty, v, bd}:
+          Bool.or(
+            Bool.or(
+              Kernel.uses_unsafe(f, ty, env),
+              Kernel.uses_unsafe(f, v, env)),
+            Kernel.uses_unsafe(f, bd, env))
+        case T.TProj{tn, idx, st}:
+          Kernel.uses_unsafe(f, st, env)
+        case o:
+          False{}
+
+# How far the walk for an unsafe use may go. It is not the declaration's
+# budget: this is a walk of a term and not a reduction, and giving up answers
+# the permissive side, so the bound has to be one a real export never reaches.
+def Kernel.deep_budget() -> Nat:
+  1000000n
 
 def Kernel.safe_pick(un: Bool, +d: E.Decl, +env: E.DTable) -> Bool:
   match un:
@@ -630,8 +655,10 @@ def Kernel.safe_pick(un: Bool, +d: E.Decl, +env: E.DTable) -> Bool:
     case False{}:
       Bool.not(
         Bool.or(
-          Kernel.uses_unsafe(E.Decl.raw_ty(d), env),
-          Kernel.uses_unsafe(E.Decl.raw_val(d), env)))
+          Kernel.uses_unsafe(
+            Kernel.deep_budget(), E.Decl.raw_ty(d), env),
+          Kernel.uses_unsafe(
+            Kernel.deep_budget(), E.Decl.raw_val(d), env)))
 
 # May this declaration use what it uses?
 #
@@ -725,7 +752,7 @@ def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
       Kernel.flag("infer", I.Infer.res_ans(I.Infer.infer(fuel, env, Nil{}, val))) ++
       Kernel.flag("conv", C.Conv.eq(fuel, env,
         I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty)) ++
-      Kernel.flag("same", A.Ans.of(T.Term.same(
+      Kernel.flag("same", A.Ans.of(C.Conv.same(env, 
         I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty)))
     case E.DThm{id, ps, +ty, +val}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++

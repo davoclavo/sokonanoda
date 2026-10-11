@@ -95,22 +95,28 @@ def Check.lines(p: A.Ans & String, trusted: Bool) -> String:
 # and every run since has paid for the report nobody asked for. `Kernel.run`
 # is the one walk that answers and reports together, and `Kernel.report` is
 # gone, so the two cannot drift apart again.
-def Check.out(want: Bool, ds: List<&2, E.Decl>, +fuel: Nat, trusted: Bool) -> String:
+def Check.out(
+  want: Bool, ds: List<&2, E.Decl>, +fuel: Nat, +env: E.DTable, trusted: Bool
+) -> String:
   match want:
     case True{}:
-      Check.lines(K.Kernel.run(ds, fuel, E.Env.empty()), trusted)
+      Check.lines(K.Kernel.run(ds, fuel, env), trusted)
     case False{}:
-      "verdict " ++ Check.show(K.Kernel.check_all(ds, fuel, E.Env.empty()), trusted)
+      "verdict " ++ Check.show(K.Kernel.check_all(ds, fuel, env), trusted)
 
 def main() -> IO(Unit):
   do IO<Unit>:
     path : String <- IO.try(String, IO.get_env("SOKO_EXPORT"))
     f : File <- IO.try(File, File.open(path, "r"))
     r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 64000000)
-    +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Check.bytes(r)))
+    +st : P.PState = P.Parse.run(Check.bytes(r))
+    +ds : List<&2, E.Decl> = P.Parse.decls_of(st)
+    # The environment carries the export's expression table, because a term
+    # may hold a reference into it and only reduction resolves one.
+    +env : E.DTable = E.Env.over(P.Parse.exps_of(st))
     rv : Result<&1, &1, U32 & String, String> <- IO.get_env("SOKO_REPORT")
     IO.print("declarations " ++ Nat.show(K.Kernel.count(ds, 0n)))
     IO.print(
       Check.out(
-        Check.wants_report(rv), ds, Check.fuel(),
-        K.Kernel.trusts(ds, Check.fuel(), E.Env.empty())))
+        Check.wants_report(rv), ds, Check.fuel(), env,
+        K.Kernel.trusts(ds, Check.fuel(), env)))
