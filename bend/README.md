@@ -143,8 +143,21 @@ iota reduction works, so a recursor applied to a constructor computes. What is
 not here is the one part that would let such a file be *accepted*: nothing
 derives the recursor from the inductive specification and compares it to the
 one the file states. Until that exists, a file with an inductive block answers
-`declined` and never `accept`, and that is every one of the 67 remaining
-declines in the tutorial set.
+`declined` and never `accept`.
+
+Here is the size of the prize, over the 124 `good` files small enough to read:
+
+| the answer | count |
+|---|---|
+| accept | 31 |
+| declined, and the only thing missing is the recursor | **77** |
+| declined, the budget ran out | 11 |
+| timed out | 5 |
+
+Those 77 are checked to the end. Every rule the kernel has holds on them and
+the one thing in the way is the trust rule, which refuses to accept a block it
+cannot derive. They turn into accepts the day the derivation lands, which
+would take the good files from 31 accepted to 108.
 
 It is the largest piece of work left and the only one worth real points.
 

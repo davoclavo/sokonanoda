@@ -625,3 +625,18 @@ both are cheap to measure, so measure them before you write them.
 B4 is the one worth remembering. Bend evaluates an argument before the match
 picks an arm, so a helper that chooses between two values on a computed `Bool`
 evaluates both. A guard only guards when something **matches** on it.
+
+### More for the Bend kernel
+
+| hypothesis | status | result |
+|---|---|---|
+| B7 a pair of identical terms need not be reduced | confirmed | most pairs are a term against itself. 2.7x to 5x per file on five of the bench files |
+| B8 a spine may be compared before it is unfolded | confirmed, with care | `proj-stuck-struct` and `proj-cheap-struct` from over 400 s to 0.0 s |
+| B9 a stack of routes set aside is affordable | rejected | it is a search. `refute-cheap-last` finds its refutation cheaply and then pays for every route behind it; 30000 fuel does not help. One slot, filled by the outermost offer, bounds a failure to one retry |
+| B10 a depth cap on the offers serves both tests | rejected | at one, `refute-cheap-last` rejects and the struct tests time out; at three the reverse; at two neither. The one-slot design in B9 serves both |
+| B11 raising the fuel buys answers | open | 11 good files still decline on budget. Measure the time cost first |
+
+B9 is the one to remember. The cheap route is sufficient and not necessary, so
+it needs a fallback, and the fallback has to be **one** route and the
+outermost one. Keeping every offer turns a conversion check into a search with
+no bound but the fuel.
