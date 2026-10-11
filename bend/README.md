@@ -138,28 +138,26 @@ be stated and then mechanically proven, in the same language as the code.
 
 Honestly and in order of size.
 
-**Deriving the recursor.** The block is read, every type in it is checked, and
-iota reduction works, so a recursor applied to a constructor computes. What is
-not here is the one part that would let such a file be *accepted*: nothing
-derives the recursor from the inductive specification and compares it to the
-one the file states. Until that exists, a file with an inductive block answers
-`declined` and never `accept`.
+**Quotients.** Four declarations, `Quot`, `Quot.mk`, `Quot.lift` and
+`Quot.ind`, are read and taken on trust. Nothing checks that the file states
+the types Lean states for them, so a file that declares them answers
+`declined`. That is six of the seventeen remaining declines and the cheapest
+points left: their types are fixed, so the check is a comparison and not a
+derivation.
 
-Here is the size of the prize, over the 124 `good` files small enough to read:
+**A mutual block, a nested inductive, and a recursor with an unusual level
+list.** The derivation hands these back as `T.TUnk`, which converts with
+nothing, so such a block stays trusted and the file declines. None of the
+arena's readable good files needs them.
+
+Here is where the 124 `good` files small enough to read now stand:
 
 | the answer | count |
 |---|---|
-| accept | 31 |
-| declined, and the only thing missing is the recursor | **77** |
+| accept | **102** |
+| declined, and the only thing missing is quotients | 6 |
 | declined, the budget ran out | 11 |
 | timed out | 5 |
-
-Those 77 are checked to the end. Every rule the kernel has holds on them and
-the one thing in the way is the trust rule, which refuses to accept a block it
-cannot derive. They turn into accepts the day the derivation lands, which
-would take the good files from 31 accepted to 108.
-
-It is the largest piece of work left and the only one worth real points.
 
 **Reduction throughput.** Reading was never the problem and the checking was.
 Three `perf` tests still time out: `app-lam` and the two `proj-*-struct`. The
@@ -361,14 +359,15 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | before the speed work | after the speed work | after the level rules |
+| | before the speed work | after the level rules | after the recursor |
 |---|---|---|---|
-| correct | 101 | 101 | 101 |
-| declined | 82 | 85 | 87 |
-| wrong | 0 | **6** | **0** |
-| error or timeout | 11 | 3 | 7 |
+| correct | 101 | 101 | **173** |
+| declined | 82 | 87 | 17 |
+| wrong | 0 | 0 | **0** |
+| error or timeout | 11 | 7 | 5 |
 
-The middle column is the interesting one, and it is not what it looks like.
+The jump in the last column is the recursor derivation, which is described
+below. The middle column hides a story, and it is not what it looks like.
 
 The speed work did not break six files. It made eight of the eleven timeouts
 finish, and six of those eight answered `reject` on a file the arena expects
@@ -490,6 +489,77 @@ change is not in the tree.
 
 What is left to win is algorithmic. The three tests that still time out are
 `perf/app-lam` and the two `perf/proj-*-struct`.
+
+## Deriving the recursor
+
+A file states a recursor: its type, and one rule per constructor. Nothing
+obliges it to tell the truth. The kernel used to take the statement on trust,
+which is why a file with an inductive block answered `declined` and never
+`accept` however much of it checked out.
+
+`bend/Rec.bend` builds both halves from the inductive specification.
+
+The type, for `I` with `np` parameters, `ni` indices and constructors
+`C_0 .. C_{m-1}`:
+
+```
+Pi p_0 .. p_{np-1},
+Pi motive : (Pi i.., Pi t : I p.. i.., Sort v),
+Pi minor_0 .. minor_{m-1},
+Pi i..,
+Pi t : I p.. i..,
+motive i.. t
+```
+
+The minor premise for `C_j : Pi p.., Pi f_0 .. f_{k-1}, I p.. a..`:
+
+```
+Pi f_0 .. f_{k-1},
+Pi (one hypothesis per recursive field, in field order),
+motive a.. (C_j p.. f..)
+```
+
+The rule for `C_j`, whose binder types are the same telescope:
+
+```
+Lam p.., Lam motive, Lam minor.., Lam f..,
+  minor_j f.. (one recursive call per recursive field)
+```
+
+The comparison is by **conversion**, not by syntax. The exporter writes a
+telescope in whatever form it reduced to: inductive 88 of
+`perf/proj-lazy-struct` has a third parameter written `c87[13] S[12]` where
+its recursor's is the reduced `S[12]`. An earlier attempt at a syntactic
+telescope check made that file reject, and reverting it is what taught this.
+
+| corpus | types matching | rules matching | differing | shapes not derived |
+|---|---|---|---|---|
+| every good file small enough to read | 374 | 374 | 0 | 0 |
+| the bad files | 204 | 211 | 10 types, 17 rules | 18 |
+
+The rules catch seven bad files the type alone does not. A shape the
+derivation does not handle gives `T.TUnk`, which converts with nothing, so the
+block stays trusted: a gap costs an acceptance and can never cost a false
+rejection.
+
+### Two offsets that differ by one
+
+The hypothesis for a recursive field needs the field's type lifted and the
+field's own variable indexed, and the two are not the same number. The type
+was written before its own binder, so it lifts by `nf - i + k`; the variable
+is bound, so it stands at `nf - 1 - i + k`.
+
+`Bool`, `And`, `Nat` and `List` all pass with the lift wrong, because a field
+type with no parameter in it does not care how far it is lifted. `rbTree` and
+the four `magma` files do not, and that is how the bug was found. A second one
+of the same kind: the constructor's own index arguments are arguments side by
+side and not a telescope, so they all lift by the same amount.
+
+### The tool
+
+`bend/derive.bend` reports, per recursor, whether the derived type and every
+derived rule converts with what the file states. It changes no verdict. It is
+what turned "the derivation is probably right" into a number, twice.
 
 ## Two levels that are one level
 
