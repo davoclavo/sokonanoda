@@ -20,13 +20,14 @@ import ./Reader.bend as R
 import ./Level.bend as L
 import ./Term.bend as T
 import ./Env.bend as E
+import ./Table.bend as Tb
 
 # The parser's state: the two tables with their counts, and the declarations
 # so far, also newest first.
 type PState is Data:
   MkPS{
-    nlev: Nat, levs: List<&2, L.Level>,
-    nexp: Nat, exps: List<&2, T.Term>,
+    nlev: Nat, levs: Tb.LTable,
+    nexp: Nat, exps: Tb.ETable,
     decls: List<&2, E.Decl>,
     # The ids of `Nat`, `Nat.zero` and `Nat.succ`, or zero when not yet seen.
     # A `natVal` node names the real `Nat`, so a literal cannot be read until
@@ -46,48 +47,25 @@ def Parse.fuel() -> Nat:
 # with it already in place.
 def Parse.start() -> PState:
   MkPS{
-    1n, Con{L.LZero{}, Nil{}}, 0n, Nil{}, Nil{}, 0n, 0n, 0n,
+    1n,
+    Tb.LTable.new(),
+    0n,
+    Tb.ETable.new(),
+    Nil{}, 0n, 0n, 0n,
     [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n], 0n, 0n, 0n}
 
-# The i-th level of the table, counting from the head.
-def Parse.lev_at(fuel: Nat, xs: List<&2, L.Level>, k: Nat) -> L.Level:
-  match fuel:
-    case 0n:
-      L.LZero{}
-    case 1n+f:
-      match xs:
-        case Nil{}:
-          L.LZero{}
-        case Con{h, t}:
-          match k:
-            case 0n:
-              h
-            case 1n+p:
-              Parse.lev_at(f, t, p)
+# A line is written at the index its own field states, not at the position it
+# arrives in. The two usually agree, and they must not be assumed to: the
+# arena's `sparse-name-index` holds one expression numbered four, and a line
+# names an expression by that number.
 
-# The level at export index `i`.
-def Parse.lev(+levs: List<&2, L.Level>, +n: Nat, +i: Nat) -> L.Level:
-  Parse.lev_at(Parse.fuel(), levs, Nat.sub(Nat.sub(n, 1n), i))
+# The level the export calls `i`.
+def Parse.lev(+levs: Tb.LTable, +i: Nat) -> L.Level:
+  Tb.LTable.get(Tb.Table.depth(), Tb.Table.low(i), levs, i)
 
-# The i-th term of the table, counting from the head.
-def Parse.exp_at(fuel: Nat, xs: List<&2, T.Term>, k: Nat) -> T.Term:
-  match fuel:
-    case 0n:
-      T.TSort{L.LZero{}}
-    case 1n+f:
-      match xs:
-        case Nil{}:
-          T.TSort{L.LZero{}}
-        case Con{h, t}:
-          match k:
-            case 0n:
-              h
-            case 1n+p:
-              Parse.exp_at(f, t, p)
-
-# The term at export index `i`.
-def Parse.exp(+exps: List<&2, T.Term>, +n: Nat, +i: Nat) -> T.Term:
-  Parse.exp_at(Parse.fuel(), exps, Nat.sub(Nat.sub(n, 1n), i))
+# The expression the export calls `i`.
+def Parse.exp(+exps: Tb.ETable, +i: Nat) -> T.Term:
+  Tb.ETable.get(Tb.Table.depth(), Tb.Table.low(i), exps, i)
 
 # The i-th number of a list, or zero.
 def Parse.nat_at(xs: List<&2, Nat>, i: Nat) -> Nat:
@@ -110,12 +88,12 @@ def Parse.nat_len(xs: List<&2, Nat>) -> Nat:
       1n+Parse.nat_len(t)
 
 # The levels named by a list of export indices.
-def Parse.levs_of(idxs: List<&2, Nat>, +levs: List<&2, L.Level>, +n: Nat) -> List<&2, L.Level>:
+def Parse.levs_of(idxs: List<&2, Nat>, +levs: Tb.LTable) -> List<&2, L.Level>:
   match idxs:
     case Nil{}:
       Nil{}
     case Con{h, t}:
-      Con{Parse.lev(levs, n, h), Parse.levs_of(t, levs, n)}
+      Con{Parse.lev(levs, h), Parse.levs_of(t, levs)}
 
 # Levels
 # ------
@@ -124,41 +102,41 @@ def Parse.levs_of(idxs: List<&2, Nat>, +levs: List<&2, L.Level>, +n: Nat) -> Lis
 # is, and `Reader.has` is what tells an absent field from a field whose value
 # is zero.
 
-def Parse.lvl_imax(h: Bool, +line: List<&2, U32>, +levs: List<&2, L.Level>, +n: Nat) -> L.Level:
+def Parse.lvl_imax(h: Bool, +line: List<&2, U32>, +levs: Tb.LTable) -> L.Level:
   match h:
     case True{}:
       L.LIMax{
-        Parse.lev(levs, n, Parse.nat_at(R.Reader.num_list("imax", line), 0n)),
-        Parse.lev(levs, n, Parse.nat_at(R.Reader.num_list("imax", line), 1n))}
+        Parse.lev(levs, Parse.nat_at(R.Reader.num_list("imax", line), 0n)),
+        Parse.lev(levs, Parse.nat_at(R.Reader.num_list("imax", line), 1n))}
     case False{}:
       L.LZero{}
 
-def Parse.lvl_max(h: Bool, +line: List<&2, U32>, +levs: List<&2, L.Level>, +n: Nat) -> L.Level:
+def Parse.lvl_max(h: Bool, +line: List<&2, U32>, +levs: Tb.LTable) -> L.Level:
   match h:
     case True{}:
       L.LMax{
-        Parse.lev(levs, n, Parse.nat_at(R.Reader.num_list("max", line), 0n)),
-        Parse.lev(levs, n, Parse.nat_at(R.Reader.num_list("max", line), 1n))}
+        Parse.lev(levs, Parse.nat_at(R.Reader.num_list("max", line), 0n)),
+        Parse.lev(levs, Parse.nat_at(R.Reader.num_list("max", line), 1n))}
     case False{}:
-      Parse.lvl_imax(R.Reader.has("imax", line), line, levs, n)
+      Parse.lvl_imax(R.Reader.has("imax", line), line, levs)
 
-def Parse.lvl_param(h: Bool, +line: List<&2, U32>, +levs: List<&2, L.Level>, +n: Nat) -> L.Level:
+def Parse.lvl_param(h: Bool, +line: List<&2, U32>, +levs: Tb.LTable) -> L.Level:
   match h:
     case True{}:
       L.LPar{R.Reader.field("param", line)}
     case False{}:
-      Parse.lvl_max(R.Reader.has("max", line), line, levs, n)
+      Parse.lvl_max(R.Reader.has("max", line), line, levs)
 
-def Parse.lvl_succ(h: Bool, +line: List<&2, U32>, +levs: List<&2, L.Level>, +n: Nat) -> L.Level:
+def Parse.lvl_succ(h: Bool, +line: List<&2, U32>, +levs: Tb.LTable) -> L.Level:
   match h:
     case True{}:
-      L.LSucc{Parse.lev(levs, n, R.Reader.field("succ", line))}
+      L.LSucc{Parse.lev(levs, R.Reader.field("succ", line))}
     case False{}:
-      Parse.lvl_param(R.Reader.has("param", line), line, levs, n)
+      Parse.lvl_param(R.Reader.has("param", line), line, levs)
 
 # The level a level line defines.
-def Parse.level_of(+line: List<&2, U32>, +levs: List<&2, L.Level>, +n: Nat) -> L.Level:
-  Parse.lvl_succ(R.Reader.has("succ", line), line, levs, n)
+def Parse.level_of(+line: List<&2, U32>, +levs: Tb.LTable) -> L.Level:
+  Parse.lvl_succ(R.Reader.has("succ", line), line, levs)
 
 # The names of Nat
 # ----------------
@@ -322,7 +300,7 @@ def Parse.ex_proj(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
           T.TProj{
             R.Reader.field("typeName", line),
             R.Reader.field("idx", line),
-            Parse.exp(ex, ne, R.Reader.field("struct", line))}
+            Parse.exp(ex, R.Reader.field("struct", line))}
         case False{}:
           Parse.ex_natval(
             MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
@@ -335,9 +313,9 @@ def Parse.ex_letE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
       match h:
         case True{}:
           T.TLet{
-            Parse.exp(ex, ne, R.Reader.field("type", line)),
-            Parse.exp(ex, ne, R.Reader.field("value", line)),
-            Parse.exp(ex, ne, R.Reader.field("body", line))}
+            Parse.exp(ex, R.Reader.field("type", line)),
+            Parse.exp(ex, R.Reader.field("value", line)),
+            Parse.exp(ex, R.Reader.field("body", line))}
         case False{}:
           Parse.ex_proj(
             MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
@@ -350,8 +328,8 @@ def Parse.ex_forallE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
       match h:
         case True{}:
           T.TPi{
-            Parse.exp(ex, ne, R.Reader.field("type", line)),
-            Parse.exp(ex, ne, R.Reader.field("body", line))}
+            Parse.exp(ex, R.Reader.field("type", line)),
+            Parse.exp(ex, R.Reader.field("body", line))}
         case False{}:
           Parse.ex_letE(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("letE", line), line)
 
@@ -361,8 +339,8 @@ def Parse.ex_lam(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
       match h:
         case True{}:
           T.TLam{
-            Parse.exp(ex, ne, R.Reader.field("type", line)),
-            Parse.exp(ex, ne, R.Reader.field("body", line))}
+            Parse.exp(ex, R.Reader.field("type", line)),
+            Parse.exp(ex, R.Reader.field("body", line))}
         case False{}:
           Parse.ex_forallE(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("forallE", line), line)
 
@@ -372,8 +350,8 @@ def Parse.ex_app(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
       match h:
         case True{}:
           T.TApp{
-            Parse.exp(ex, ne, R.Reader.field("fn", line)),
-            Parse.exp(ex, ne, R.Reader.field("arg", line))}
+            Parse.exp(ex, R.Reader.field("fn", line)),
+            Parse.exp(ex, R.Reader.field("arg", line))}
         case False{}:
           Parse.ex_lam(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("lam", line), line)
 
@@ -384,7 +362,7 @@ def Parse.ex_const(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
         case True{}:
           T.TConst{
             R.Reader.field("name", line),
-            Parse.levs_of(R.Reader.num_list("us", line), lv, nl)}
+            Parse.levs_of(R.Reader.num_list("us", line), lv)}
         case False{}:
           Parse.ex_app(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("app", line), line)
 
@@ -402,7 +380,7 @@ def Parse.ex_sort(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
-          T.TSort{Parse.lev(lv, nl, R.Reader.field("sort", line))}
+          T.TSort{Parse.lev(lv, R.Reader.field("sort", line))}
         case False{}:
           Parse.ex_bvar(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("bvar", line), line)
 
@@ -434,7 +412,7 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
             R.Reader.field("name", line),
             R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
-              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              Parse.exp(ex, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KDef{}:
           Parse.pick_decl(
@@ -444,19 +422,19 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
               R.Reader.field("name", line),
               R.Reader.num_list("levelParams", line),
               T.Term.remap_levels(
-                Parse.exp(ex, ne, R.Reader.field("type", line)),
+                Parse.exp(ex, R.Reader.field("type", line)),
                 R.Reader.num_list("levelParams", line)),
               T.Term.remap_levels(
-                Parse.exp(ex, ne, R.Reader.field("value", line)),
+                Parse.exp(ex, R.Reader.field("value", line)),
                 R.Reader.num_list("levelParams", line))},
             E.DPrim{
               R.Reader.field("name", line),
               R.Reader.num_list("levelParams", line),
               T.Term.remap_levels(
-                Parse.exp(ex, ne, R.Reader.field("type", line)),
+                Parse.exp(ex, R.Reader.field("type", line)),
                 R.Reader.num_list("levelParams", line)),
               T.Term.remap_levels(
-                Parse.exp(ex, ne, R.Reader.field("value", line)),
+                Parse.exp(ex, R.Reader.field("value", line)),
                 R.Reader.num_list("levelParams", line)),
               Parse.prim_op_at(pm, R.Reader.field("name", line), 0n),
               yes,
@@ -466,17 +444,17 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
             R.Reader.field("name", line),
             R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
-              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              Parse.exp(ex, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line)),
             T.Term.remap_levels(
-              Parse.exp(ex, ne, R.Reader.field("value", line)),
+              Parse.exp(ex, R.Reader.field("value", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KOpaque{}:
           E.DAxiom{
             R.Reader.field("name", line),
             R.Reader.num_list("levelParams", line),
             T.Term.remap_levels(
-              Parse.exp(ex, ne, R.Reader.field("type", line)),
+              Parse.exp(ex, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KMeta{}:
           E.DAxiom{0n, [], T.TSort{L.LZero{}}}
@@ -520,7 +498,7 @@ def Parse.rule_of(+o: List<&2, U32>, +st: PState, +ps: List<&2, Nat>) -> E.RecRu
         R.Reader.field("ctor", o),
         R.Reader.field("nfields", o),
         T.Term.remap_levels(
-          Parse.exp(ex, ne, R.Reader.field("rhs", o)),
+          Parse.exp(ex, R.Reader.field("rhs", o)),
           ps)}
 
 # Every rule of one recursor.
@@ -541,7 +519,7 @@ def Parse.ind_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.field("name", o),
         R.Reader.num_list("levelParams", o),
         T.Term.remap_levels(
-          Parse.exp(ex, ne, R.Reader.field("type", o)),
+          Parse.exp(ex, R.Reader.field("type", o)),
           R.Reader.num_list("levelParams", o)),
         R.Reader.field("numParams", o),
         R.Reader.field("numIndices", o),
@@ -555,7 +533,7 @@ def Parse.ctor_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.field("name", o),
         R.Reader.num_list("levelParams", o),
         T.Term.remap_levels(
-          Parse.exp(ex, ne, R.Reader.field("type", o)),
+          Parse.exp(ex, R.Reader.field("type", o)),
           R.Reader.num_list("levelParams", o)),
         R.Reader.field("induct", o),
         R.Reader.field("cidx", o),
@@ -570,7 +548,7 @@ def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.field("name", o),
         R.Reader.num_list("levelParams", o),
         T.Term.remap_levels(
-          Parse.exp(ex, ne, R.Reader.field("type", o)),
+          Parse.exp(ex, R.Reader.field("type", o)),
           R.Reader.num_list("levelParams", o)),
         R.Reader.field("numParams", o),
         R.Reader.field("numIndices", o),
@@ -666,7 +644,7 @@ def Parse.quot_of(+st: PState, +line: List<&2, U32>) -> E.Decl:
         R.Reader.field("name", line),
         R.Reader.num_list("levelParams", line),
         T.Term.remap_levels(
-          Parse.exp(ex, ne, R.Reader.field("type", line)),
+          Parse.exp(ex, R.Reader.field("type", line)),
           R.Reader.num_list("levelParams", line)),
         Parse.quot_kind(line)}
 
@@ -681,13 +659,24 @@ def Parse.step(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> PState:
         case R.KLevel{}:
           MkPS{
             1n+nl,
-            Con{Parse.level_of(line, lv, nl), lv},
+            Tb.LTable.set(
+              Tb.Table.depth(),
+              Tb.Table.low(R.Reader.field("il", line)),
+              lv,
+              R.Reader.field("il", line),
+              Parse.level_of(line, lv)),
             ne, ex, ds, nt, zr, sc, pm, bl, yes, no}
         case R.KExpr{}:
           MkPS{
             nl, lv,
             1n+ne,
-            Con{Parse.expr_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, line), ex},
+            Tb.ETable.set(
+              Tb.Table.depth(),
+              Tb.Table.low(R.Reader.field("ie", line)),
+              ex,
+              R.Reader.field("ie", line),
+              Parse.expr_of(
+                MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, line)),
             ds, nt, zr, sc, pm, bl, yes, no}
         case R.KAxiom{}:
           MkPS{nl, lv, ne, ex,
