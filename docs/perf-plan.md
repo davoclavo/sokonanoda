@@ -640,3 +640,19 @@ B9 is the one to remember. The cheap route is sufficient and not necessary, so
 it needs a fallback, and the fallback has to be **one** route and the
 outermost one. Keeping every offer turns a conversion check into a search with
 no bound but the fuel.
+
+### The Bend kernel, after the recursor
+
+| hypothesis | status | result |
+|---|---|---|
+| B12 a bigger budget buys answers | confirmed | 3000 gave 179 correct and 11 declines; 30000 gives 186 and none. 100000 buys nothing more and runs one file out of memory |
+| B13 a closed value can be shared rather than copied | **rejected** | `Term.lift_by` handing back a closed value instead of lifting it made `perf/shared-subterm` go from an answer in 0.1 s to a timeout at the same budget. A term DAG is not free in Bend |
+| B14 the syntactic test should stop at the first difference | confirmed | `Term.same` read its halves through `Bool.and`, so it walked both terms in full whatever they were. As a worklist: 1.55x on the bench set, church-numerals 6x |
+| B15 the nine timeouts are within reach of a constant factor | **rejected** | `perf/shared-subterm` answers at a budget of 3000 and needs more than seventy seconds at 30000, so it wants about a hundred times, not one and a half. They need sharing, which B13 says Bend charges for |
+
+B13 is the second time sharing has lost here. The first was the expression
+table, where one shared node took a 6 kB export from one second to two
+hundred. Bend is affine: a value read in two owned positions is copied, and
+the copy is lazy and repeated, so an explicit copy at a known place beats a
+shared one in an unknown place. Do not try a third time without reading those
+two results first.
