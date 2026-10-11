@@ -530,6 +530,54 @@ def Parse.block_of(+line: List<&2, U32>, +st: PState) -> List<&2, E.Decl>:
             MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
             ds)))
 
+# Quotients
+# ---------
+#
+# Each of the four is one line with a name, its level parameters and a type,
+# which is the shape of an axiom. The `kind` tag says which one it is, and the
+# reduction rules for `Quot.lift` and `Quot.ind` are keyed on it.
+
+# Pick the first tag that matched, or 9 for none.
+def Parse.pick_nat4(a: Bool, b: Bool, c: Bool, d: Bool) -> Nat:
+  match a:
+    case True{}:
+      0n
+    case False{}:
+      match b:
+        case True{}:
+          1n
+        case False{}:
+          match c:
+            case True{}:
+              2n
+            case False{}:
+              match d:
+                case True{}:
+                  3n
+                case False{}:
+                  9n
+
+# The tag as a number: 0 for the type, 1 for the constructor, 2 for lift and
+# 3 for ind.
+def Parse.quot_kind(+line: List<&2, U32>) -> Nat:
+  Parse.pick_nat4(
+    R.Reader.is_word("kind", "type", line),
+    R.Reader.is_word("kind", "ctor", line),
+    R.Reader.is_word("kind", "lift", line),
+    R.Reader.is_word("kind", "ind", line))
+
+# One quotient declaration.
+def Parse.quot_of(+st: PState, +line: List<&2, U32>) -> E.Decl:
+  match st:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+      E.DQuot{
+        R.Reader.field("name", line),
+        R.Reader.num_list("levelParams", line),
+        T.Term.remap_levels(
+          Parse.exp(ex, ne, R.Reader.field("type", line)),
+          R.Reader.num_list("levelParams", line)),
+        Parse.quot_kind(line)}
+
 # One line
 # --------
 
@@ -573,7 +621,9 @@ def Parse.step(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> PState:
             Parse.block_of(line, MkPS{nl, lv, ne, ex, ds, nt, zr, sc}),
             nt, zr, sc}
         case R.KQuot{}:
-          MkPS{nl, lv, ne, ex, ds, nt, zr, sc}
+          MkPS{nl, lv, ne, ex,
+            Con{Parse.quot_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, line), ds},
+            nt, zr, sc}
         case R.KOther{}:
           MkPS{nl, lv, ne, ex, ds, nt, zr, sc}
 

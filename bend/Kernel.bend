@@ -74,6 +74,10 @@ def Kernel.check_decl(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> A.Ans:
       A.Ans.and(
         A.Ans.of(E.Decl.no_dupes(ps)),
         Kernel.is_type(fuel, env, ty))
+    case E.DQuot{id, ps, ty, kind}:
+      A.Ans.and(
+        A.Ans.of(E.Decl.no_dupes(ps)),
+        Kernel.is_type(fuel, env, ty))
 
 # True when a lookup found nothing.
 def Kernel.missing(lk: E.Lookup) -> Bool:
@@ -116,6 +120,8 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "ctor "
     case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       "rec  "
+    case E.DQuot{id, ps, ty, kind}:
+      "quot "
 
 # One check, named, with a tick or a cross.
 def Kernel.flag(+name: String, a: A.Ans) -> String:
@@ -184,6 +190,8 @@ def Kernel.is_trusted(d: E.Decl) -> Bool:
     case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
       True{}
     case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      True{}
+    case E.DQuot{id, ps, ty, kind}:
       True{}
     case o:
       False{}

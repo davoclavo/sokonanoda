@@ -36,6 +36,11 @@ type Decl is Data:
     id: Nat, ps: List<&2, Nat>, ty: T.Term,
     np: Nat, ni: Nat, nm: Nat, nmin: Nat,
     k: Bool, rules: List<&2, RecRule>, inds: List<&2, Nat>}
+  # One of the four quotient declarations. `kind` is 0 for `Quot` itself, 1
+  # for `Quot.mk`, 2 for `Quot.lift` and 3 for `Quot.ind`. The export states
+  # their types; the Lean kernel has them built in, so taking the file's word
+  # for the type is a thing this kernel trusts.
+  DQuot{id: Nat, ps: List<&2, Nat>, ty: T.Term, kind: Nat}
 
 type Lookup is Data:
   LFound{d: Decl}
@@ -64,6 +69,8 @@ def Decl.id(d: Decl) -> Nat:
       id
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       id
+    case DQuot{id, ps, ty, kind}:
+      id
 
 # True when this declaration is a theorem, whose type must be a Prop.
 def Decl.is_thm(d: Decl) -> Bool:
@@ -80,6 +87,8 @@ def Decl.is_thm(d: Decl) -> Bool:
       False{}
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       False{}
+    case DQuot{id, ps, ty, kind}:
+      False{}
 
 # True when this declaration has a value, so delta reduction can unfold it.
 def Decl.is_def(d: Decl) -> Bool:
@@ -95,6 +104,8 @@ def Decl.is_def(d: Decl) -> Bool:
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       False{}
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      False{}
+    case DQuot{id, ps, ty, kind}:
       False{}
 
 # How many numbers a list holds. A level parameter list is a handful long.
@@ -137,6 +148,8 @@ def Decl.num_params(d: Decl) -> Nat:
       Decl.len(ps)
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       Decl.len(ps)
+    case DQuot{id, ps, ty, kind}:
+      Decl.len(ps)
 
 # The level parameters a declaration takes.
 def Decl.params(d: Decl) -> List<&2, Nat>:
@@ -152,6 +165,8 @@ def Decl.params(d: Decl) -> List<&2, Nat>:
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       ps
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      ps
+    case DQuot{id, ps, ty, kind}:
       ps
 
 # The declared type of a declaration, with its level parameters replaced.
@@ -169,6 +184,8 @@ def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
       T.Term.subst_levels(ty, ls)
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       T.Term.subst_levels(ty, ls)
+    case DQuot{id, ps, ty, kind}:
+      T.Term.subst_levels(ty, ls)
 
 # The value of a definition, with its level parameters replaced. An axiom has
 # no value, so it answers `None`.
@@ -185,6 +202,8 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
       None{}
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
+      None{}
+    case DQuot{id, ps, ty, kind}:
       None{}
 
 # A recursor's argument layout, and its rules. A declaration that is not a
@@ -364,6 +383,15 @@ def Decl.rule_for(rs: List<&2, RecRule>, +c: Nat) -> Maybe<&2, RecRule>:
       None{}
     case Con{+h, t}:
       Decl.pick_rule(Nat.is_eq(RecRule.ctor(h), c), h, Decl.rule_for(t, c))
+
+# Which of the four quotient declarations is this, if any? A declaration that
+# is not one answers 9, which matches nothing.
+def Decl.quot_kind(d: Decl) -> Nat:
+  match d:
+    case DQuot{id, ps, ty, kind}:
+      kind
+    case o:
+      9n
 
 # A declaration to stand in with when a lookup found nothing. Guard with
 # `Env.found`.

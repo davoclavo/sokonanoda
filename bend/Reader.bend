@@ -466,6 +466,10 @@ def Reader.field_q(+key: String, +line: List<&2, U32>) -> Nat:
   Reader.num_of(
     B.Bytes.number(Reader.line_fuel(), Reader.drop1(Reader.after(key, line))))
 
+# Is the value of `key` this word? The export writes a tag that way.
+def Reader.is_word(+key: String, +w: String, +line: List<&2, U32>) -> Bool:
+  B.Bytes.is_hit(B.Bytes.of_string("\"" ++ w ++ "\""), Reader.after(key, line))
+
 # Is the value of `key` the word `true`? The export writes a flag that way.
 def Reader.is_true(+key: String, +line: List<&2, U32>) -> Bool:
   B.Bytes.is_hit(B.Bytes.of_string("true"), Reader.after(key, line))

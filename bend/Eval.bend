@@ -175,6 +175,63 @@ def Eval.rule_get(m: Maybe<&2, E.RecRule>) -> E.RecRule:
     case None{}:
       E.MkRule{0n, 0n, T.TSort{L.LZero{}}}
 
+# Quotients
+# ---------
+#
+# `Quot.lift f h (Quot.mk r a)` reduces to `f a`, and `Quot.ind h (Quot.mk r
+# a)` to `h a`. The only difference between them is where the quotient sits
+# among the arguments: the sixth for lift and the fifth for ind, with the
+# function or the minor premise fourth in both.
+
+# The last term of a list.
+def Eval.last_or(xs: List<&2, T.Term>, h: T.Term) -> T.Term:
+  match xs:
+    case Nil{}:
+      h
+    case Con{h2, t2}:
+      Eval.last_or(t2, h2)
+
+def Eval.last(xs: List<&2, T.Term>) -> T.Term:
+  match xs:
+    case Nil{}:
+      T.TSort{L.LZero{}}
+    case Con{h, t}:
+      Eval.last_or(t, h)
+
+# Choose between two numbers on a computed Bool.
+def Eval.pick_nat(b: Bool, x: Nat, y: Nat) -> Nat:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# Where the quotient sits among the arguments. A declaration that is not
+# `Quot.lift` or `Quot.ind` answers a position no spine reaches.
+def Eval.quot_pos(+d: E.Decl) -> Nat:
+  Eval.pick_nat(
+    Nat.is_eq(E.Decl.quot_kind(d), 2n),
+    5n,
+    Eval.pick_nat(Nat.is_eq(E.Decl.quot_kind(d), 3n), 4n, 9999n))
+
+# Can a quotient rule fire? The declaration must be lift or ind with enough
+# arguments, and the quotient itself must reduce to `Quot.mk`.
+def Eval.quot_ready(
+  +env: List<&2, E.Decl>, +d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term
+) -> Bool:
+  Bool.and(
+    Nat.is_lt(Eval.quot_pos(d), Eval.len(sp, 0n)),
+    Nat.is_eq(
+      E.Decl.quot_kind(
+        E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(mw))))),
+      1n))
+
+# `f a`, then whatever followed the quotient.
+def Eval.quot_term(+d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term) -> T.Term:
+  Eval.rebuild(
+    Eval.drop(sp, 1n+Eval.quot_pos(d)),
+    T.TApp{Eval.nth(sp, 3n), Eval.last(Eval.spine(mw, Nil{}))})
+
 # A branch of `Eval.pick_t` is evaluated whether or not it is chosen, so a
 # branch that is about to be thrown away must still be cheap. These two
 # functions make that so: each hands back a term that reduces at once unless
@@ -202,13 +259,17 @@ def Eval.unfold_decl(+d: E.Decl, +ls: List<&2, L.Level>) -> T.Term:
     Eval.val_or(E.Decl.value_at(d, ls), T.TSort{L.LZero{}}),
     T.TSort{L.LZero{}})
 
-# The major premise of a recursor, or a sort when this is not a recursor with
-# enough arguments. The sort is never used, for the same reason.
+# The argument a rule needs reduced: a recursor's major premise, or the
+# quotient a `Quot.lift` or `Quot.ind` is applied to. A sort when neither
+# applies, which is never used, for the same reason.
 def Eval.major_or_sort(+d: E.Decl, +sp: List<&2, T.Term>) -> T.Term:
   Eval.pick_t(
     Eval.rec_ready(d, sp),
     Eval.nth(sp, Eval.major_idx(d)),
-    T.TSort{L.LZero{}})
+    Eval.pick_t(
+      Nat.is_lt(Eval.quot_pos(d), Eval.len(sp, 0n)),
+      Eval.nth(sp, Eval.quot_pos(d)),
+      T.TSort{L.LZero{}}))
 
 # Can iota fire here? The declaration must be a recursor, the spine must reach
 # the major premise, and the reduced major premise must be a constructor this
@@ -297,7 +358,10 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
             Eval.pick_t(
               Eval.can_iota(d, sp, mw),
               Eval.whnf(f, env, Eval.iota_term(d, ls, sp, mw), Nil{}),
-              Eval.rebuild(sp, T.TConst{n, ls})))
+              Eval.pick_t(
+                Eval.quot_ready(env, d, sp, mw),
+                Eval.whnf(f, env, Eval.quot_term(d, sp, mw), Nil{}),
+                Eval.rebuild(sp, T.TConst{n, ls}))))
         case T.TApp{g, a}:
           Eval.whnf(f, env, g, Con{a, sp})
         case T.TLam{ty, bd}:
