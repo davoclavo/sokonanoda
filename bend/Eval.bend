@@ -226,11 +226,18 @@ def Eval.quot_ready(
         E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(mw))))),
       1n))
 
-# `f a`, then whatever followed the quotient.
+# `f a`, then whatever followed the quotient. A sort when the spine is too
+# short to hold a quotient rule, for the same reason as `Eval.major_or_sort`:
+# the caller reduces this term, and for a plain definition the unguarded
+# version handed back an application of two unrelated arguments, which cost
+# the whole remaining fuel.
 def Eval.quot_term(+d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term) -> T.Term:
-  Eval.rebuild(
-    Eval.drop(sp, 1n+Eval.quot_pos(d)),
-    T.TApp{Eval.nth(sp, 3n), Eval.last(Eval.spine(mw, Nil{}))})
+  Eval.pick_t(
+    Nat.is_lt(Eval.quot_pos(d), Eval.len(sp, 0n)),
+    Eval.rebuild(
+      Eval.drop(sp, 1n+Eval.quot_pos(d)),
+      T.TApp{Eval.nth(sp, 3n), Eval.last(Eval.spine(mw, Nil{}))}),
+    T.TSort{L.LZero{}})
 
 # A branch of `Eval.pick_t` is evaluated whether or not it is chosen, so a
 # branch that is about to be thrown away must still be cheap. These two
