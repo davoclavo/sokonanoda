@@ -126,14 +126,25 @@ def Infer.pi_dom(t: T.Term) -> T.Term:
   match t:
     case T.TPi{ty, bd}:
       ty
+    case T.TUnk{}:
+      T.TUnk{}
     case x:
       Infer.dummy()
 
 # A pi's body, or the dummy. Guarded by `is_pi`.
+#
+# A term reduction gave up on answers with itself, not with the dummy. The
+# dummy is a loose variable, and a loose variable converts with nothing, so a
+# definite no comes back where the honest answer is that the budget ran out.
+# That is what made the arena's `beta-ladder` reject: its type is two thousand
+# lambdas deep, inference ran out, and the dummy turned a shortage into a
+# rejection.
 def Infer.pi_bd(t: T.Term) -> T.Term:
   match t:
     case T.TPi{ty, bd}:
       bd
+    case T.TUnk{}:
+      T.TUnk{}
     case x:
       Infer.dummy()
 
