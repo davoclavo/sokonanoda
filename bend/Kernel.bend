@@ -357,6 +357,62 @@ def Kernel.ctor_univ(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
         E.Decl.ind_ty(E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d)))),
         Nil{})))
 
+# A recursor on a proposition with more than one constructor may eliminate
+# only into a proposition.
+#
+# An inductive in `Prop` with two or more constructors has no large
+# elimination: reading which constructor built a proof would recover data
+# from a proof, and proof irrelevance has already made the two proofs equal.
+# So its recursor takes no universe of its own, and the arena's
+# `large-elim-prop-bool` gives one a universe anyway.
+#
+# One constructor is the subsingleton case and is left alone. `Eq`, `And` and
+# `Acc` all eliminate into any sort and all have one constructor, so the rule
+# must not fire on them. A proposition with no constructors, such as `False`,
+# is the same: there is nothing to read.
+def Kernel.large_ok(
+  b: Bool, +nl: Nat, +ns: Nat
+) -> A.Ans:
+  match b:
+    case True{}:
+      A.Ans.of(Nat.is_eq(nl, ns))
+    case False{}:
+      A.AYes{}
+
+def Kernel.rec_elim_at(
+  +fuel: Nat, +d: E.Decl, +ind: E.Decl, +ds: T.Term
+) -> A.Ans:
+  A.Ans.and(
+    I.Infer.sort_ans(ds),
+    Kernel.large_ok(
+      Bool.and(
+        L.Level.is_zero(I.Infer.sort_level(ds)),
+        Nat.is_lt(1n, E.Decl.rec_nmin(d))),
+      E.Decl.len(E.Decl.params(d)),
+      E.Decl.len(E.Decl.params(ind))))
+
+def Kernel.rec_elim(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
+  Kernel.rec_elim_at(
+    fuel,
+    d,
+    E.Lookup.get(E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))),
+    Kernel.strip(
+      fuel,
+      env,
+      Nat.add(
+        E.Decl.ind_np(
+          E.Lookup.get(
+            E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d))))),
+        E.Decl.ind_ni(
+          E.Lookup.get(
+            E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d)))))),
+      V.Eval.whnf(
+        fuel, env,
+        E.Decl.ind_ty(
+          E.Lookup.get(
+            E.Env.find(env, E.Decl.only(E.Decl.rec_inds(d))))),
+        Nil{})))
+
 # Check one declaration against the declarations before it.
 def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
   match d:
@@ -408,12 +464,16 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
         Kernel.is_type(fuel, env, ty)))
     case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
       A.Ans.and(
-        A.Ans.of(
-          Bool.and(
-            E.Decl.no_dupes(ps),
-            Kernel.rec_ok(
-              env,
-              E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))),
+        A.Ans.and(
+          A.Ans.of(
+            Bool.and(
+              E.Decl.no_dupes(ps),
+              Kernel.rec_ok(
+                env,
+                E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))),
+          Kernel.rec_elim(
+            fuel, env,
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})),
         Kernel.is_type(fuel, env, ty))
     case E.DQuot{id, ps, ty, kind}:
       A.Ans.and(
