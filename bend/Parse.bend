@@ -270,9 +270,9 @@ def Parse.ex_letE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
             Parse.exp(ex, ne, R.Reader.field("value", line)),
             Parse.exp(ex, ne, R.Reader.field("body", line))}
         case False{}:
-          Parse.ex_natval(
+          Parse.ex_proj(
             MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
-            R.Reader.has("natVal", line),
+            R.Reader.has("typeName", line),
             line)
 
 def Parse.ex_forallE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
