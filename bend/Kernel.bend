@@ -66,6 +66,85 @@ def Kernel.ctor_arity_ok(+d: E.Decl) -> Bool:
     T.Term.pi_count(E.Decl.ctor_ty(d), 0n),
     Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)))
 
+# A constructor's result is its own inductive, applied to its parameters in
+# the order they were bound and at its own level parameters in that order.
+#
+# The arena attacks all three parts. `inductWrongCtorParams` applies the
+# inductive to a constant where a parameter belongs,
+# `inductWrongCtorResParams` passes the two parameters the other way round,
+# and `inductWrongCtorResLevel` passes the two levels the other way round.
+#
+# Reading the result is syntactic, and that is safe only because
+# `Kernel.ctor_arity_ok` has already settled that the telescope has exactly
+# the binders it claims. Without that, a binder hidden behind a definition
+# would make this read the wrong term and reject a constructor that is right.
+
+# Is this level the `k`-th parameter?
+def Kernel.level_is_par(l: L.Level, +k: Nat) -> Bool:
+  match l:
+    case L.LPar{i}:
+      Nat.is_eq(i, k)
+    case x:
+      False{}
+
+# Are these the level parameters of the declaration, in order?
+def Kernel.levels_in_order(ls: List<&2, L.Level>, +k: Nat, +n: Nat) -> Bool:
+  match ls:
+    case Nil{}:
+      Nat.is_eq(k, n)
+    case Con{h, t}:
+      Bool.and(
+        Kernel.level_is_par(h, k),
+        Kernel.levels_in_order(t, 1n+k, n))
+
+# Are these arguments the parameters, in the order they were bound? Inside a
+# telescope of `1n+base` binders the first one bound is the furthest away, so
+# parameter `k` is the variable `base - k`.
+def Kernel.params_in_order(args: List<&2, T.Term>, +k: Nat, +base: Nat) -> Bool:
+  match args:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      match h:
+        case T.TVar{i}:
+          Bool.and(
+            Nat.is_eq(i, Nat.sub(base, k)),
+            Kernel.params_in_order(t, 1n+k, base))
+        case x:
+          False{}
+
+# Is the head of the result the inductive, at its own levels, applied to its
+# own parameters?
+def Kernel.result_head(
+  h: T.Term, +ind: Nat, +nl: Nat, +np: Nat, +base: Nat,
+  +args: List<&2, T.Term>
+) -> Bool:
+  match h:
+    case T.TConst{n, ls}:
+      Bool.and(
+        Bool.and(Nat.is_eq(n, ind), Kernel.levels_in_order(ls, 0n, nl)),
+        Bool.and(
+          Nat.is_le(np, V.Eval.len(args, 0n)),
+          Kernel.params_in_order(V.Eval.take(args, np), 0n, base)))
+    case x:
+      False{}
+
+def Kernel.ctor_result_ok(+d: E.Decl) -> Bool:
+  Kernel.result_head(
+    V.Eval.head(
+      T.Term.pi_skip(
+        Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)),
+        E.Decl.ctor_ty(d))),
+    E.Decl.ctor_ind(d),
+    E.Decl.len(E.Decl.params(d)),
+    E.Decl.ctor_np(d),
+    Nat.sub(Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)), 1n),
+    V.Eval.spine(
+      T.Term.pi_skip(
+        Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)),
+        E.Decl.ctor_ty(d)),
+      Nil{}))
+
 # A recursor eliminates at least one inductive, and every one it names must
 # exist. The arena's `orphan-rec` names none at all.
 def Kernel.rec_inds_ok(+env: E.DTable, +ns: List<&2, Nat>) -> Bool:
@@ -157,7 +236,10 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
             E.Decl.no_dupes(ps),
             Bool.and(
               Kernel.ctor_ind_ok(env, E.DCtor{id, ps, ty, ind, cidx, np, nf}),
-              Kernel.ctor_arity_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf})))),
+              Bool.and(
+                Kernel.ctor_arity_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}),
+                Kernel.ctor_result_ok(
+                  E.DCtor{id, ps, ty, ind, cidx, np, nf}))))),
         Kernel.is_type(fuel, env, ty))
     case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
       A.Ans.and(
