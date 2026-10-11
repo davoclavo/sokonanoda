@@ -61,11 +61,11 @@ def Parse.start() -> PState:
 
 # The level the export calls `i`.
 def Parse.lev(+levs: Tb.LTable, +i: Nat) -> L.Level:
-  Tb.LTable.get(Tb.Table.depth(), Tb.Table.low(i), levs, i)
+  Tb.Table.read_lv(levs, i)
 
 # The expression the export calls `i`.
 def Parse.exp(+exps: Tb.ETable, +i: Nat) -> T.Term:
-  Tb.ETable.get(Tb.Table.depth(), Tb.Table.low(i), exps, i)
+  Tb.Table.read(exps, i)
 
 # The i-th number of a list, or zero.
 def Parse.nat_at(xs: List<&2, Nat>, i: Nat) -> Nat:
@@ -659,20 +659,14 @@ def Parse.step(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> PState:
         case R.KLevel{}:
           MkPS{
             1n+nl,
-            Tb.LTable.set(
-              Tb.Table.depth(),
-              Tb.Table.low(R.Reader.field("il", line)),
-              lv,
-              R.Reader.field("il", line),
-              Parse.level_of(line, lv)),
+            Tb.Table.write_lv(
+              lv, R.Reader.field("il", line), Parse.level_of(line, lv)),
             ne, ex, ds, nt, zr, sc, pm, bl, yes, no}
         case R.KExpr{}:
           MkPS{
             nl, lv,
             1n+ne,
-            Tb.ETable.set(
-              Tb.Table.depth(),
-              Tb.Table.low(R.Reader.field("ie", line)),
+            Tb.Table.write(
               ex,
               R.Reader.field("ie", line),
               Parse.expr_of(

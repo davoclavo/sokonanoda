@@ -1,14 +1,16 @@
-# Indexed tables for the reader.
+# Indexed tables for the reader and the environment.
 #
-# The level table and the expression table are read far more often than they
-# are written: a line names an expression by index, and a large export names
-# tens of thousands. A list makes each of those a walk, so reading a file
-# costs the square of its size. Reading the arena's 3.7 MB `init-prelude`
-# took 29 seconds that way and takes one second this way.
+# A line names an expression by index, and a large export names tens of
+# thousands. A list makes each of those a walk, so reading a file costs the
+# square of its size: the arena's 3.7 MB `init-prelude` took 29 seconds that
+# way and takes two this way.
 #
-# A table here is a binary trie on the bits of the index. It starts empty and
-# a write creates only the nodes on its own path, so a read and a write both
-# cost the number of bits and not the size of the table.
+# A table here is a binary trie on the bits of the index, holding a value at
+# every node rather than only at the leaves. So the path to an index is as
+# long as that index has bits, a small index costs few steps, and no two
+# indices ever share a slot. A fixed depth would be wrong: two indices that
+# agree on the low bits of the depth would collide, and the table would hand
+# back a declaration under the wrong name.
 #
 # Base has `Array`, which is the shape of a full table, and it cannot be used.
 # `Array` is declared `is Type`, so it is linear: a read consumes it and hands
@@ -34,183 +36,317 @@ import Base
 import ./Level.bend as L
 import ./Term.bend as T
 
-# How many bits of the index the tables use. Two to the eighteenth is 262144
-# slots, which is more than any export the arena ships.
-def Table.depth() -> Nat:
-  18n
+# A bound on the number of bits an index has. A Bend `Nat` holds less than
+# 2^48, so no index reaches this. The descent stops when the index runs out,
+# not here; this is only what makes the recursion terminate.
+def Table.bits() -> Nat:
+  48n
 
-# Does this index take the low half at this level?
+# Is this index the one stored at the node the descent has reached?
+def Table.here(+i: Nat) -> Bool:
+  Nat.is_eq(i, 0n)
+
+# Does the rest of this index take the low half?
 def Table.low(+i: Nat) -> Bool:
   Nat.is_eq(Nat.mod(i, 2n), 0n)
 
-# The index with the bit this level used taken off.
+# The index with the bit this level used taken off. The stored index is one
+# more than the number asked for, so that zero can mean "stop here".
 def Table.rest(+i: Nat) -> Nat:
   Nat.div(i, 2n)
+
+# The path an index takes. One more than the index, so that the index itself
+# is reached when the path runs out.
+def Table.path(+i: Nat) -> Nat:
+  1n+i
 
 # Levels
 # ------
 
 type LTable is Data:
   LvTip{}
-  LvLeaf{v: L.Level}
-  LvNode{lo: LTable, hi: LTable}
+  LvNode{v: Maybe<&2, L.Level>, lo: LTable, hi: LTable}
 
 def LTable.new() -> LTable:
   LvTip{}
 
-def LTable.val(t: LTable) -> L.Level:
+def LTable.or_zero(m: Maybe<&2, L.Level>) -> L.Level:
+  match m:
+    case None{}:
+      L.LZero{}
+    case Some{v}:
+      v
+
+def LTable.at(t: LTable) -> L.Level:
   match t:
     case LvTip{}:
       L.LZero{}
-    case LvLeaf{v}:
-      v
-    case LvNode{lo, hi}:
+    case LvNode{v, lo, hi}:
+      LTable.or_zero(v)
+
+# The level at `i`, or zero where nothing was written. `stop` says the path
+# ends at this node and `b` says which half it takes otherwise. Start both
+# from `Table.path(i)`.
+def LTable.get(
+  n: Nat, stop: Bool, b: Bool, t: LTable, +i: Nat
+) -> L.Level:
+  match n:
+    case 0n:
       L.LZero{}
+    case 1n+m:
+      match stop:
+        case True{}:
+          LTable.at(t)
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case LvTip{}:
+                  L.LZero{}
+                case LvNode{v, lo, hi}:
+                  LTable.get(
+                    m,
+                    Table.here(Table.rest(i)),
+                    Table.low(Table.rest(i)),
+                    lo,
+                    Table.rest(i))
+            case False{}:
+              match t:
+                case LvTip{}:
+                  L.LZero{}
+                case LvNode{v, lo, hi}:
+                  LTable.get(
+                    m,
+                    Table.here(Table.rest(i)),
+                    Table.low(Table.rest(i)),
+                    hi,
+                    Table.rest(i))
 
-# The level at `i`, or zero where nothing was written. `b` says which half
-# this level takes; start it with `Table.low(i)`.
-def LTable.get(d: Nat, b: Bool, t: LTable, +i: Nat) -> L.Level:
-  match d:
+def LTable.set(
+  n: Nat, stop: Bool, b: Bool, t: LTable, +i: Nat, +v: L.Level
+) -> LTable:
+  match n:
     case 0n:
-      LTable.val(t)
-    case 1n+p:
-      match b:
+      t
+    case 1n+m:
+      match stop:
         case True{}:
           match t:
             case LvTip{}:
-              L.LZero{}
-            case LvLeaf{v}:
-              v
-            case LvNode{lo, hi}:
-              LTable.get(
-                p, Table.low(Table.rest(i)), lo, Table.rest(i))
+              LvNode{Some{v}, LvTip{}, LvTip{}}
+            case LvNode{o, lo, hi}:
+              LvNode{Some{v}, lo, hi}
         case False{}:
-          match t:
-            case LvTip{}:
-              L.LZero{}
-            case LvLeaf{v}:
-              v
-            case LvNode{lo, hi}:
-              LTable.get(
-                p, Table.low(Table.rest(i)), hi, Table.rest(i))
-
-def LTable.set(d: Nat, b: Bool, t: LTable, +i: Nat, +v: L.Level) -> LTable:
-  match d:
-    case 0n:
-      LvLeaf{v}
-    case 1n+p:
-      match b:
-        case True{}:
-          match t:
-            case LvTip{}:
-              LvNode{
-                LTable.set(
-                  p, Table.low(Table.rest(i)), LvTip{}, Table.rest(i), v),
-                LvTip{}}
-            case LvLeaf{o}:
-              LvLeaf{v}
-            case LvNode{lo, hi}:
-              LvNode{
-                LTable.set(
-                  p, Table.low(Table.rest(i)), lo, Table.rest(i), v),
-                hi}
-        case False{}:
-          match t:
-            case LvTip{}:
-              LvNode{
-                LvTip{},
-                LTable.set(
-                  p, Table.low(Table.rest(i)), LvTip{}, Table.rest(i), v)}
-            case LvLeaf{o}:
-              LvLeaf{v}
-            case LvNode{lo, hi}:
-              LvNode{
-                lo,
-                LTable.set(
-                  p, Table.low(Table.rest(i)), hi, Table.rest(i), v)}
+          match b:
+            case True{}:
+              match t:
+                case LvTip{}:
+                  LvNode{
+                    None{},
+                    LTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      LvTip{},
+                      Table.rest(i),
+                      v),
+                    LvTip{}}
+                case LvNode{o, lo, hi}:
+                  LvNode{
+                    o,
+                    LTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      lo,
+                      Table.rest(i),
+                      v),
+                    hi}
+            case False{}:
+              match t:
+                case LvTip{}:
+                  LvNode{
+                    None{},
+                    LvTip{},
+                    LTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      LvTip{},
+                      Table.rest(i),
+                      v)}
+                case LvNode{o, lo, hi}:
+                  LvNode{
+                    o,
+                    lo,
+                    LTable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      hi,
+                      Table.rest(i),
+                      v)}
 
 # Terms
 # -----
 
 type ETable is Data:
   ExTip{}
-  ExLeaf{v: T.Term}
-  ExNode{lo: ETable, hi: ETable}
+  ExNode{v: Maybe<&2, T.Term>, lo: ETable, hi: ETable}
 
 def ETable.new() -> ETable:
   ExTip{}
 
-def ETable.val(t: ETable) -> T.Term:
+# A slot nothing was written to answers the unknown term, so a line that names
+# an expression the export never wrote is not mistaken for a real one.
+def ETable.or_unk(m: Maybe<&2, T.Term>) -> T.Term:
+  match m:
+    case None{}:
+      T.TUnk{}
+    case Some{v}:
+      v
+
+def ETable.at(t: ETable) -> T.Term:
   match t:
     case ExTip{}:
       T.TUnk{}
-    case ExLeaf{v}:
-      v
-    case ExNode{lo, hi}:
+    case ExNode{v, lo, hi}:
+      ETable.or_unk(v)
+
+def ETable.get(
+  n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat
+) -> T.Term:
+  match n:
+    case 0n:
       T.TUnk{}
+    case 1n+m:
+      match stop:
+        case True{}:
+          ETable.at(t)
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case ExTip{}:
+                  T.TUnk{}
+                case ExNode{v, lo, hi}:
+                  ETable.get(
+                    m,
+                    Table.here(Table.rest(i)),
+                    Table.low(Table.rest(i)),
+                    lo,
+                    Table.rest(i))
+            case False{}:
+              match t:
+                case ExTip{}:
+                  T.TUnk{}
+                case ExNode{v, lo, hi}:
+                  ETable.get(
+                    m,
+                    Table.here(Table.rest(i)),
+                    Table.low(Table.rest(i)),
+                    hi,
+                    Table.rest(i))
 
-# The expression at `i`. A slot nothing was written to answers the unknown
-# term, so a line that names an expression the export never wrote is not
-# mistaken for a real one.
-def ETable.get(d: Nat, b: Bool, t: ETable, +i: Nat) -> T.Term:
-  match d:
+def ETable.set(
+  n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat, +v: T.Term
+) -> ETable:
+  match n:
     case 0n:
-      ETable.val(t)
-    case 1n+p:
-      match b:
+      t
+    case 1n+m:
+      match stop:
         case True{}:
           match t:
             case ExTip{}:
-              T.TUnk{}
-            case ExLeaf{v}:
-              v
-            case ExNode{lo, hi}:
-              ETable.get(
-                p, Table.low(Table.rest(i)), lo, Table.rest(i))
+              ExNode{Some{v}, ExTip{}, ExTip{}}
+            case ExNode{o, lo, hi}:
+              ExNode{Some{v}, lo, hi}
         case False{}:
-          match t:
-            case ExTip{}:
-              T.TUnk{}
-            case ExLeaf{v}:
-              v
-            case ExNode{lo, hi}:
-              ETable.get(
-                p, Table.low(Table.rest(i)), hi, Table.rest(i))
+          match b:
+            case True{}:
+              match t:
+                case ExTip{}:
+                  ExNode{
+                    None{},
+                    ETable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      ExTip{},
+                      Table.rest(i),
+                      v),
+                    ExTip{}}
+                case ExNode{o, lo, hi}:
+                  ExNode{
+                    o,
+                    ETable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      lo,
+                      Table.rest(i),
+                      v),
+                    hi}
+            case False{}:
+              match t:
+                case ExTip{}:
+                  ExNode{
+                    None{},
+                    ExTip{},
+                    ETable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      ExTip{},
+                      Table.rest(i),
+                      v)}
+                case ExNode{o, lo, hi}:
+                  ExNode{
+                    o,
+                    lo,
+                    ETable.set(
+                      m,
+                      Table.here(Table.rest(i)),
+                      Table.low(Table.rest(i)),
+                      hi,
+                      Table.rest(i),
+                      v)}
 
-def ETable.set(d: Nat, b: Bool, t: ETable, +i: Nat, +v: T.Term) -> ETable:
-  match d:
-    case 0n:
-      ExLeaf{v}
-    case 1n+p:
-      match b:
-        case True{}:
-          match t:
-            case ExTip{}:
-              ExNode{
-                ETable.set(
-                  p, Table.low(Table.rest(i)), ExTip{}, Table.rest(i), v),
-                ExTip{}}
-            case ExLeaf{o}:
-              ExLeaf{v}
-            case ExNode{lo, hi}:
-              ExNode{
-                ETable.set(
-                  p, Table.low(Table.rest(i)), lo, Table.rest(i), v),
-                hi}
-        case False{}:
-          match t:
-            case ExTip{}:
-              ExNode{
-                ExTip{},
-                ETable.set(
-                  p, Table.low(Table.rest(i)), ExTip{}, Table.rest(i), v)}
-            case ExLeaf{o}:
-              ExLeaf{v}
-            case ExNode{lo, hi}:
-              ExNode{
-                lo,
-                ETable.set(
-                  p, Table.low(Table.rest(i)), hi, Table.rest(i), v)}
+# The two the rest of the kernel calls.
+def Table.read(+t: ETable, +i: Nat) -> T.Term:
+  ETable.get(
+    Table.bits(),
+    Table.here(Table.path(i)),
+    Table.low(Table.path(i)),
+    t,
+    Table.path(i))
+
+def Table.write(+t: ETable, +i: Nat, +v: T.Term) -> ETable:
+  ETable.set(
+    Table.bits(),
+    Table.here(Table.path(i)),
+    Table.low(Table.path(i)),
+    t,
+    Table.path(i),
+    v)
+
+def Table.read_lv(+t: LTable, +i: Nat) -> L.Level:
+  LTable.get(
+    Table.bits(),
+    Table.here(Table.path(i)),
+    Table.low(Table.path(i)),
+    t,
+    Table.path(i))
+
+def Table.write_lv(+t: LTable, +i: Nat, +v: L.Level) -> LTable:
+  LTable.set(
+    Table.bits(),
+    Table.here(Table.path(i)),
+    Table.low(Table.path(i)),
+    t,
+    Table.path(i),
+    v)
 
 # A name for each kind of term, so the test below can show that a read gives
 # back what a write put there.
@@ -225,16 +361,21 @@ def Table.kind(t: T.Term) -> String:
     case x:
       "other"
 
-def Table.read(+t: ETable, +i: Nat) -> T.Term:
-  ETable.get(Table.depth(), Table.low(i), t, i)
-
-def Table.write(+t: ETable, +i: Nat, +v: T.Term) -> ETable:
-  ETable.set(Table.depth(), Table.low(i), t, i, v)
-
+# The indices here are chosen to catch the two mistakes this file has made:
+# 0 against 1 is the shortest pair of paths, and 7 against 262151, which is
+# 7 plus two to the eighteenth, is the pair a table of fixed depth 18 would
+# have put in one slot.
 def main() -> String:
   +e = Table.write(
-    Table.write(ETable.new(), 7n, T.TVar{5n}),
-    40000n, T.TSort{L.LZero{}})
-  "at 7 " ++ Table.kind(Table.read(e, 7n))
-    ++ ", at 40000 " ++ Table.kind(Table.read(e, 40000n))
-    ++ ", at 9 " ++ Table.kind(Table.read(e, 9n))
+    Table.write(
+      Table.write(
+        Table.write(ETable.new(), 0n, T.TVar{1n}),
+        1n, T.TSort{L.LZero{}}),
+      7n, T.TVar{7n}),
+    262151n, T.TSort{L.LZero{}})
+  "0 " ++ Table.kind(Table.read(e, 0n))
+    ++ ", 1 " ++ Table.kind(Table.read(e, 1n))
+    ++ ", 7 " ++ Table.kind(Table.read(e, 7n))
+    ++ ", 262151 " ++ Table.kind(Table.read(e, 262151n))
+    ++ ", 9 " ++ Table.kind(Table.read(e, 9n))
+    ++ ", 262144 " ++ Table.kind(Table.read(e, 262144n))
