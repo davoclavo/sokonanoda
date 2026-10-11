@@ -635,6 +635,46 @@ That low-budget run is now the broadest check this kernel has. At a budget of
 300, **every one of the prelude's 1698 declarations either passes or runs out
 of budget, and none is rejected.**
 
+## Never read a verdict off a term reduction gave up on
+
+`grind-ring-5` rejects at a fuel of 50 and declines at 500, which makes the
+budget the verdict. The arena expects it accepted.
+
+The path was a projection of the second field of an `And` whose subject is
+large enough that inference runs out. `Infer.proj_from` then took the unknown
+structure type and worked everything out from it anyway: an empty parameter
+spine, a constructor looked up under name zero, a walk over a telescope that
+is not there. `Infer.pi_ans` of that is a definite no, and `A.Ans.and` lets a
+definite no win over an unknown.
+
+**That rule is right in general and wrong here**, because the no was read off
+the unknown. `Infer.proj_pick` answers `RUnk` when the structure type is
+unknown and computes nothing from it. The discipline the whole kernel needs is
+the one-line version: a conjunction may combine an unknown with a verdict, but
+not with a verdict derived from the same unknown.
+
+Two more of the same kind, found by reading rather than by failing.
+`Infer.prop_ok` asked whether a sort is `Prop` with
+`A.Ans.of(L.Level.is_zero(...))`, which answers a definite no for a term that
+is not a sort at all; it uses the three-valued test now. `Infer.proj_ok` is a
+`Bool` and cannot say the question was never reached, so `Infer.proj_unk`
+reports an unknown subject as unknown.
+
+A fourth, from the same hunt and not the same cause: `Level.eq` and
+`Level.leq` were given the declaration's budget, and `Level.atoms` stops at
+its fuel and drops the atoms it has not reached. At a fuel of 50 two equal
+levels compared unequal. Comparing levels is not reduction, so it has its own
+budget of a million now, which a real export never reaches. That is the point:
+a bound that is reached has to answer, and neither answer a `Bool` can give is
+honest.
+
+Where the sites that are already safe get it right is worth seeing, because
+the pattern is the same: `Kernel.field_fits` reads `I.Infer.sort_level(w)`,
+which answers zero for a `w` that is not a sort, and zero is below every
+universe, so the companion test passes and the `A.Ans.and` carries the unknown
+through. An unknown must make the surrounding test **permissive**, never
+strict.
+
 ### The pattern, five times over
 
 | what hid it | what it hid |
