@@ -397,17 +397,114 @@ def Conv.k_fix(
               E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))))))),
       Nil{}))
 
+# Eta for a structure that carries data.
+#
+# An element of a structure is its constructor applied to its own fields, so
+# `p` and `Prod.mk p.0 p.1` are the same pair. `Conv.is_unit` settles this
+# when the structure has no fields; this is the general rule, and it needs
+# projections, which now work. It is the arena's `112_structEta`.
+#
+# The rule rewrites the side that is not a constructor application into one,
+# and leaves the rest to `Conv.structural`. That way the parameters are
+# compared too, and nothing here has to know they match.
+
+# The fields of `b`, as projections, from the `i`-th on.
+def Conv.eta_fields(n: Nat, +ind: Nat, +b: T.Term, +i: Nat) -> List<&2, T.Term>:
+  match n:
+    case 0n:
+      Nil{}
+    case 1n+m:
+      Con{T.TProj{ind, i, b}, Conv.eta_fields(m, ind, b, 1n+i)}
+
+# Is `a` a saturated application of the one constructor of an index-free
+# inductive, with `b` not an application of that same constructor?
+#
+# This is the whole cheap test. It guards the one expensive step, which is
+# inferring the type of `b`.
+def Conv.eta_ready(+env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat) -> Bool:
+  Bool.and(
+    Bool.and(
+      E.Decl.is_ctor(d),
+      Nat.is_eq(nargs, Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)))),
+    Bool.and(
+      Conv.pick_b(Nat.is_eq(Conv.head_name(Conv.head(b)), E.Decl.id(d)),
+        False{}, True{}),
+      Bool.and(
+        E.Decl.is_one(
+          E.Decl.ind_ctors(
+            E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d))))),
+        Nat.is_eq(
+          E.Decl.ind_ni(
+            E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d)))),
+          0n))))
+
+# The term whose type the rule needs, or a sort when the rule cannot fire.
+# A branch of `Conv.pick_t` is evaluated whether or not it is chosen, so the
+# type of a sort is what the common case pays for.
+def Conv.eta_subj(
+  +env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat
+) -> T.Term:
+  Conv.pick_t(Conv.eta_ready(env, d, b, nargs), b, T.TSort{L.LZero{}})
+
+# May the rule fire? The cheap test must hold, and the type of `b` must head
+# the constructor's own inductive. Without the second part the rule rewrites a
+# term of some other type and the comparison that follows means nothing.
+def Conv.eta_ok(
+  +env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
+) -> Bool:
+  Bool.and(
+    Conv.eta_ready(env, d, b, nargs),
+    Nat.is_eq(Conv.head_name(Conv.head(ty)), E.Decl.ctor_ind(d)))
+
+# `b` written as a constructor application: the parameters its type carries,
+# then its own fields.
+def Conv.eta_mk(+d: E.Decl, +b: T.Term, +ty: T.Term) -> T.Term:
+  V.Eval.rebuild(
+    List.append(&2, T.Term,
+      V.Eval.take(Conv.args(ty), E.Decl.ctor_np(d)),
+      Conv.eta_fields(E.Decl.ctor_nf(d), E.Decl.ctor_ind(d), b, 0n)),
+    T.TConst{E.Decl.id(d), Conv.head_levels(Conv.head(ty))})
+
+def Conv.eta_go(
+  +env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
+) -> T.Term:
+  Conv.pick_t(Conv.eta_ok(env, d, b, nargs, ty), Conv.eta_mk(d, b, ty), b)
+
+# Rewrite `b` into a constructor application when `a` is one. Both sides are
+# already in weak head normal form.
+def Conv.eta_fix(
+  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+) -> T.Term:
+  Conv.eta_go(
+    env,
+    E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(a)))),
+    b,
+    V.Eval.len(Conv.args(a), 0n),
+    V.Eval.whnf(
+      fuel, env,
+      S.Shape.ty(
+        S.Shape.infer(
+          fuel, env, ctx,
+          Conv.eta_subj(
+            env,
+            E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(a)))),
+            b,
+            V.Eval.len(Conv.args(a), 0n)))),
+      Nil{}))
+
 # Reduce the two sides of a pair, then try proof irrelevance before taking
 # them apart.
 def Conv.classify_pair(+fuel: Nat, +env: List<&2, E.Decl>, p: TPair) -> Step:
   match p:
     case MkPair{+ctx, a, b}:
+      +ka = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, a, Nil{}))
+      +kb = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, b, Nil{}))
       Conv.irrel(
         fuel,
         env,
         ctx,
-        Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, a, Nil{})),
-        Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, b, Nil{})))
+        Conv.eta_fix(fuel, env, ctx, kb, ka),
+        Conv.eta_fix(fuel, env, ctx, ka, kb))
 
 # Work the queue. It empties exactly when every pair in it is equal.
 #

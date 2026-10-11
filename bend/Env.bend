@@ -320,6 +320,14 @@ def Decl.ctor_np(d: Decl) -> Nat:
     case o:
       0n
 
+# The inductive a constructor builds, or zero.
+def Decl.ctor_ind(d: Decl) -> Nat:
+  match d:
+    case DCtor{id, ps, ty, ind, cidx, np, nf}:
+      ind
+    case o:
+      0n
+
 def Decl.ctor_nf(d: Decl) -> Nat:
   match d:
     case DCtor{id, ps, ty, ind, cidx, np, nf}:
