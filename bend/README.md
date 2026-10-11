@@ -139,7 +139,18 @@ be stated and then mechanically proven, in the same language as the code.
 Honestly and in order of size.
 
 **Throughput.** Nine files run past sixty seconds: `init-prelude`, which is
-3.7 MB, and eight `perf` tests. Nothing else is in the way of an answer.
+3.7 MB, and eight `perf` tests. Nothing else is in the way of an answer, and
+no constant factor reaches them. `perf/shared-subterm` answers at a budget of
+3000 and wants more than seventy seconds at 30000, so it is about a hundred
+times away; `init-prelude` does not finish in nine hundred seconds. Five of
+the nine are small files built to punish a kernel with no sharing in its
+terms, and `docs/perf-plan.md` records two measured attempts at sharing and
+why Bend charges for both.
+
+**A string literal.** The corpus holds ten kinds of expression node and this
+kernel reads nine. The one it does not is `strVal`, in 74 places across four
+files, and all four of those run past the time limit for other reasons. A node
+the reader does not read answers the unknown term, so such a file declines.
 
 **A mutual block, a nested inductive, and a recursor with an unusual level
 list.** The recursor derivation hands these back as `T.TUnk`, which converts
@@ -564,6 +575,31 @@ side and not a telescope, so they all lift by the same amount.
 `bend/derive.bend` reports, per recursor, whether the derived type and every
 derived rule converts with what the file states. It changes no verdict. It is
 what turned "the derivation is probably right" into a number, twice.
+
+## Two attacks nobody wrote
+
+The arena's `bad` files are an attack suite and this kernel answers all of
+them. That is not the same as being sound. This repo also holds a Lean kernel
+in Rust that passes the same suite, so its rejections are a second list of
+things that must be refused, and two of them were holes here that let a file
+be **accepted**.
+
+**A projection naming the wrong structure.** A projection node carries a type
+name of its own, and the kernel read the field out of the structure's inferred
+type, so a name that did not match was never looked at. It is not harmless:
+the name goes into the term, where `Conv.proj_step` compares two projections
+by it and reduction reads it. `089_projProp1` with its `typeName` changed from
+19 to 1 answered `accept` and now answers `reject`.
+
+**A universe a declaration did not declare.** `Level.param_pos` numbers a
+declaration's parameters by position and used to answer the raw name index for
+one that was not declared. A name index smaller than the number of declared
+parameters was then read as one of them, so a file could use a universe it
+never declared and have it taken for a universe it did. `069_eqRec` with one
+of its two `levelParams` removed answered `accept` and now answers `reject`.
+
+Neither rule changes the score, because nothing in the corpus exercises
+either. That is the point.
 
 ## The four quotient types
 
