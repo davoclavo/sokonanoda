@@ -68,12 +68,49 @@ def Check.show(a: A.Ans, trusted: Bool) -> String:
     case A.AYes{}:
       Check.trusted_word(trusted)
 
+# Did the caller ask for the per-declaration report? `SOKO_REPORT` set to
+# anything turns it on.
+def Check.wants_report(r: Result<&1, &1, U32 & String, String>) -> Bool:
+  match r:
+    case Fail{e}:
+      False{}
+    case Done{v}:
+      True{}
+
+# The report and the verdict, from one walk of the declarations.
+def Check.lines(p: A.Ans & String, trusted: Bool) -> String:
+  (a, rep) = p
+  rep ++ "verdict " ++ Check.show(a, trusted)
+
+# What to print.
+#
+# The report is off unless asked for, and that is a speed decision, not a
+# cosmetic one. `Kernel.report` and `Kernel.check_all` each walk the list and
+# check every declaration, and `Kernel.why` runs on every declaration through
+# an argument of `Kernel.mark`, so a run that printed the report checked the
+# file about five times over to answer once.
+#
+# This was committed once and lost: a `git checkout --` during a measurement
+# took the uncommitted half of it away, the Kernel half went in without it,
+# and every run since has paid for the report nobody asked for. `Kernel.run`
+# is the one walk that answers and reports together, and `Kernel.report` is
+# gone, so the two cannot drift apart again.
+def Check.out(want: Bool, ds: List<&2, E.Decl>, +fuel: Nat, trusted: Bool) -> String:
+  match want:
+    case True{}:
+      Check.lines(K.Kernel.run(ds, fuel, E.Env.empty()), trusted)
+    case False{}:
+      "verdict " ++ Check.show(K.Kernel.check_all(ds, fuel, E.Env.empty()), trusted)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     path : String <- IO.try(String, IO.get_env("SOKO_EXPORT"))
     f : File <- IO.try(File, File.open(path, "r"))
     r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 64000000)
     +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Check.bytes(r)))
+    rv : Result<&1, &1, U32 & String, String> <- IO.get_env("SOKO_REPORT")
     IO.print("declarations " ++ Nat.show(K.Kernel.count(ds, 0n)))
-    IO.print(K.Kernel.report(ds, Check.fuel(), E.Env.empty()))
-    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), E.Env.empty()), K.Kernel.trusts(ds, Check.fuel(), E.Env.empty())))
+    IO.print(
+      Check.out(
+        Check.wants_report(rv), ds, Check.fuel(),
+        K.Kernel.trusts(ds, Check.fuel(), E.Env.empty())))
