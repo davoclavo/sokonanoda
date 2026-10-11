@@ -237,6 +237,19 @@ def Infer.proj_walk(
             tn, s)
 
 # Is this structure's type one this kernel can project from?
+# The answer when the subject's type could not be inferred at all.
+#
+# `Infer.proj_ok` is a `Bool`, and a `Bool` has no way to say that the
+# question was not reached. Reading its no as a rejection is a wrong answer:
+# `grind-ring-5` rejects at a small budget and declines at a larger one, and
+# this is one of the two places that turned the budget into a verdict.
+def Infer.proj_unk(unk: Bool, ok: Bool) -> A.Ans:
+  match unk:
+    case True{}:
+      A.AUnk{}
+    case False{}:
+      A.Ans.of(ok)
+
 # Is this structure's type one this kernel can project from, and is it the
 # structure the node says it is?
 #
@@ -339,17 +352,6 @@ def Infer.prop_subject(b: Bool, +fty: T.Term) -> T.Term:
     case False{}:
       T.TSort{L.LZero{}}
 
-# Given the sort of the field, is the projection allowed? Not knowing the
-# sort stays not knowing.
-def Infer.prop_ok(b: Bool, +ps: T.Term) -> A.Ans:
-  match b:
-    case True{}:
-      A.Ans.and(
-        Infer.sort_ans(ps),
-        A.Ans.of(L.Level.is_zero(Infer.sort_level(ps))))
-    case False{}:
-      A.AYes{}
-
 # Is this term a proposition? Not known when its type cannot be found.
 #
 # This asks `Shape.infer` rather than `Infer.infer`, because a def may only
@@ -377,6 +379,15 @@ def Infer.is_prop_ans(
   +r : S.Shp = S.Shape.infer(fuel, env, ctx, t)
   Infer.prop_of(
     S.Shape.ok(r), V.Eval.whnf(fuel, env, S.Shape.ty(r), Nil{}))
+
+# Given the sort of the field, is the projection allowed? Not knowing the
+# sort stays not knowing.
+def Infer.prop_ok(b: Bool, +ps: T.Term) -> A.Ans:
+  match b:
+    case True{}:
+      Infer.sort_prop_ans(ps)
+    case False{}:
+      A.AYes{}
 
 # Must this field be a proof, and is it one?
 #
@@ -424,7 +435,16 @@ def Infer.proj_prefix_ans(
               tn, s, isprop, ctx))
 
 # The type of `s.idx`, given the structure's own type.
-def Infer.proj_from(
+#
+# A structure type that reduction gave up on answers that it is not known,
+# and nothing is computed from it. Conjoining an unknown with a verdict read
+# off the same unknown is how a budget becomes a rejection: `A.Ans.and` lets
+# a definite no win over an unknown, which is right in general and wrong when
+# the no was worked out from a term nobody could read. The arena's
+# `grind-ring-5` projects the second field of an `And` whose subject is large
+# enough that inference runs out, and it rejected at a small budget and
+# declined at a larger one for that reason alone.
+def Infer.proj_go(
   +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +sty: T.Term,
   +tn: Nat, +idx: Nat, +s: T.Term
 ) -> Res:
@@ -434,11 +454,31 @@ def Infer.proj_from(
     Nil{})
   Infer.res_of(
     A.Ans.and(
-      A.Ans.and(A.Ans.of(Infer.proj_ok(env, sty, tn)), Infer.pi_ans(w)),
+      A.Ans.and(
+        Infer.proj_unk(
+          T.Term.is_unk(sty), Infer.proj_ok(env, sty, tn)),
+        Infer.pi_ans(w)),
       Infer.proj_prefix_ans(
         fuel, env, idx, 0n, Infer.proj_base(fuel, env, sty), tn, s,
         Infer.ind_is_prop(env, sty), ctx)),
     Infer.pi_dom(w))
+
+def Infer.proj_pick(
+  unk: Bool, +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
+  +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
+) -> Res:
+  match unk:
+    case True{}:
+      RUnk{}
+    case False{}:
+      Infer.proj_go(fuel, env, ctx, sty, tn, idx, s)
+
+def Infer.proj_from(
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +sty: T.Term,
+  +tn: Nat, +idx: Nat, +s: T.Term
+) -> Res:
+  Infer.proj_pick(
+    T.Term.is_unk(sty), fuel, env, ctx, sty, tn, idx, s)
 
 # Infer the type of `t` in the context `ctx`.
 def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -> Res:

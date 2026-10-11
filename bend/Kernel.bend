@@ -286,7 +286,7 @@ def Kernel.ind_shape(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
 def Kernel.field_fits(+w: T.Term, +s: L.Level, +fuel: Nat) -> A.Ans:
   A.Ans.and(
     I.Infer.sort_ans(w),
-    A.Ans.of(L.Level.leq(fuel, I.Infer.sort_level(w), s)))
+    A.Ans.of(L.Level.leq(I.Infer.sort_level(w), s)))
 
 def Kernel.field_univ(
   +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
@@ -726,7 +726,13 @@ def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("prop", Kernel.is_prop(fuel, env, ty)) ++
-      Kernel.flag("value", Kernel.has_type(fuel, env, val, ty))
+      Kernel.flag(
+        "infer", I.Infer.res_ans(I.Infer.infer(fuel, env, Nil{}, val))) ++
+      Kernel.flag(
+        "conv",
+        C.Conv.eq(
+          fuel, env,
+          I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty))
     case E.DCtor{+id, +ps, +ty, +ind, +cidx, +np, +nf}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag(
