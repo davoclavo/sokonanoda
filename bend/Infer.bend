@@ -217,7 +217,7 @@ def Infer.const_type(lk: E.Lookup, +ls: List<&2, L.Level>) -> T.Term:
 
 # Step over `i` binders, putting the j-th projection in place of each.
 def Infer.proj_walk(
-  +fuel: Nat, +env: List<&2, E.Decl>, i: Nat, +j: Nat, r: T.Term,
+  +fuel: Nat, +env: E.DTable, i: Nat, +j: Nat, r: T.Term,
   +tn: Nat, +s: T.Term
 ) -> T.Term:
   match fuel:
@@ -236,7 +236,7 @@ def Infer.proj_walk(
             tn, s)
 
 # Is this structure's type one this kernel can project from?
-def Infer.proj_ok(+env: List<&2, E.Decl>, +sty: T.Term) -> Bool:
+def Infer.proj_ok(+env: E.DTable, +sty: T.Term) -> Bool:
   Bool.and(
     E.Decl.is_ind(
       E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
@@ -252,7 +252,7 @@ def Infer.proj_ok(+env: List<&2, E.Decl>, +sty: T.Term) -> Bool:
 # with no parameters hides the mistake completely, which is why the first
 # hand-written test passed and every real one failed.
 def Infer.proj_params(
-  +fuel: Nat, +env: List<&2, E.Decl>, ps: List<&2, T.Term>, r: T.Term
+  +fuel: Nat, +env: E.DTable, ps: List<&2, T.Term>, r: T.Term
 ) -> T.Term:
   match fuel:
     case 0n:
@@ -267,7 +267,7 @@ def Infer.proj_params(
             T.Term.inst(Infer.pi_bd(V.Eval.whnf(f, env, r, Nil{})), h))
 
 # The constructor's type, at the structure's parameters.
-def Infer.proj_base(+fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term) -> T.Term:
+def Infer.proj_base(+fuel: Nat, +env: E.DTable, +sty: T.Term) -> T.Term:
   Infer.proj_params(
     fuel, env,
     V.Eval.take(
@@ -286,7 +286,7 @@ def Infer.proj_base(+fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term) -> T.Term:
 
 # The type of `s.idx`, given the structure's own type.
 def Infer.proj_from(
-  +fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
+  +fuel: Nat, +env: E.DTable, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
 ) -> Res:
   +w = V.Eval.whnf(
     fuel, env,
@@ -297,7 +297,7 @@ def Infer.proj_from(
     Infer.pi_dom(w))
 
 # Infer the type of `t` in the context `ctx`.
-def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T.Term) -> Res:
+def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -> Res:
   match fuel:
     case 0n:
       RUnk{}

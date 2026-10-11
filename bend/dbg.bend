@@ -54,7 +54,7 @@ def Dbg.has_val(d: E.Decl) -> Bool:
       False{}
 
 # One line per failing declaration, with both terms.
-def Dbg.line(+fuel: Nat, +env: List<&2, E.Decl>, +d: E.Decl) -> String:
+def Dbg.line(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
   "  decl " ++ Nat.show(E.Decl.id(d)) ++ "\n" ++
   "    declared " ++ S.Show.term(Dbg.depth(), Dbg.ty_of(d)) ++ "\n" ++
   "    inferred " ++
@@ -63,14 +63,14 @@ def Dbg.line(+fuel: Nat, +env: List<&2, E.Decl>, +d: E.Decl) -> String:
       I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, Dbg.val_of(d)))) ++ "\n"
 
 # Report a declaration only when it fails and has a value to compare.
-def Dbg.maybe(show: Bool, +fuel: Nat, +env: List<&2, E.Decl>, +d: E.Decl) -> String:
+def Dbg.maybe(show: Bool, +fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
   match show:
     case True{}:
       Dbg.line(fuel, env, d)
     case False{}:
       ""
 
-def Dbg.walk(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> String:
+def Dbg.walk(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> String:
   match ds:
     case Nil{}:
       ""
@@ -79,7 +79,7 @@ def Dbg.walk(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> String
         Bool.and(
           Dbg.has_val(h),
           Bool.not(A.Ans.is_yes(K.Kernel.check_decl(fuel, acc, h)))),
-        fuel, acc, h) ++ Dbg.walk(t, fuel, Con{h, acc})
+        fuel, acc, h) ++ Dbg.walk(t, fuel, E.Env.add(acc, h))
 
 # Every declaration's own stored type, which is what the kernel reads rather
 # than what the file says.
@@ -99,4 +99,4 @@ def main() -> IO(Unit):
     r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 64000000)
     +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Dbg.bytes(r)))
     IO.print(Dbg.decls(ds))
-    IO.print(Dbg.walk(ds, Dbg.fuel(), Nil{}))
+    IO.print(Dbg.walk(ds, Dbg.fuel(), E.Env.empty()))

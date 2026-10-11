@@ -60,5 +60,5 @@ def main() -> IO(Unit):
     r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 64000000)
     +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Check.bytes(r)))
     IO.print("declarations " ++ Nat.show(K.Kernel.count(ds, 0n)))
-    IO.print(K.Kernel.report(ds, Check.fuel(), Nil{}))
-    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), Nil{}), K.Kernel.trusts(ds)))
+    IO.print(K.Kernel.report(ds, Check.fuel(), E.Env.empty()))
+    IO.print("verdict " ++ Check.show(K.Kernel.check_all(ds, Check.fuel(), E.Env.empty()), K.Kernel.trusts(ds)))

@@ -127,7 +127,7 @@ def Shape.const_type(lk: E.Lookup, +ls: List<&2, L.Level>) -> Shp:
 
 # Step over `i` binders, putting the j-th projection in place of each.
 def Shape.proj_walk(
-  +fuel: Nat, +env: List<&2, E.Decl>, i: Nat, +j: Nat, r: T.Term,
+  +fuel: Nat, +env: E.DTable, i: Nat, +j: Nat, r: T.Term,
   +tn: Nat, +s: T.Term
 ) -> T.Term:
   match fuel:
@@ -146,7 +146,7 @@ def Shape.proj_walk(
             tn, s)
 
 # Is this structure's type one this kernel can project from?
-def Shape.proj_ok(+env: List<&2, E.Decl>, +sty: T.Term) -> Bool:
+def Shape.proj_ok(+env: E.DTable, +sty: T.Term) -> Bool:
   Bool.and(
     E.Decl.is_ind(
       E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
@@ -162,7 +162,7 @@ def Shape.proj_ok(+env: List<&2, E.Decl>, +sty: T.Term) -> Bool:
 # with no parameters hides the mistake completely, which is why the first
 # hand-written test passed and every real one failed.
 def Shape.proj_params(
-  +fuel: Nat, +env: List<&2, E.Decl>, ps: List<&2, T.Term>, r: T.Term
+  +fuel: Nat, +env: E.DTable, ps: List<&2, T.Term>, r: T.Term
 ) -> T.Term:
   match fuel:
     case 0n:
@@ -177,7 +177,7 @@ def Shape.proj_params(
             T.Term.inst(Shape.pi_bd(V.Eval.whnf(f, env, r, Nil{})), h))
 
 # The constructor's type, at the structure's parameters.
-def Shape.proj_base(+fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term) -> T.Term:
+def Shape.proj_base(+fuel: Nat, +env: E.DTable, +sty: T.Term) -> T.Term:
   Shape.proj_params(
     fuel, env,
     V.Eval.take(
@@ -196,7 +196,7 @@ def Shape.proj_base(+fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term) -> T.Term:
 
 # The type of `s.idx`, given the structure's own type.
 def Shape.proj_from(
-  +fuel: Nat, +env: List<&2, E.Decl>, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
+  +fuel: Nat, +env: E.DTable, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
 ) -> Shp:
   Shape.if_ok(
     Bool.and(
@@ -213,7 +213,7 @@ def Shape.proj_from(
         Nil{})))
 
 # The type `t` would have in the context `ctx`.
-def Shape.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T.Term) -> Shp:
+def Shape.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -> Shp:
   match fuel:
     case 0n:
       SBad{}
@@ -254,7 +254,7 @@ def Shape.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
             tn, idx, st)
 
 # Does the type `ty` itself have type `Sort 0`?
-def Shape.prop_sort(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, ty: T.Term) -> Bool:
+def Shape.prop_sort(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, ty: T.Term) -> Bool:
   +r = Shape.infer(fuel, env, ctx, ty)
   Bool.and(
     Shape.ok(r),
@@ -262,7 +262,7 @@ def Shape.prop_sort(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, 
       Shape.sort_level(V.Eval.whnf(fuel, env, Shape.ty(r), Nil{}))))
 
 # Is `t` a proof, that is, does its type live in `Prop`?
-def Shape.is_proof(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T.Term) -> Bool:
+def Shape.is_proof(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -> Bool:
   +r = Shape.infer(fuel, env, ctx, t)
   Bool.and(
     Shape.ok(r),

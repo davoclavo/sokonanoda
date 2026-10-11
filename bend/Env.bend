@@ -15,6 +15,7 @@
 import Base
 import ./Level.bend as L
 import ./Term.bend as T
+import ./Table.bend as Tb
 
 # One computation rule of a recursor: for this constructor, with this many
 # fields, reduce to this right-hand side.
@@ -462,9 +463,168 @@ def Lookup.get(lk: Lookup) -> Decl:
       Decl.none()
 
 # Find a declaration by id.
-def Env.find(env: List<&2, Decl>, +i: Nat) -> Lookup:
-  match env:
-    case Nil{}:
+# The environment as a trie on the bits of a name.
+#
+# It was a list, searched from the head, and a constant is looked up on every
+# step of reduction and inference. So checking a file cost the square of the
+# number of declarations in it, and the arena's `init-prelude` spent minutes
+# there after reading in two seconds.
+#
+# A found declaration is checked against the name asked for. The path already
+# determines the slot, so this cannot fail, and it is free: the declaration
+# carries its own name. It is the difference between a table that loses an
+# entry and one that answers under the wrong name.
+type DTable is Data:
+  DTip{}
+  DNode{v: Maybe<&2, Decl>, lo: DTable, hi: DTable}
+
+def Env.empty() -> DTable:
+  DTip{}
+
+def Env.found(m: Maybe<&2, Decl>, +i: Nat) -> Lookup:
+  match m:
+    case None{}:
       LMissing{}
-    case Con{+h, t}:
-      Env.pick(Nat.is_eq(Decl.id(h), i), LFound{h}, Env.find(t, i))
+    case Some{+d}:
+      Env.pick(Nat.is_eq(Decl.id(d), i), LFound{d}, LMissing{})
+
+def Env.at(t: DTable, +i: Nat) -> Lookup:
+  match t:
+    case DTip{}:
+      LMissing{}
+    case DNode{v, lo, hi}:
+      Env.found(v, i)
+
+# The declaration named `i`, or nothing. `stop` says the path ends at this
+# node and `b` says which half it takes otherwise.
+def Env.get(
+  n: Nat, stop: Bool, b: Bool, t: DTable, +i: Nat, +name: Nat
+) -> Lookup:
+  match n:
+    case 0n:
+      LMissing{}
+    case 1n+m:
+      match stop:
+        case True{}:
+          Env.at(t, name)
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case DTip{}:
+                  LMissing{}
+                case DNode{v, lo, hi}:
+                  Env.get(
+                    m,
+                    Tb.Table.here(Tb.Table.rest(i)),
+                    Tb.Table.low(Tb.Table.rest(i)),
+                    lo,
+                    Tb.Table.rest(i),
+                    name)
+            case False{}:
+              match t:
+                case DTip{}:
+                  LMissing{}
+                case DNode{v, lo, hi}:
+                  Env.get(
+                    m,
+                    Tb.Table.here(Tb.Table.rest(i)),
+                    Tb.Table.low(Tb.Table.rest(i)),
+                    hi,
+                    Tb.Table.rest(i),
+                    name)
+
+def Env.put(
+  n: Nat, stop: Bool, b: Bool, t: DTable, +i: Nat, +d: Decl
+) -> DTable:
+  match n:
+    case 0n:
+      t
+    case 1n+m:
+      match stop:
+        case True{}:
+          match t:
+            case DTip{}:
+              DNode{Some{d}, DTip{}, DTip{}}
+            case DNode{o, lo, hi}:
+              DNode{Some{d}, lo, hi}
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case DTip{}:
+                  DNode{
+                    None{},
+                    Env.put(
+                      m,
+                      Tb.Table.here(Tb.Table.rest(i)),
+                      Tb.Table.low(Tb.Table.rest(i)),
+                      DTip{},
+                      Tb.Table.rest(i),
+                      d),
+                    DTip{}}
+                case DNode{o, lo, hi}:
+                  DNode{
+                    o,
+                    Env.put(
+                      m,
+                      Tb.Table.here(Tb.Table.rest(i)),
+                      Tb.Table.low(Tb.Table.rest(i)),
+                      lo,
+                      Tb.Table.rest(i),
+                      d),
+                    hi}
+            case False{}:
+              match t:
+                case DTip{}:
+                  DNode{
+                    None{},
+                    DTip{},
+                    Env.put(
+                      m,
+                      Tb.Table.here(Tb.Table.rest(i)),
+                      Tb.Table.low(Tb.Table.rest(i)),
+                      DTip{},
+                      Tb.Table.rest(i),
+                      d)}
+                case DNode{o, lo, hi}:
+                  DNode{
+                    o,
+                    lo,
+                    Env.put(
+                      m,
+                      Tb.Table.here(Tb.Table.rest(i)),
+                      Tb.Table.low(Tb.Table.rest(i)),
+                      hi,
+                      Tb.Table.rest(i),
+                      d)}
+
+# Look up a name.
+def Env.find(+env: DTable, +i: Nat) -> Lookup:
+  Env.get(
+    Tb.Table.bits(),
+    Tb.Table.here(Tb.Table.path(i)),
+    Tb.Table.low(Tb.Table.path(i)),
+    env,
+    Tb.Table.path(i),
+    i)
+
+# Add a declaration under its own name.
+def Env.add(+env: DTable, +d: Decl) -> DTable:
+  Env.put(
+    Tb.Table.bits(),
+    Tb.Table.here(Tb.Table.path(Decl.id(d))),
+    Tb.Table.low(Tb.Table.path(Decl.id(d))),
+    env,
+    Tb.Table.path(Decl.id(d)),
+    d)
+
+
+# Every declaration of a list, under its own name. For a hand-built
+# environment, where the list is written out in the test itself.
+def Env.of_list(ds: List<&2, Decl>, +acc: DTable) -> DTable:
+  match ds:
+    case Nil{}:
+      acc
+    case Con{h, t}:
+      Env.of_list(t, Env.add(acc, h))

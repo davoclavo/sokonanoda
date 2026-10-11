@@ -217,7 +217,7 @@ def Eval.quot_pos(+d: E.Decl) -> Nat:
 # Can a quotient rule fire? The declaration must be lift or ind with enough
 # arguments, and the quotient itself must reduce to `Quot.mk`.
 def Eval.quot_ready(
-  +env: List<&2, E.Decl>, +d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term
+  +env: E.DTable, +d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term
 ) -> Bool:
   Bool.and(
     Nat.is_lt(Eval.quot_pos(d), Eval.len(sp, 0n)),
@@ -326,7 +326,7 @@ def Eval.head_levels(t: T.Term) -> List<&2, L.Level>:
 # and are skipped.
 
 # Is this reduced structure a constructor application with the field present?
-def Eval.proj_ready(+env: List<&2, E.Decl>, +idx: Nat, +sw: T.Term) -> Bool:
+def Eval.proj_ready(+env: E.DTable, +idx: Nat, +sw: T.Term) -> Bool:
   Bool.and(
     E.Decl.is_ctor(E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(sw))))),
     Nat.is_lt(
@@ -337,7 +337,7 @@ def Eval.proj_ready(+env: List<&2, E.Decl>, +idx: Nat, +sw: T.Term) -> Bool:
       Eval.len(Eval.spine(sw, Nil{}), 0n)))
 
 # The field itself. Guard with `Eval.proj_ready`.
-def Eval.proj_field(+env: List<&2, E.Decl>, +idx: Nat, +sw: T.Term) -> T.Term:
+def Eval.proj_field(+env: E.DTable, +idx: Nat, +sw: T.Term) -> T.Term:
   Eval.nth(
     Eval.spine(sw, Nil{}),
     Nat.add(
@@ -505,7 +505,7 @@ def Eval.prim_term(
 # shortage of budget is reported as a rejection. The projection case has
 # always done this; the constant case did not, and that is what made the
 # arena's `beta-ladder` and `folded-constant-first` reject.
-def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
+def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
     case 0n:
       T.TUnk{}

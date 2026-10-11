@@ -190,7 +190,7 @@ def Conv.head_name(t: T.Term) -> Nat:
       0n
 
 # Does this declaration describe a unit type?
-def Conv.unit_of(+env: List<&2, E.Decl>, +d: E.Decl) -> Bool:
+def Conv.unit_of(+env: E.DTable, +d: E.Decl) -> Bool:
   Bool.and(
     Bool.and(E.Decl.is_ind(d), Nat.is_eq(E.Decl.ind_ni(d), 0n)),
     Bool.and(
@@ -208,12 +208,12 @@ def Conv.unit_of(+env: List<&2, E.Decl>, +d: E.Decl) -> Bool:
 # the arena's `unitEta` tests. The general structure rule, where an element
 # equals its constructor applied to its own projections, needs projections and
 # is not here.
-def Conv.is_unit(+env: List<&2, E.Decl>, +t: T.Term) -> Bool:
+def Conv.is_unit(+env: E.DTable, +t: T.Term) -> Bool:
   Conv.unit_of(env, E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))))
 
 # Try proof irrelevance in earnest, now that it is worth the inference.
 def Conv.irrel_go(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> Step:
   +ra = S.Shape.infer(fuel, env, ctx, a)
   +rb = S.Shape.infer(fuel, env, ctx, b)
@@ -235,7 +235,7 @@ def Conv.irrel_go(
 #
 # The two types are inferred once and bound, not inferred again for each use.
 def Conv.irrel(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> Step:
   Conv.pick_step(
     Bool.and(Conv.maybe_proof(a), Conv.maybe_proof(b)),
@@ -299,7 +299,7 @@ def Conv.k_type_ok(+d: E.Decl, +ty: T.Term) -> Bool:
   Nat.is_eq(Conv.head_name(Conv.head(ty)), E.Decl.only(E.Decl.rec_inds(d)))
 
 # The constructor, applied to the parameters the major premise's type carries.
-def Conv.k_ctor(+env: List<&2, E.Decl>, +d: E.Decl, +ty: T.Term) -> T.Term:
+def Conv.k_ctor(+env: E.DTable, +d: E.Decl, +ty: T.Term) -> T.Term:
   V.Eval.rebuild(
     V.Eval.take(Conv.args(ty), E.Decl.rec_np(d)),
     T.TConst{
@@ -319,7 +319,7 @@ def Conv.k_ctor(+env: List<&2, E.Decl>, +d: E.Decl, +ty: T.Term) -> T.Term:
 # still `Eq Bool true true`, so it must not. The comparison is syntactic,
 # which tells those two apart and can only ever be too strict.
 def Conv.k_fits(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>,
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
   +d: E.Decl, +ty: T.Term
 ) -> Bool:
   T.Term.same(
@@ -335,7 +335,7 @@ def Conv.k_fits(
 # No fields is what lets the constructor be written without projections. A
 # constructor that carries data needs them, so `Acc`, whose one constructor
 # does carry data, is left alone. That is the arena's `101_ruleKAcc`.
-def Conv.k_single(+env: List<&2, E.Decl>, +d: E.Decl) -> Bool:
+def Conv.k_single(+env: E.DTable, +d: E.Decl) -> Bool:
   Bool.and(
     E.Decl.is_one(
       E.Decl.ind_ctors(
@@ -355,7 +355,7 @@ def Conv.k_single(+env: List<&2, E.Decl>, +d: E.Decl) -> Bool:
 # recursor with the flag set and enough arguments, its inductive must have one
 # constructor, and the major premise's type must head that inductive.
 def Conv.k_ok(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>,
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
   +d: E.Decl, +args: List<&2, T.Term>, +ty: T.Term
 ) -> Bool:
   Bool.and(
@@ -368,7 +368,7 @@ def Conv.k_ok(
 
 # The application with its major premise replaced by the constructor.
 def Conv.k_rebuilt(
-  +env: List<&2, E.Decl>, +d: E.Decl, +t: T.Term, +args: List<&2, T.Term>, +ty: T.Term
+  +env: E.DTable, +d: E.Decl, +t: T.Term, +args: List<&2, T.Term>, +ty: T.Term
 ) -> T.Term:
   V.Eval.rebuild(
     Conv.put(args, V.Eval.major_idx(d), Conv.k_ctor(env, d, ty)),
@@ -376,7 +376,7 @@ def Conv.k_rebuilt(
 
 # Fire it, or leave the term alone.
 def Conv.k_go(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +t: T.Term,
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +t: T.Term,
   +d: E.Decl, +args: List<&2, T.Term>, +ty: T.Term
 ) -> T.Term:
   Conv.pick_t(
@@ -386,7 +386,7 @@ def Conv.k_go(
 
 # Apply the K rule to a term already in weak head normal form, if it applies.
 def Conv.k_fix(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +t: T.Term
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +t: T.Term
 ) -> T.Term:
   Conv.k_go(
     fuel, env, ctx, t,
@@ -427,7 +427,7 @@ def Conv.eta_fields(n: Nat, +ind: Nat, +b: T.Term, +i: Nat) -> List<&2, T.Term>:
 #
 # This is the whole cheap test. It guards the one expensive step, which is
 # inferring the type of `b`.
-def Conv.eta_ready(+env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat) -> Bool:
+def Conv.eta_ready(+env: E.DTable, +d: E.Decl, +b: T.Term, +nargs: Nat) -> Bool:
   Bool.and(
     Bool.and(
       E.Decl.is_ctor(d),
@@ -448,7 +448,7 @@ def Conv.eta_ready(+env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat) 
 # A branch of `Conv.pick_t` is evaluated whether or not it is chosen, so the
 # type of a sort is what the common case pays for.
 def Conv.eta_subj(
-  +env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat
+  +env: E.DTable, +d: E.Decl, +b: T.Term, +nargs: Nat
 ) -> T.Term:
   Conv.pick_t(Conv.eta_ready(env, d, b, nargs), b, T.TSort{L.LZero{}})
 
@@ -456,7 +456,7 @@ def Conv.eta_subj(
 # the constructor's own inductive. Without the second part the rule rewrites a
 # term of some other type and the comparison that follows means nothing.
 def Conv.eta_ok(
-  +env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
+  +env: E.DTable, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
 ) -> Bool:
   Bool.and(
     Conv.eta_ready(env, d, b, nargs),
@@ -472,14 +472,14 @@ def Conv.eta_mk(+d: E.Decl, +b: T.Term, +ty: T.Term) -> T.Term:
     T.TConst{E.Decl.id(d), Conv.head_levels(Conv.head(ty))})
 
 def Conv.eta_go(
-  +env: List<&2, E.Decl>, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
+  +env: E.DTable, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
 ) -> T.Term:
   Conv.pick_t(Conv.eta_ok(env, d, b, nargs, ty), Conv.eta_mk(d, b, ty), b)
 
 # Rewrite `b` into a constructor application when `a` is one. Both sides are
 # already in weak head normal form.
 def Conv.eta_fix(
-  +fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> T.Term:
   Conv.eta_go(
     env,
@@ -500,7 +500,7 @@ def Conv.eta_fix(
 
 # Reduce the two sides of a pair, then try proof irrelevance before taking
 # them apart.
-def Conv.classify_pair(+fuel: Nat, +env: List<&2, E.Decl>, p: TPair) -> Step:
+def Conv.classify_pair(+fuel: Nat, +env: E.DTable, p: TPair) -> Step:
   match p:
     case MkPair{+ctx, a, b}:
       +ka = Conv.k_fix(fuel, env, ctx, V.Eval.whnf(fuel, env, a, Nil{}))
@@ -519,7 +519,7 @@ def Conv.classify_pair(+fuel: Nat, +env: List<&2, E.Decl>, p: TPair) -> Step:
 # definite no anywhere is a rejection whatever the rest says, and not knowing
 # one pair leaves the whole answer unknown unless some other pair is a
 # definite no.
-def Conv.eq_all(+fuel: Nat, +env: List<&2, E.Decl>, work: List<&2, TPair>) -> A.Ans:
+def Conv.eq_all(+fuel: Nat, +env: E.DTable, work: List<&2, TPair>) -> A.Ans:
   match fuel:
     case 0n:
       A.AUnk{}
@@ -535,10 +535,10 @@ def Conv.eq_all(+fuel: Nat, +env: List<&2, E.Decl>, work: List<&2, TPair>) -> A.
 
 # Are these two terms definitionally equal in the given context?
 def Conv.eq_in(
-  +fuel: Nat, +env: List<&2, E.Decl>, ctx: List<&2, T.Term>, a: T.Term, b: T.Term
+  +fuel: Nat, +env: E.DTable, ctx: List<&2, T.Term>, a: T.Term, b: T.Term
 ) -> A.Ans:
   Conv.eq_all(fuel, env, [MkPair{ctx, a, b}])
 
 # Are these two closed terms definitionally equal?
-def Conv.eq(+fuel: Nat, +env: List<&2, E.Decl>, a: T.Term, b: T.Term) -> A.Ans:
+def Conv.eq(+fuel: Nat, +env: E.DTable, a: T.Term, b: T.Term) -> A.Ans:
   Conv.eq_in(fuel, env, Nil{}, a, b)

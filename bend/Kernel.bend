@@ -20,14 +20,14 @@ import ./Infer.bend as I
 import ./Ans.bend as A
 
 # Is this term a type, that is, does its own type reduce to a sort?
-def Kernel.is_type(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> A.Ans:
+def Kernel.is_type(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
   +r = I.Infer.infer(fuel, env, Nil{}, ty)
   A.Ans.and(
     I.Infer.res_ans(r),
     I.Infer.sort_ans(V.Eval.whnf(fuel, env, I.Infer.res_ty(r), Nil{})))
 
 # Does `v` have type `ty`?
-def Kernel.has_type(+fuel: Nat, +env: List<&2, E.Decl>, v: T.Term, ty: T.Term) -> A.Ans:
+def Kernel.has_type(+fuel: Nat, +env: E.DTable, v: T.Term, ty: T.Term) -> A.Ans:
   +r = I.Infer.infer(fuel, env, Nil{}, v)
   A.Ans.and(
     I.Infer.res_ans(r),
@@ -35,14 +35,14 @@ def Kernel.has_type(+fuel: Nat, +env: List<&2, E.Decl>, v: T.Term, ty: T.Term) -
 
 # Is this term a Prop, that is, does its own type reduce to `Sort 0`?
 # A theorem's type must be one.
-def Kernel.is_prop(+fuel: Nat, +env: List<&2, E.Decl>, ty: T.Term) -> A.Ans:
+def Kernel.is_prop(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
   +w = V.Eval.whnf(fuel, env, I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, ty)), Nil{})
   A.Ans.and(
     I.Infer.sort_ans(w),
     A.Ans.of(L.Level.is_zero(I.Infer.sort_level(w))))
 
 # Check one declaration against the declarations before it.
-def Kernel.check_decl(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> A.Ans:
+def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
   match d:
     case E.DAxiom{id, ps, ty}:
       A.Ans.and(
@@ -94,13 +94,13 @@ def Kernel.missing(lk: E.Lookup) -> Bool:
       True{}
 
 # Is this name free in the environment? A declaration may not be made twice.
-def Kernel.is_fresh(+env: List<&2, E.Decl>, +i: Nat) -> Bool:
+def Kernel.is_fresh(+env: E.DTable, +i: Nat) -> Bool:
   Kernel.missing(E.Env.find(env, i))
 
 # Check every declaration, each against the ones before it. A name that is
 # already taken is rejected, which is what stops a second declaration of the
 # same constant from quietly replacing the first.
-def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> A.Ans:
+def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> A.Ans:
   match ds:
     case Nil{}:
       A.AYes{}
@@ -109,7 +109,7 @@ def Kernel.check_all(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -
         A.Ans.and(
           A.Ans.of(Kernel.is_fresh(acc, E.Decl.id(h))),
           Kernel.check_decl(fuel, acc, h)),
-        Kernel.check_all(t, fuel, Con{h, acc}))
+        Kernel.check_all(t, fuel, E.Env.add(acc, h)))
 
 # The kind of a declaration, for the report.
 def Kernel.kind_name(d: E.Decl) -> String:
@@ -143,7 +143,7 @@ def Kernel.flag(+name: String, a: A.Ans) -> String:
 
 # Which of the checks on a declaration passed? A rejection says little on its
 # own, and the three parts fail for very different reasons.
-def Kernel.why(+fuel: Nat, +env: List<&2, E.Decl>, d: E.Decl) -> String:
+def Kernel.why(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
   match d:
     case E.DAxiom{id, ps, ty}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
@@ -177,7 +177,7 @@ def Kernel.mark(a: A.Ans, +id: Nat, +kind: String, +why: String) -> String:
 # Which declaration failed? Reports one line per declaration, in order, so a
 # rejection can be traced to the declaration that caused it rather than
 # guessed at. The id is the export's own name index.
-def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> String:
+def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: E.DTable) -> String:
   match ds:
     case Nil{}:
       ""
@@ -188,7 +188,7 @@ def Kernel.report(ds: List<&2, E.Decl>, +fuel: Nat, +acc: List<&2, E.Decl>) -> S
           Kernel.check_decl(fuel, acc, h)),
         E.Decl.id(h),
         Kernel.kind_name(h),
-        Kernel.why(fuel, acc, h)) ++ Kernel.report(t, fuel, Con{h, acc})
+        Kernel.why(fuel, acc, h)) ++ Kernel.report(t, fuel, E.Env.add(acc, h))
 
 # Is this declaration one whose contents are not checked?
 def Kernel.is_trusted(d: E.Decl) -> Bool:
