@@ -431,20 +431,87 @@ def Eval.lit_ctor(t: T.Term) -> T.Term:
 
 # Choose one of eight numbers on an op code. Code zero and anything past the
 # eighth answer zero; `Eval.prim_ready` has already ruled those out.
+# The largest number this kernel will compute.
+#
+# Bend's immediate holds up to 2^48-1 and the runtime stops the program dead
+# past it: `a Nat past the largest immediate 2^48-1`. A crash is the one
+# answer worse than not knowing, and the prelude reaches it. `UInt64.size` is
+# `2 ^ 64`, and the native power computed it.
+#
+# This is 2^47. Every operation below is guarded so that it never forms a
+# number past this, and `Eval.prim_fits` turns a result at the cap into the
+# unknown term, so a file that needs `2 ^ 64` declines rather than dies.
+# `2 ^ 32`, which `Char` and `UInt32` need, is far below it.
+# A `Nat` literal in Bend source stops at 2^32-1, so this is written as a
+# product.
+def Eval.num_cap() -> Nat:
+  Nat.mul(1073741824n, 131072n)
+
+def Eval.mul_pick(ok: Bool, +a: Nat, +b: Nat) -> Nat:
+  match ok:
+    case True{}:
+      Nat.mul(a, b)
+    case False{}:
+      Eval.num_cap()
+
+# A product, or the cap. The test is a division, so the product is formed only
+# when it fits.
+def Eval.mul_cap(+a: Nat, +b: Nat) -> Nat:
+  Eval.mul_pick(
+    Bool.or(
+      Nat.is_eq(b, 0n),
+      Nat.is_le(a, Nat.div(Eval.num_cap(), b))),
+    a, b)
+
+def Eval.add_pick(ok: Bool, +a: Nat, +b: Nat) -> Nat:
+  match ok:
+    case True{}:
+      Nat.add(a, b)
+    case False{}:
+      Eval.num_cap()
+
+def Eval.add_cap(+a: Nat, +b: Nat) -> Nat:
+  Eval.add_pick(Nat.is_le(a, Nat.sub(Eval.num_cap(), b)), a, b)
+
+# `x` to the `y`, capped. Once the running value reaches the cap it stays
+# there, because the cap is not below the cap divided by anything above one.
+def Eval.pow_cap(+x: Nat, y: Nat, +acc: Nat) -> Nat:
+  match y:
+    case 0n:
+      acc
+    case 1n+k:
+      Eval.pow_cap(x, k, Eval.mul_cap(acc, x))
+
+# Division by zero is zero, as Lean defines it, and the same for the
+# remainder. Bend's own division does not promise that.
+def Eval.div_pick(ok: Bool, +a: Nat, +b: Nat) -> Nat:
+  match ok:
+    case True{}:
+      Nat.div(a, b)
+    case False{}:
+      0n
+
+def Eval.mod_pick(ok: Bool, +a: Nat, +b: Nat) -> Nat:
+  match ok:
+    case True{}:
+      Nat.mod(a, b)
+    case False{}:
+      0n
+
 def Eval.prim_num(+op: Nat, +x: Nat, +y: Nat) -> Nat:
   match op:
     case 1n:
-      Nat.add(x, y)
+      Eval.add_cap(x, y)
     case 2n:
       Nat.sub(x, y)
     case 3n:
-      Nat.mul(x, y)
+      Eval.mul_cap(x, y)
     case 4n:
-      Nat.div(x, y)
+      Eval.div_pick(Bool.not(Nat.is_eq(y, 0n)), x, y)
     case 5n:
-      Nat.mod(x, y)
+      Eval.mod_pick(Bool.not(Nat.is_eq(y, 0n)), x, y)
     case 8n:
-      Nat.pow(x, y)
+      Eval.pow_cap(x, y, 1n)
     case o:
       0n
 
@@ -453,6 +520,13 @@ def Eval.prim_cmp(+op: Nat) -> Bool:
   Bool.or(Nat.is_eq(op, 6n), Nat.is_eq(op, 7n))
 
 # Choose between two Bools on a computed Bool.
+# Does this operation's answer fit? A comparing op always does, and a number
+# that reached the cap did not.
+def Eval.prim_fits(+op: Nat, +x: Nat, +y: Nat) -> Bool:
+  Bool.or(
+    Eval.prim_cmp(op),
+    Nat.is_lt(Eval.prim_num(op, x, y), Eval.num_cap()))
+
 def Eval.pick_b(b: Bool, x: Bool, y: Bool) -> Bool:
   match b:
     case True{}:
@@ -490,6 +564,20 @@ def Eval.prim_ready(
 # The answer, with whatever followed the two arguments still applied. A sort
 # when the rule cannot fire, because a branch of `Eval.pick_t` is evaluated
 # whether or not it is chosen and the caller reduces this.
+# The number, or the unknown term when it does not fit.
+def Eval.prim_fit_term(
+  fits: Bool, +op: Nat, +x: T.Term, +y: T.Term
+) -> T.Term:
+  match fits:
+    case False{}:
+      T.TUnk{}
+    case True{}:
+      T.TNat{
+        Eval.prim_num(op, Eval.nat_val(x), Eval.nat_val(y)),
+        Eval.nat_name(x),
+        Eval.nat_zr(x),
+        Eval.nat_sc(x)}
+
 def Eval.prim_term(
   +d: E.Decl, +sp: List<&2, T.Term>, +x: T.Term, +y: T.Term
 ) -> T.Term:
@@ -506,11 +594,10 @@ def Eval.prim_term(
             E.Decl.prim_yes(d),
             E.Decl.prim_no(d)),
           Nil{}},
-        T.TNat{
-          Eval.prim_num(E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y)),
-          Eval.nat_name(x),
-          Eval.nat_zr(x),
-          Eval.nat_sc(x)})),
+        Eval.prim_fit_term(
+          Eval.prim_fits(
+            E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y)),
+          E.Decl.prim_op(d), x, y))),
     T.TSort{L.LZero{}})
 
 # Reduce `t` applied to `sp` to weak head normal form.
