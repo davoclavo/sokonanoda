@@ -34,15 +34,29 @@ import ./Shape.bend as S
 import ./Ans.bend as A
 
 # A pair of terms still to be shown equal, with the context they live in.
+#
+# `MkDeep` is the same question with the cheap route already spent: reduce the
+# two sides, do not offer to compare their spines again. See "Comparing a
+# spine before unfolding it" below.
 type TPair is Data:
   MkPair{ctx: List<&2, T.Term>, a: T.Term, b: T.Term}
+  MkDeep{ctx: List<&2, T.Term>, a: T.Term, b: T.Term}
 
 # What one pair reduces to.
+#
+# `SEither` holds two routes to the same answer, the cheap one first. The
+# queue takes the cheap one and puts the other aside.
 type Step is Data:
   SNo{}
   SYes{}
   SUnk{}
   SMore{ps: List<&2, TPair>}
+  SEither{cheap: List<&2, TPair>, dear: List<&2, TPair>}
+
+# A route put aside: the queue to work if the cheap one fails, and the answer
+# that stood when it was set down.
+type Alt is Data:
+  MkAlt{acc: A.Ans, work: List<&2, TPair>}
 
 # Choose between two Bools on a computed Bool.
 def Conv.pick_b(b: Bool, x: Bool, y: Bool) -> Bool:
@@ -71,8 +85,11 @@ def Conv.step_ans(s: Step) -> A.Ans:
       A.AUnk{}
     case SMore{ps}:
       A.AYes{}
+    case SEither{cheap, dear}:
+      A.AYes{}
 
-# The further pairs a step asks for.
+# The further pairs a step asks for. For a step with two routes that is the
+# cheap one; the other goes on the stack of routes put aside.
 def Conv.step_more(s: Step) -> List<&2, TPair>:
   match s:
     case SNo{}:
@@ -83,6 +100,28 @@ def Conv.step_more(s: Step) -> List<&2, TPair>:
       Nil{}
     case SMore{ps}:
       ps
+    case SEither{cheap, dear}:
+      cheap
+
+# The routes put aside, with this step's own added if it has one. The rest of
+# the queue goes with it, because the cheap route replaced a pair in it.
+def Conv.step_alts(
+  s: Step, acc: A.Ans, rest: List<&2, TPair>, alts: List<&2, Alt>
+) -> List<&2, Alt>:
+  match s alts:
+    case SEither{cheap, dear} Nil{}:
+      [MkAlt{acc, List.append(&2, TPair, dear, rest)}]
+    case o as:
+      as
+
+# The answer when the budget runs out. A route still on the stack might have
+# answered yes, so a no that is waiting for one is not a no.
+def Conv.out_of_fuel(acc: A.Ans, alts: List<&2, Alt>) -> A.Ans:
+  match alts:
+    case Nil{}:
+      A.Ans.and(acc, A.AUnk{})
+    case o:
+      A.AUnk{}
 
 # A yes or no step from a Bool.
 def Conv.step_of(b: Bool) -> Step:
@@ -584,20 +623,89 @@ def Conv.classify_work(
 # because the two sides of a real conversion question differ in one place. Each
 # one used to pay for two whnf passes, two K rule passes and two eta passes
 # before anything looked at it.
+# Comparing a spine before unfolding it
+# -------------------------------------
+#
+# `f x` and `f y` are the same term when `x` and `y` are, whatever `f` does,
+# and finding that out costs one pair per argument. Reducing them instead
+# unfolds `f` on both sides, and if `f` is a definition over a recursor that
+# can cost everything.
+#
+# The arena's `proj-stuck-struct` is this and nothing else. It asks the kernel
+# to see that `Prod.fst (step (id n) 12 m)` and `Prod.fst (step n 12 m)` are
+# the same, where `step` runs through `Nat.brecOn` and `Nat.below`. Compared
+# spine by spine it comes down to `id n` against `n`, which is one delta step.
+# Reduced, it builds twelve nested structures twice and does not finish in six
+# minutes.
+#
+# The cheap route is sufficient and not necessary: `f x` and `f y` can be
+# equal with `x` and `y` not equal, when `f` throws its argument away. So the
+# route cannot simply be taken. `SEither` offers both, the queue takes the
+# cheap one and puts the other on a stack, and a definite no pops the stack
+# instead of ending the walk. Nothing is lost and nothing is unsound.
+#
+# The route put aside is a `MkDeep`, which is the same question with the cheap
+# route spent, so the offer is never made twice on one pair and the walk
+# always moves.
+
+# Are these two terms the same constant applied to the same number of
+# arguments? The levels have to agree as well, since the head carries them.
+def Conv.spine_match(+fuel: Nat, +a: T.Term, +b: T.Term) -> Bool:
+  Bool.and(
+    Bool.and(
+      V.Eval.head_is_const(Conv.head(a)),
+      V.Eval.head_is_const(Conv.head(b))),
+    Bool.and(
+      Bool.and(
+        Nat.is_eq(
+          Conv.head_name(Conv.head(a)), Conv.head_name(Conv.head(b))),
+        Conv.levels_eq(
+          fuel,
+          Conv.head_levels(Conv.head(a)),
+          Conv.head_levels(Conv.head(b)))),
+      Bool.and(
+        Nat.is_eq(
+          V.Eval.len(Conv.args(a), 0n), V.Eval.len(Conv.args(b), 0n)),
+        Nat.is_lt(0n, V.Eval.len(Conv.args(a), 0n)))))
+
+# One pair per argument, in the context the application lives in.
+def Conv.zip_pairs(
+  xs: List<&2, T.Term>, ys: List<&2, T.Term>, +ctx: List<&2, T.Term>
+) -> List<&2, TPair>:
+  match xs ys:
+    case Con{x, xr} Con{y, yr}:
+      Con{MkPair{ctx, x, y}, Conv.zip_pairs(xr, yr, ctx)}
+    case x y:
+      Nil{}
+
+def Conv.spine_or(
+  spine: Bool, +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
+  +a: T.Term, +b: T.Term
+) -> Step:
+  match spine:
+    case True{}:
+      SEither{
+        Conv.zip_pairs(Conv.args(a), Conv.args(b), ctx),
+        [MkDeep{ctx, a, b}]}
+    case False{}:
+      Conv.classify_work(fuel, env, ctx, a, b)
+
 def Conv.same_or(
   eq: Bool, +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
-  a: T.Term, b: T.Term
+  +a: T.Term, +b: T.Term
 ) -> Step:
   match eq:
     case True{}:
       SYes{}
     case False{}:
-      Conv.classify_work(fuel, env, ctx, a, b)
+      Conv.spine_or(Conv.spine_match(fuel, a, b), fuel, env, ctx, a, b)
 
 def Conv.classify_pair(+fuel: Nat, +env: E.DTable, p: TPair) -> Step:
   match p:
     case MkPair{+ctx, +a, +b}:
       Conv.same_or(T.Term.same(a, b), fuel, env, ctx, a, b)
+    case MkDeep{+ctx, a, b}:
+      Conv.classify_work(fuel, env, ctx, a, b)
 
 # Work the queue. It empties exactly when every pair in it is equal.
 #
@@ -616,27 +724,34 @@ def Conv.classify_pair(+fuel: Nat, +env: E.DTable, p: TPair) -> Step:
 #
 # Not knowing one pair leaves the whole answer unknown unless some other pair
 # is a definite no, so an unknown keeps the walk going.
-def Conv.eq_all(+fuel: Nat, +env: E.DTable, acc: A.Ans, work: List<&2, TPair>) -> A.Ans:
+def Conv.eq_all(
+  +fuel: Nat, +env: E.DTable, acc: A.Ans, alts: List<&2, Alt>,
+  work: List<&2, TPair>
+) -> A.Ans:
   match fuel:
     case 0n:
-      A.Ans.and(acc, A.AUnk{})
+      Conv.out_of_fuel(acc, alts)
     case 1n+f:
-      match acc work:
-        case A.ANo{} w:
+      match acc alts work:
+        case A.ANo{} Nil{} w:
           A.ANo{}
-        case a Nil{}:
+        case A.ANo{} Con{MkAlt{a2, w2}, r2} w:
+          Conv.eq_all(f, env, a2, r2, w2)
+        case a as Nil{}:
           a
-        case a Con{p, rest}:
+        case +a as Con{p, +rest}:
           +st = Conv.classify_pair(f, env, p)
           Conv.eq_all(
-            f, env, A.Ans.and(a, Conv.step_ans(st)),
+            f, env,
+            A.Ans.and(a, Conv.step_ans(st)),
+            Conv.step_alts(st, a, rest, as),
             List.append(&2, TPair, Conv.step_more(st), rest))
 
 # Are these two terms definitionally equal in the given context?
 def Conv.eq_in(
   +fuel: Nat, +env: E.DTable, ctx: List<&2, T.Term>, a: T.Term, b: T.Term
 ) -> A.Ans:
-  Conv.eq_all(fuel, env, A.AYes{}, [MkPair{ctx, a, b}])
+  Conv.eq_all(fuel, env, A.AYes{}, Nil{}, [MkPair{ctx, a, b}])
 
 # Conversion, unless the question is already settled.
 #
