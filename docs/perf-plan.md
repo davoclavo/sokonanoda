@@ -656,3 +656,14 @@ hundred. Bend is affine: a value read in two owned positions is copied, and
 the copy is lazy and repeated, so an explicit copy at a known place beats a
 shared one in an unknown place. Do not try a third time without reading those
 two results first.
+
+| hypothesis | status | result |
+|---|---|---|
+| B16 checking declarations in parallel helps the big files | **rejected** | a divide and conquer over the declaration list with a parallel let moved none of `magma-list-deep-n21`, `magma-list-pair-n7` or `fueled-chain`, each of which has 143 to 514 declarations, and it gives up the short circuit on a rejection. Not kept |
+| B17 `init-prelude` is a constant factor away | **rejected** | it does not finish in nine hundred seconds, so it is at least fifteen times away and probably more. 1824 declarations, each of them real work |
+| B18 `perf/grind-ring-5` can be read at all | **rejected** | 10.2 MB, no verdict in three hundred seconds |
+
+So the nine files that time out are not a tuning problem. Five of them are
+small files built to punish a kernel with no sharing, and `init-prelude` is
+large and wants throughput this representation does not have. B13 says what
+the missing piece is and why Bend charges for it.
