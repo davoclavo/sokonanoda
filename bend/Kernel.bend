@@ -80,6 +80,42 @@ def Kernel.rec_ok(+env: E.DTable, +d: E.Decl) -> Bool:
     Bool.not(E.Decl.is_nil(E.Decl.rec_inds(d))),
     Kernel.rec_inds_ok(env, E.Decl.rec_inds(d)))
 
+# An inductive's type is a telescope of one binder for each parameter and
+# each index, and it ends in a sort. The arena attacks both halves:
+# `inductTooFewParams` states two parameters for a type with one binder, and
+# `inductBadNonSort2` ends in `aType`, an axiom whose own type is a sort,
+# which makes it a term of a sort and never a sort itself.
+#
+# Reduction runs before each binder, because a binder can be hidden behind a
+# definition. Running out of binders answers with a loose variable, which is
+# neither a sort nor a pi, so the check reports a definite no: a term already
+# in weak head normal form that is not a pi will never become one. Running out
+# of budget answers with the unknown term, and that reports not knowing.
+def Kernel.strip(fuel: Nat, +env: E.DTable, n: Nat, w: T.Term) -> T.Term:
+  match fuel:
+    case 0n:
+      T.TUnk{}
+    case 1n+(+f):
+      match n:
+        case 0n:
+          w
+        case 1n+m:
+          match w:
+            case T.TPi{ty, bd}:
+              Kernel.strip(f, env, m, V.Eval.whnf(f, env, bd, Nil{}))
+            case T.TUnk{}:
+              T.TUnk{}
+            case x:
+              T.TVar{0n}
+
+def Kernel.ind_shape(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
+  I.Infer.sort_ans(
+    Kernel.strip(
+      fuel,
+      env,
+      Nat.add(E.Decl.ind_np(d), E.Decl.ind_ni(d)),
+      V.Eval.whnf(fuel, env, E.Decl.ind_ty(d), Nil{})))
+
 # Check one declaration against the declarations before it.
 def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
   match d:
@@ -101,9 +137,12 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
             Kernel.is_type(fuel, env, ty),
             Kernel.is_prop(fuel, env, ty)),
           Kernel.has_type(fuel, env, val, ty)))
-    case E.DInd{id, ps, ty, np, ni, ctors}:
+    case E.DInd{+id, +ps, +ty, +np, +ni, +ctors}:
       A.Ans.and(
-        A.Ans.of(E.Decl.no_dupes(ps)),
+        A.Ans.and(
+          A.Ans.of(E.Decl.no_dupes(ps)),
+          Kernel.ind_shape(
+            fuel, env, E.DInd{id, ps, ty, np, ni, ctors})),
         Kernel.is_type(fuel, env, ty))
     case E.DCtor{+id, +ps, +ty, +ind, +cidx, +np, +nf}:
       A.Ans.and(

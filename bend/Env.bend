@@ -309,6 +309,14 @@ def Decl.is_ind(d: Decl) -> Bool:
     case o:
       False{}
 
+# An inductive's type as written, with its level parameters still in place.
+def Decl.ind_ty(d: Decl) -> T.Term:
+  match d:
+    case DInd{id, ps, ty, np, ni, ctors}:
+      ty
+    case o:
+      T.TUnk{}
+
 def Decl.ind_np(d: Decl) -> Nat:
   match d:
     case DInd{id, ps, ty, np, ni, ctors}:
