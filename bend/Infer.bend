@@ -369,11 +369,11 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           +gt = V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, g)), Nil{})
           +at = Infer.infer(f, env, ctx, a)
           Infer.res_of(
-            A.Ans.and(
+            C.Conv.eq_unless_no(
               A.Ans.and(
                 Infer.pi_ans(gt),
                 Infer.res_ans(at)),
-              C.Conv.eq_in(f, env, ctx, Infer.res_ty(at), Infer.pi_dom(gt))),
+              f, env, ctx, Infer.res_ty(at), Infer.pi_dom(gt)),
             T.Term.inst(Infer.pi_bd(gt), a))
         case T.TLam{+ty, bd}:
           +bt = Infer.infer(f, env, Con{ty, ctx}, bd)
@@ -415,7 +415,7 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           +vt = Infer.infer(f, env, ctx, v)
           +br = Infer.infer(f, env, ctx, T.Term.inst(bd, v))
           Infer.res_of(
-            A.Ans.and(
+            C.Conv.eq_unless_no(
               A.Ans.and(Infer.res_ans(vt), Infer.res_ans(br)),
-              C.Conv.eq_in(f, env, ctx, Infer.res_ty(vt), ty)),
+              f, env, ctx, Infer.res_ty(vt), ty),
             Infer.res_ty(br))

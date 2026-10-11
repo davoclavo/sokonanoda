@@ -162,8 +162,12 @@ def Conv.structural(
 
 # Could this term be a proof? A sort and a pi are types, and the type of a
 # type is never `Prop`, so neither can ever be a proof. The test is syntactic
-# and costs nothing, which matters: without it every pair on the queue pays
-# for an inference pass, and the recursion-heavy tests do not finish.
+# and costs nothing, which matters: a pair that cannot be two proofs must not
+# pay for an inference pass.
+#
+# The test alone was not enough. `Conv.irrel` read it through
+# `Conv.pick_step`, which evaluates both of its branches, so every pair paid
+# for the inference anyway. `Conv.irrel_pick` matches the test instead.
 def Conv.maybe_proof(t: T.Term) -> Bool:
   match t:
     case T.TSort{l}:
@@ -211,13 +215,24 @@ def Conv.unit_of(+env: E.DTable, +d: E.Decl) -> Bool:
 def Conv.is_unit(+env: E.DTable, +t: T.Term) -> Bool:
   Conv.unit_of(env, E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))))
 
+# The two types on the queue, or the two terms taken apart.
+def Conv.irrel_step(
+  ok: Bool, +fuel: Nat, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term,
+  +ta: T.Term, +tb: T.Term
+) -> Step:
+  match ok:
+    case True{}:
+      SMore{[MkPair{ctx, ta, tb}]}
+    case False{}:
+      Conv.structural(fuel, ctx, a, b)
+
 # Try proof irrelevance in earnest, now that it is worth the inference.
 def Conv.irrel_go(
   +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> Step:
   +ra = S.Shape.infer(fuel, env, ctx, a)
   +rb = S.Shape.infer(fuel, env, ctx, b)
-  Conv.pick_step(
+  Conv.irrel_step(
     Bool.and(
       Bool.and(S.Shape.ok(ra), S.Shape.ok(rb)),
       Bool.or(
@@ -225,8 +240,7 @@ def Conv.irrel_go(
         Conv.is_unit(
           env,
           V.Eval.whnf(fuel, env, S.Shape.ty(ra), Nil{})))),
-    SMore{[MkPair{ctx, S.Shape.ty(ra), S.Shape.ty(rb)}]},
-    Conv.structural(fuel, ctx, a, b))
+    fuel, ctx, a, b, S.Shape.ty(ra), S.Shape.ty(rb))
 
 # Two terms are equal when their types are, in two cases: the type is a
 # proposition, which is proof irrelevance, or the type is a unit, which is eta
@@ -234,13 +248,22 @@ def Conv.irrel_go(
 # of the two terms.
 #
 # The two types are inferred once and bound, not inferred again for each use.
+def Conv.irrel_pick(
+  maybe: Bool, +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
+  +a: T.Term, +b: T.Term
+) -> Step:
+  match maybe:
+    case True{}:
+      Conv.irrel_go(fuel, env, ctx, a, b)
+    case False{}:
+      Conv.structural(fuel, ctx, a, b)
+
 def Conv.irrel(
   +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> Step:
-  Conv.pick_step(
+  Conv.irrel_pick(
     Bool.and(Conv.maybe_proof(a), Conv.maybe_proof(b)),
-    Conv.irrel_go(fuel, env, ctx, a, b),
-    Conv.structural(fuel, ctx, a, b))
+    fuel, env, ctx, a, b)
 
 # Choose between two terms on a computed Bool.
 def Conv.pick_t(b: Bool, x: T.Term, y: T.Term) -> T.Term:
@@ -374,15 +397,47 @@ def Conv.k_rebuilt(
     Conv.put(args, V.Eval.major_idx(d), Conv.k_ctor(env, d, ty)),
     Conv.head(t))
 
-# Fire it, or leave the term alone.
+# Fire it, or leave the term alone. The rebuilt application is reduced only
+# when the rule fires, because `Conv.pick_t` evaluates both of its branches
+# and that reduction is a whole whnf pass over the application.
+def Conv.k_pick(
+  ok: Bool, +fuel: Nat, +env: E.DTable, +t: T.Term,
+  +d: E.Decl, +args: List<&2, T.Term>, +ty: T.Term
+) -> T.Term:
+  match ok:
+    case True{}:
+      V.Eval.whnf(fuel, env, Conv.k_rebuilt(env, d, t, args, ty), Nil{})
+    case False{}:
+      t
+
 def Conv.k_go(
   +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, +t: T.Term,
   +d: E.Decl, +args: List<&2, T.Term>, +ty: T.Term
 ) -> T.Term:
-  Conv.pick_t(
+  Conv.k_pick(
     Conv.k_ok(fuel, env, ctx, d, args, ty),
-    V.Eval.whnf(fuel, env, Conv.k_rebuilt(env, d, t, args, ty), Nil{}),
-    t)
+    fuel, env, t, d, args, ty)
+
+# Could the rule fire at all? Everything here is a trie read or a length, and
+# `Conv.k_ok` holds only when this does, so a cheap no is a real no.
+def Conv.k_near(+env: E.DTable, +d: E.Decl, +args: List<&2, T.Term>) -> Bool:
+  Bool.and(
+    Bool.and(
+      E.Decl.is_rec(d),
+      Nat.is_lt(V.Eval.major_idx(d), V.Eval.len(args, 0n))),
+    Conv.k_single(env, d))
+
+# The term whose type the rule needs, or a sort when the rule cannot fire.
+# A branch of `Conv.pick_t` is evaluated whether or not it is chosen, so the
+# type of a sort is what the common case pays for. Without this every pair on
+# the conversion queue paid for an inference pass over an argument.
+def Conv.k_subj(
+  +env: E.DTable, +d: E.Decl, +args: List<&2, T.Term>
+) -> T.Term:
+  Conv.pick_t(
+    Conv.k_near(env, d, args),
+    V.Eval.nth(args, V.Eval.major_idx(d)),
+    T.TSort{L.LZero{}})
 
 # Apply the K rule to a term already in weak head normal form, if it applies.
 def Conv.k_fix(
@@ -397,10 +452,10 @@ def Conv.k_fix(
       S.Shape.ty(
         S.Shape.infer(
           fuel, env, ctx,
-          V.Eval.nth(
-            Conv.args(t),
-            V.Eval.major_idx(
-              E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))))))),
+          Conv.k_subj(
+            env,
+            E.Lookup.get(E.Env.find(env, Conv.head_name(Conv.head(t)))),
+            Conv.args(t)))),
       Nil{}))
 
 # Eta for a structure that carries data.
@@ -471,10 +526,19 @@ def Conv.eta_mk(+d: E.Decl, +b: T.Term, +ty: T.Term) -> T.Term:
       Conv.eta_fields(E.Decl.ctor_nf(d), E.Decl.ctor_ind(d), b, 0n)),
     T.TConst{E.Decl.id(d), Conv.head_levels(Conv.head(ty))})
 
+def Conv.eta_pick(
+  ok: Bool, +d: E.Decl, +b: T.Term, +ty: T.Term
+) -> T.Term:
+  match ok:
+    case True{}:
+      Conv.eta_mk(d, b, ty)
+    case False{}:
+      b
+
 def Conv.eta_go(
   +env: E.DTable, +d: E.Decl, +b: T.Term, +nargs: Nat, +ty: T.Term
 ) -> T.Term:
-  Conv.pick_t(Conv.eta_ok(env, d, b, nargs, ty), Conv.eta_mk(d, b, ty), b)
+  Conv.eta_pick(Conv.eta_ok(env, d, b, nargs, ty), d, b, ty)
 
 # Rewrite `b` into a constructor application when `a` is one. Both sides are
 # already in weak head normal form.
@@ -514,30 +578,57 @@ def Conv.classify_pair(+fuel: Nat, +env: E.DTable, p: TPair) -> Step:
 
 # Work the queue. It empties exactly when every pair in it is equal.
 #
-# A pair that settles the question does not stop the walk, because Bend
-# forbids the two defs that would take. `Ans.and` does the work instead: a
-# definite no anywhere is a rejection whatever the rest says, and not knowing
-# one pair leaves the whole answer unknown unless some other pair is a
-# definite no.
-def Conv.eq_all(+fuel: Nat, +env: E.DTable, work: List<&2, TPair>) -> A.Ans:
+# The answer so far travels in as a parameter, which buys two things a
+# conjunction over the recursive call cannot.
+#
+# A definite no stops the walk. `A.Ans.and(step, eq_all(..))` had to drain the
+# whole queue, because an argument evaluates before the match picks an arm,
+# and a helper that matched the step would have to call `eq_all` from above
+# it, which is mutual recursion. A parameter can be matched, so the no arm
+# returns without the call.
+#
+# The call is now in tail position. The old one sat inside an argument, so the
+# depth of the queue was the depth of the host stack, and a fuel near ten
+# thousand overflowed it.
+#
+# Not knowing one pair leaves the whole answer unknown unless some other pair
+# is a definite no, so an unknown keeps the walk going.
+def Conv.eq_all(+fuel: Nat, +env: E.DTable, acc: A.Ans, work: List<&2, TPair>) -> A.Ans:
   match fuel:
     case 0n:
-      A.AUnk{}
+      A.Ans.and(acc, A.AUnk{})
     case 1n+f:
-      match work:
-        case Nil{}:
-          A.AYes{}
-        case Con{p, rest}:
+      match acc work:
+        case A.ANo{} w:
+          A.ANo{}
+        case a Nil{}:
+          a
+        case a Con{p, rest}:
           +st = Conv.classify_pair(f, env, p)
-          A.Ans.and(
-            Conv.step_ans(st),
-            Conv.eq_all(f, env, List.append(&2, TPair, Conv.step_more(st), rest)))
+          Conv.eq_all(
+            f, env, A.Ans.and(a, Conv.step_ans(st)),
+            List.append(&2, TPair, Conv.step_more(st), rest))
 
 # Are these two terms definitionally equal in the given context?
 def Conv.eq_in(
   +fuel: Nat, +env: E.DTable, ctx: List<&2, T.Term>, a: T.Term, b: T.Term
 ) -> A.Ans:
-  Conv.eq_all(fuel, env, [MkPair{ctx, a, b}])
+  Conv.eq_all(fuel, env, A.AYes{}, [MkPair{ctx, a, b}])
+
+# Conversion, unless the question is already settled.
+#
+# A conjunction cannot skip its right side, because an argument evaluates
+# before the match picks an arm. So the left side arrives as a parameter here,
+# and a definite no returns without the conversion work. A declaration whose
+# function is not a pi paid for a full conversion pass before this existed.
+def Conv.eq_unless_no(
+  a: A.Ans, +fuel: Nat, +env: E.DTable, ctx: List<&2, T.Term>, x: T.Term, y: T.Term
+) -> A.Ans:
+  match a:
+    case A.ANo{}:
+      A.ANo{}
+    case o:
+      A.Ans.and(o, Conv.eq_in(fuel, env, ctx, x, y))
 
 # Are these two closed terms definitionally equal?
 def Conv.eq(+fuel: Nat, +env: E.DTable, a: T.Term, b: T.Term) -> A.Ans:
