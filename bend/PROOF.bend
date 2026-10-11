@@ -62,6 +62,8 @@ def Laws.term_subst_levels_nil(t):
     case T.TProj{tn, idx, st}:
       %Laws.term_subst_levels_nil(st) : {T.TProj{tn, idx, T.Term.subst_levels(st, [])} == T.TProj{tn, idx, _} : T.Term}
       {==}
+    case T.TNat{v, m, z, c}:
+      {==}
     case T.TUnk{}:
       {==}
     case T.TLet{ty, v, bd}:

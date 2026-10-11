@@ -325,6 +325,8 @@ def Infer.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
                 Infer.sort_ans(ts),
                 Infer.sort_ans(bs))),
             T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
+        case T.TNat{+v, +nm, +zr, +sc}:
+          ROk{T.TConst{nm, Nil{}}}
         case T.TUnk{}:
           RUnk{}
         case T.TProj{tn, +idx, +st}:

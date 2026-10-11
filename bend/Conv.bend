@@ -143,6 +143,12 @@ def Conv.structural(
       Conv.proj_step(
         Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)),
         ctx, s1, s2)
+    case T.TNat{v1, m1, z1, s1} T.TNat{v2, m2, z2, s2}:
+      Conv.step_of(Nat.is_eq(v1, v2))
+    case T.TNat{+v1, +m1, +z1, +s1} y:
+      SMore{[MkPair{ctx, V.Eval.lit_ctor(T.TNat{v1, m1, z1, s1}), y}]}
+    case x T.TNat{+v2, +m2, +z2, +s2}:
+      SMore{[MkPair{ctx, x, V.Eval.lit_ctor(T.TNat{v2, m2, z2, s2})}]}
     case T.TLam{+t1, b1} y:
       SMore{[MkPair{Con{t1, ctx}, b1, T.TApp{T.Term.lift(y, 1n, 0n), T.TVar{0n}}}]}
     case x T.TLam{+t2, b2}:

@@ -243,6 +243,8 @@ def Shape.infer(+fuel: Nat, +env: List<&2, E.Decl>, +ctx: List<&2, T.Term>, t: T
             T.TSort{L.Level.mk_imax(Shape.sort_level(ts), Shape.sort_level(bs))})
         case T.TLet{ty, +v, bd}:
           Shape.infer(f, env, ctx, T.Term.inst(bd, v))
+        case T.TNat{+v, +nm, +zr, +sc}:
+          SOk{T.TConst{nm, Nil{}}}
         case T.TUnk{}:
           SBad{}
         case T.TProj{tn, +idx, +st}:

@@ -41,6 +41,16 @@ type Decl is Data:
   # their types; the Lean kernel has them built in, so taking the file's word
   # for the type is a thing this kernel trusts.
   DQuot{id: Nat, ps: List<&2, Nat>, ty: T.Term, kind: Nat}
+  # A definition the kernel also knows how to compute directly. `op` names
+  # which rule: 1 add, 2 sub, 3 mul, 4 div, 5 mod, 6 beq, 7 ble, 8 pow.
+  # `yes` and `no` are the names of `Bool.true` and `Bool.false`, which the
+  # two rules that compare need to answer with and have no other way to learn.
+  #
+  # The arena enables a native `Nat`, where the kernel computes on two
+  # literals instead of unfolding the Lean definition. The definition is still
+  # here, so a call the rule cannot answer, because an argument is not a
+  # literal, unfolds as it always did.
+  DPrim{id: Nat, ps: List<&2, Nat>, ty: T.Term, val: T.Term, op: Nat, yes: Nat, no: Nat}
 
 type Lookup is Data:
   LFound{d: Decl}
@@ -71,6 +81,8 @@ def Decl.id(d: Decl) -> Nat:
       id
     case DQuot{id, ps, ty, kind}:
       id
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      id
 
 # True when this declaration is a theorem, whose type must be a Prop.
 def Decl.is_thm(d: Decl) -> Bool:
@@ -88,6 +100,8 @@ def Decl.is_thm(d: Decl) -> Bool:
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       False{}
     case DQuot{id, ps, ty, kind}:
+      False{}
+    case DPrim{id, ps, ty, val, op, yes, no}:
       False{}
 
 # True when this declaration has a value, so delta reduction can unfold it.
@@ -107,6 +121,8 @@ def Decl.is_def(d: Decl) -> Bool:
       False{}
     case DQuot{id, ps, ty, kind}:
       False{}
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      True{}
 
 # How many numbers a list holds. A level parameter list is a handful long.
 def Decl.len(xs: List<&2, Nat>) -> Nat:
@@ -150,6 +166,8 @@ def Decl.num_params(d: Decl) -> Nat:
       Decl.len(ps)
     case DQuot{id, ps, ty, kind}:
       Decl.len(ps)
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      Decl.len(ps)
 
 # The level parameters a declaration takes.
 def Decl.params(d: Decl) -> List<&2, Nat>:
@@ -168,6 +186,8 @@ def Decl.params(d: Decl) -> List<&2, Nat>:
       ps
     case DQuot{id, ps, ty, kind}:
       ps
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      ps
 
 # The declared type of a declaration, with its level parameters replaced.
 def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
@@ -185,6 +205,8 @@ def Decl.type_at(d: Decl, +ls: List<&2, L.Level>) -> T.Term:
     case DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds}:
       T.Term.subst_levels(ty, ls)
     case DQuot{id, ps, ty, kind}:
+      T.Term.subst_levels(ty, ls)
+    case DPrim{id, ps, ty, val, op, yes, no}:
       T.Term.subst_levels(ty, ls)
 
 # The value of a definition, with its level parameters replaced. An axiom has
@@ -205,6 +227,8 @@ def Decl.value_at(d: Decl, +ls: List<&2, L.Level>) -> Maybe<&2, T.Term>:
       None{}
     case DQuot{id, ps, ty, kind}:
       None{}
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      Some{T.Term.subst_levels(val, ls)}
 
 # A recursor's argument layout, and its rules. A declaration that is not a
 # recursor answers zero, so guard these with `Decl.is_rec`.
@@ -400,6 +424,29 @@ def Decl.quot_kind(d: Decl) -> Nat:
       kind
     case o:
       9n
+
+# Which native rule a declaration carries, or zero for none.
+def Decl.prim_op(d: Decl) -> Nat:
+  match d:
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      op
+    case o:
+      0n
+
+# The name a comparing rule answers with: `Bool.true` or `Bool.false`.
+def Decl.prim_yes(d: Decl) -> Nat:
+  match d:
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      yes
+    case o:
+      0n
+
+def Decl.prim_no(d: Decl) -> Nat:
+  match d:
+    case DPrim{id, ps, ty, val, op, yes, no}:
+      no
+    case o:
+      0n
 
 # A declaration to stand in with when a lookup found nothing. Guard with
 # `Env.found`.

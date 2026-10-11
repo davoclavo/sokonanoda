@@ -345,6 +345,158 @@ def Eval.proj_field(+env: List<&2, E.Decl>, +idx: Nat, +sw: T.Term) -> T.Term:
         E.Lookup.get(E.Env.find(env, Eval.head_name(Eval.head(sw))))),
       idx))
 
+# Native arithmetic on two literals.
+# ---------------------------------
+#
+# The arena enables a native `Nat`. A literal is one term, and the kernel
+# computes on two of them rather than unfolding the Lean definition. Without
+# this a literal has to be a tower of `Nat.succ`, and the arena's own numbers
+# do not fit in one: `Nat.sub 1000001 1000000` would take a million steps to
+# build and a million more to reduce.
+#
+# The rule fires only when both arguments are literals. When one is not, the
+# definition is still in the environment and unfolds as it always did.
+
+# The value of a literal, or zero.
+def Eval.nat_val(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, nm, zr, sc}:
+      v
+    case x:
+      0n
+
+# Is this term a literal?
+def Eval.is_nat(t: T.Term) -> Bool:
+  match t:
+    case T.TNat{v, nm, zr, sc}:
+      True{}
+    case x:
+      False{}
+
+# The three names a literal carries, or zero.
+def Eval.nat_name(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, nm, zr, sc}:
+      nm
+    case x:
+      0n
+
+def Eval.nat_zr(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, nm, zr, sc}:
+      zr
+    case x:
+      0n
+
+def Eval.nat_sc(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, nm, zr, sc}:
+      sc
+    case x:
+      0n
+
+# A literal as a constructor application: zero, or the successor of one less.
+# Any other term comes back unchanged, which is what makes this cheap enough
+# to put on the path every reduction takes.
+#
+# A recursor needs its major premise in constructor form, and so does the
+# comparison in `Conv`. Going the other way, from a tower of successors to a
+# literal, is not needed: no export writes one.
+def Eval.lit_ctor(t: T.Term) -> T.Term:
+  match t:
+    case T.TNat{v, +nm, +zr, +sc}:
+      match v:
+        case 0n:
+          T.TConst{zr, Nil{}}
+        case 1n+k:
+          T.TApp{T.TConst{sc, Nil{}}, T.TNat{k, nm, zr, sc}}
+    case x:
+      x
+
+# Choose one of eight numbers on an op code. Code zero and anything past the
+# eighth answer zero; `Eval.prim_ready` has already ruled those out.
+def Eval.prim_num(+op: Nat, +x: Nat, +y: Nat) -> Nat:
+  match op:
+    case 1n:
+      Nat.add(x, y)
+    case 2n:
+      Nat.sub(x, y)
+    case 3n:
+      Nat.mul(x, y)
+    case 4n:
+      Nat.div(x, y)
+    case 5n:
+      Nat.mod(x, y)
+    case 8n:
+      Nat.pow(x, y)
+    case o:
+      0n
+
+# Does this op answer a `Bool` rather than a number?
+def Eval.prim_cmp(+op: Nat) -> Bool:
+  Bool.or(Nat.is_eq(op, 6n), Nat.is_eq(op, 7n))
+
+# Choose between two Bools on a computed Bool.
+def Eval.pick_b(b: Bool, x: Bool, y: Bool) -> Bool:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The answer of a comparing op.
+def Eval.prim_bool(+op: Nat, +x: Nat, +y: Nat) -> Bool:
+  Eval.pick_b(Nat.is_eq(op, 6n), Nat.is_eq(x, y), Nat.is_le(x, y))
+
+# Is this declaration one the kernel computes, with two arguments to work on?
+def Eval.prim_at(+d: E.Decl, +sp: List<&2, T.Term>) -> Bool:
+  Bool.and(
+    Bool.not(Nat.is_eq(E.Decl.prim_op(d), 0n)),
+    Nat.is_le(2n, Eval.len(sp, 0n)))
+
+# The `i`-th argument a native rule needs, or a sort when there is no rule
+# here. The caller reduces this, and the arena writes a literal as
+# `OfNat.ofNat Nat 1000000 ..` rather than bare, so reducing is what turns an
+# argument into the literal the rule needs. The sort keeps every other
+# constant from paying for that.
+def Eval.prim_arg(+d: E.Decl, +sp: List<&2, T.Term>, +i: Nat) -> T.Term:
+  Eval.pick_t(Eval.prim_at(d, sp), Eval.nth(sp, i), T.TSort{L.LZero{}})
+
+# Can a native rule fire? The declaration must carry one, the spine must hold
+# at least two arguments, and both must have reduced to literals.
+def Eval.prim_ready(
+  +d: E.Decl, +sp: List<&2, T.Term>, +x: T.Term, +y: T.Term
+) -> Bool:
+  Bool.and(
+    Eval.prim_at(d, sp),
+    Bool.and(Eval.is_nat(x), Eval.is_nat(y)))
+
+# The answer, with whatever followed the two arguments still applied. A sort
+# when the rule cannot fire, because a branch of `Eval.pick_t` is evaluated
+# whether or not it is chosen and the caller reduces this.
+def Eval.prim_term(
+  +d: E.Decl, +sp: List<&2, T.Term>, +x: T.Term, +y: T.Term
+) -> T.Term:
+  Eval.pick_t(
+    Eval.prim_ready(d, sp, x, y),
+    Eval.rebuild(
+      Eval.drop(sp, 2n),
+      Eval.pick_t(
+        Eval.prim_cmp(E.Decl.prim_op(d)),
+        T.TConst{
+          Eval.pick_nat(
+            Eval.prim_bool(
+              E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y)),
+            E.Decl.prim_yes(d),
+            E.Decl.prim_no(d)),
+          Nil{}},
+        T.TNat{
+          Eval.prim_num(E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y)),
+          Eval.nat_name(x),
+          Eval.nat_zr(x),
+          Eval.nat_sc(x)})),
+    T.TSort{L.LZero{}})
+
 # Reduce `t` applied to `sp` to weak head normal form.
 def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Term>) -> T.Term:
   match fuel:
@@ -358,8 +510,13 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
           Eval.rebuild(sp, T.TSort{l})
         case T.TConst{+n, +ls}:
           +d = E.Lookup.get(E.Env.find(env, n))
-          +mw = Eval.whnf(f, env, Eval.major_or_sort(d, sp), Nil{})
+          +mw = Eval.lit_ctor(Eval.whnf(f, env, Eval.major_or_sort(d, sp), Nil{}))
+          +px = Eval.whnf(f, env, Eval.prim_arg(d, sp, 0n), Nil{})
+          +py = Eval.whnf(f, env, Eval.prim_arg(d, sp, 1n), Nil{})
           Eval.pick_t(
+            Eval.prim_ready(d, sp, px, py),
+            Eval.whnf(f, env, Eval.prim_term(d, sp, px, py), Nil{}),
+            Eval.pick_t(
             E.Decl.is_def(d),
             Eval.whnf(f, env, Eval.unfold_decl(d, ls), sp),
             Eval.pick_t(
@@ -368,7 +525,7 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
               Eval.pick_t(
                 Eval.quot_ready(env, d, sp, mw),
                 Eval.whnf(f, env, Eval.quot_term(d, sp, mw), Nil{}),
-                Eval.rebuild(sp, T.TConst{n, ls}))))
+                Eval.rebuild(sp, T.TConst{n, ls})))))
         case T.TApp{g, a}:
           Eval.whnf(f, env, g, Con{a, sp})
         case T.TLam{ty, bd}:
@@ -381,10 +538,12 @@ def Eval.whnf(+fuel: Nat, +env: List<&2, E.Decl>, t: T.Term, +sp: List<&2, T.Ter
           Eval.rebuild(sp, T.TPi{ty, bd})
         case T.TLet{ty, v, bd}:
           Eval.whnf(f, env, T.Term.inst(bd, v), sp)
+        case T.TNat{v, nm, zr, sc}:
+          Eval.rebuild(sp, T.TNat{v, nm, zr, sc})
         case T.TUnk{}:
           T.TUnk{}
         case T.TProj{tn, +idx, st}:
-          +sw = Eval.whnf(f, env, st, Nil{})
+          +sw = Eval.lit_ctor(Eval.whnf(f, env, st, Nil{}))
           Eval.pick_t(
             T.Term.is_unk(sw),
             T.TUnk{},

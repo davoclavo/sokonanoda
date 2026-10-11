@@ -32,7 +32,12 @@ type PState is Data:
     # A `natVal` node names the real `Nat`, so a literal cannot be read until
     # the name lines that introduce those three have gone by. Zero is a safe
     # sentinel, since name zero is the anonymous name.
-    nt: Nat, zr: Nat, sc: Nat}
+    nt: Nat, zr: Nat, sc: Nat,
+    # The names of the eight `Nat` definitions the kernel computes itself, in
+    # op order, and the names of `Bool`, `Bool.true` and `Bool.false`, which
+    # the two rules that compare answer with. Zero where the name has not
+    # gone by.
+    pm: List<&2, Nat>, bl: Nat, yes: Nat, no: Nat}
 
 def Parse.fuel() -> Nat:
   1000000n
@@ -40,7 +45,9 @@ def Parse.fuel() -> Nat:
 # Level index 0 is zero and is never written by a line, so the table starts
 # with it already in place.
 def Parse.start() -> PState:
-  MkPS{1n, Con{L.LZero{}, Nil{}}, 0n, Nil{}, Nil{}, 0n, 0n, 0n}
+  MkPS{
+    1n, Con{L.LZero{}, Nil{}}, 0n, Nil{}, Nil{}, 0n, 0n, 0n,
+    [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n], 0n, 0n, 0n}
 
 # The i-th level of the table, counting from the head.
 def Parse.lev_at(fuel: Nat, xs: List<&2, L.Level>, k: Nat) -> L.Level:
@@ -205,6 +212,59 @@ def Parse.upd_under_nat(
     line,
     old)
 
+# `Bool` is the name with no prefix and the component `Bool`.
+def Parse.upd_bool(+line: List<&2, U32>, +bl: Nat) -> Nat:
+  Parse.keep_or(
+    Bool.and(Parse.name_is(line, "Bool"), Nat.is_eq(Parse.name_pre(line), 0n)),
+    line,
+    bl)
+
+# Choose between two numbers on a computed Bool.
+def Parse.pick_nat(b: Bool, x: Nat, y: Nat) -> Nat:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The k-th name of the native table.
+def Parse.prim_at(xs: List<&2, Nat>, +k: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case Con{h, t}:
+      match k:
+        case 0n:
+          h
+        case 1n+p:
+          Parse.prim_at(t, p)
+
+# The native table, with this name line folded in. A name line that names one
+# of the eight sets that one entry and leaves the rest alone.
+def Parse.upd_prims(
+  +line: List<&2, U32>, +nt: Nat, +pm: List<&2, Nat>
+) -> List<&2, Nat>:
+  [Parse.upd_under_nat(line, "add", nt, Parse.prim_at(pm, 0n)),
+   Parse.upd_under_nat(line, "sub", nt, Parse.prim_at(pm, 1n)),
+   Parse.upd_under_nat(line, "mul", nt, Parse.prim_at(pm, 2n)),
+   Parse.upd_under_nat(line, "div", nt, Parse.prim_at(pm, 3n)),
+   Parse.upd_under_nat(line, "mod", nt, Parse.prim_at(pm, 4n)),
+   Parse.upd_under_nat(line, "beq", nt, Parse.prim_at(pm, 5n)),
+   Parse.upd_under_nat(line, "ble", nt, Parse.prim_at(pm, 6n)),
+   Parse.upd_under_nat(line, "pow", nt, Parse.prim_at(pm, 7n))]
+
+# Which native rule this name carries, or zero. The table holds the names in
+# op order, so the op is the position found, counting from one.
+def Parse.prim_op_at(xs: List<&2, Nat>, +id: Nat, +k: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case Con{h, t}:
+      Parse.pick_nat(
+        Bool.and(Nat.is_eq(h, id), Bool.not(Nat.is_eq(id, 0n))),
+        1n+k,
+        Parse.prim_op_at(t, id, 1n+k))
+
 # The term a literal stands for: that many successors of zero.
 #
 # The fuel caps how large a literal this kernel will read. Past the cap it
@@ -238,16 +298,16 @@ def Parse.nat_term(fuel: Nat, k: Nat, +zr: Nat, +sc: Nat) -> T.Term:
 # unnoticed.
 def Parse.ex_natval(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
-          Parse.nat_term(4096n, R.Reader.field_q("natVal", line), zr, sc)
+          T.TNat{R.Reader.field_q("natVal", line), nt, zr, sc}
         case False{}:
           T.TVar{0n}
 
 def Parse.ex_proj(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TProj{
@@ -256,13 +316,13 @@ def Parse.ex_proj(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
             Parse.exp(ex, ne, R.Reader.field("struct", line))}
         case False{}:
           Parse.ex_natval(
-            MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+            MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
             R.Reader.has("natVal", line),
             line)
 
 def Parse.ex_letE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TLet{
@@ -271,71 +331,71 @@ def Parse.ex_letE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
             Parse.exp(ex, ne, R.Reader.field("body", line))}
         case False{}:
           Parse.ex_proj(
-            MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+            MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
             R.Reader.has("typeName", line),
             line)
 
 def Parse.ex_forallE(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TPi{
             Parse.exp(ex, ne, R.Reader.field("type", line)),
             Parse.exp(ex, ne, R.Reader.field("body", line))}
         case False{}:
-          Parse.ex_letE(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.Reader.has("letE", line), line)
+          Parse.ex_letE(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("letE", line), line)
 
 def Parse.ex_lam(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TLam{
             Parse.exp(ex, ne, R.Reader.field("type", line)),
             Parse.exp(ex, ne, R.Reader.field("body", line))}
         case False{}:
-          Parse.ex_forallE(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.Reader.has("forallE", line), line)
+          Parse.ex_forallE(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("forallE", line), line)
 
 def Parse.ex_app(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TApp{
             Parse.exp(ex, ne, R.Reader.field("fn", line)),
             Parse.exp(ex, ne, R.Reader.field("arg", line))}
         case False{}:
-          Parse.ex_lam(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.Reader.has("lam", line), line)
+          Parse.ex_lam(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("lam", line), line)
 
 def Parse.ex_const(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TConst{
             R.Reader.field("name", line),
             Parse.levs_of(R.Reader.num_list("us", line), lv, nl)}
         case False{}:
-          Parse.ex_app(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.Reader.has("app", line), line)
+          Parse.ex_app(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("app", line), line)
 
 def Parse.ex_bvar(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TVar{R.Reader.field("bvar", line)}
         case False{}:
-          Parse.ex_const(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.Reader.has("const", line), line)
+          Parse.ex_const(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("const", line), line)
 
 def Parse.ex_sort(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match h:
         case True{}:
           T.TSort{Parse.lev(lv, nl, R.Reader.field("sort", line))}
         case False{}:
-          Parse.ex_bvar(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.Reader.has("bvar", line), line)
+          Parse.ex_bvar(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.Reader.has("bvar", line), line)
 
 # The term an expression line defines.
 def Parse.expr_of(+st: PState, +line: List<&2, U32>) -> T.Term:
@@ -348,9 +408,17 @@ def Parse.expr_of(+st: PState, +line: List<&2, U32>) -> T.Term:
 # Prop. An opaque declaration becomes an axiom: its type is checked and its
 # value is not, which is sound but incomplete.
 
+# Choose between two declarations on a computed Bool.
+def Parse.pick_decl(b: Bool, x: E.Decl, y: E.Decl) -> E.Decl:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
 def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match k:
         case R.KAxiom{}:
           E.DAxiom{
@@ -360,15 +428,30 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
               Parse.exp(ex, ne, R.Reader.field("type", line)),
               R.Reader.num_list("levelParams", line))}
         case R.KDef{}:
-          E.DDef{
-            R.Reader.field("name", line),
-            R.Reader.num_list("levelParams", line),
-            T.Term.remap_levels(
-              Parse.exp(ex, ne, R.Reader.field("type", line)),
-              R.Reader.num_list("levelParams", line)),
-            T.Term.remap_levels(
-              Parse.exp(ex, ne, R.Reader.field("value", line)),
-              R.Reader.num_list("levelParams", line))}
+          Parse.pick_decl(
+            Nat.is_eq(
+              Parse.prim_op_at(pm, R.Reader.field("name", line), 0n), 0n),
+            E.DDef{
+              R.Reader.field("name", line),
+              R.Reader.num_list("levelParams", line),
+              T.Term.remap_levels(
+                Parse.exp(ex, ne, R.Reader.field("type", line)),
+                R.Reader.num_list("levelParams", line)),
+              T.Term.remap_levels(
+                Parse.exp(ex, ne, R.Reader.field("value", line)),
+                R.Reader.num_list("levelParams", line))},
+            E.DPrim{
+              R.Reader.field("name", line),
+              R.Reader.num_list("levelParams", line),
+              T.Term.remap_levels(
+                Parse.exp(ex, ne, R.Reader.field("type", line)),
+                R.Reader.num_list("levelParams", line)),
+              T.Term.remap_levels(
+                Parse.exp(ex, ne, R.Reader.field("value", line)),
+                R.Reader.num_list("levelParams", line)),
+              Parse.prim_op_at(pm, R.Reader.field("name", line), 0n),
+              yes,
+              no})
         case R.KThm{}:
           E.DThm{
             R.Reader.field("name", line),
@@ -423,7 +506,7 @@ def Parse.decl_of(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> E.Decl:
 # why a hand-written test over `Bool` does not catch it.
 def Parse.rule_of(+o: List<&2, U32>, +st: PState, +ps: List<&2, Nat>) -> E.RecRule:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       E.MkRule{
         R.Reader.field("ctor", o),
         R.Reader.field("nfields", o),
@@ -444,7 +527,7 @@ def Parse.rules_of(
 # One inductive type.
 def Parse.ind_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       E.DInd{
         R.Reader.field("name", o),
         R.Reader.num_list("levelParams", o),
@@ -458,7 +541,7 @@ def Parse.ind_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
 # One constructor.
 def Parse.ctor_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       E.DCtor{
         R.Reader.field("name", o),
         R.Reader.num_list("levelParams", o),
@@ -473,7 +556,7 @@ def Parse.ctor_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
 # One recursor.
 def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       E.DRec{
         R.Reader.field("name", o),
         R.Reader.num_list("levelParams", o),
@@ -487,7 +570,7 @@ def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.is_true("k", o),
         Parse.rules_of(
           R.Reader.obj_list("rules", o),
-          MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+          MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
           R.Reader.num_list("levelParams", o)),
         R.Reader.num_list("all", o)}
 
@@ -518,16 +601,16 @@ def Parse.add_recs(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Dec
 # declaration may rely on.
 def Parse.block_of(+line: List<&2, U32>, +st: PState) -> List<&2, E.Decl>:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       Parse.add_recs(
         R.Reader.obj_list("recs", line),
-        MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+        MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
         Parse.add_ctors(
           R.Reader.obj_list("ctors", line),
-          MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+          MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
           Parse.add_inds(
             R.Reader.obj_list("types", line),
-            MkPS{nl, lv, ne, ex, ds, nt, zr, sc},
+            MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no},
             ds)))
 
 # Quotients
@@ -569,7 +652,7 @@ def Parse.quot_kind(+line: List<&2, U32>) -> Nat:
 # One quotient declaration.
 def Parse.quot_of(+st: PState, +line: List<&2, U32>) -> E.Decl:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       E.DQuot{
         R.Reader.field("name", line),
         R.Reader.num_list("levelParams", line),
@@ -584,48 +667,52 @@ def Parse.quot_of(+st: PState, +line: List<&2, U32>) -> E.Decl:
 # Fold one line into the state.
 def Parse.step(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> PState:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       match k:
         case R.KLevel{}:
           MkPS{
             1n+nl,
             Con{Parse.level_of(line, lv, nl), lv},
-            ne, ex, ds, nt, zr, sc}
+            ne, ex, ds, nt, zr, sc, pm, bl, yes, no}
         case R.KExpr{}:
           MkPS{
             nl, lv,
             1n+ne,
-            Con{Parse.expr_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, line), ex},
-            ds, nt, zr, sc}
+            Con{Parse.expr_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, line), ex},
+            ds, nt, zr, sc, pm, bl, yes, no}
         case R.KAxiom{}:
           MkPS{nl, lv, ne, ex,
-            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.KAxiom{}, line), ds}, nt, zr, sc}
+            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.KAxiom{}, line), ds}, nt, zr, sc, pm, bl, yes, no}
         case R.KDef{}:
           MkPS{nl, lv, ne, ex,
-            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.KDef{}, line), ds}, nt, zr, sc}
+            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.KDef{}, line), ds}, nt, zr, sc, pm, bl, yes, no}
         case R.KThm{}:
           MkPS{nl, lv, ne, ex,
-            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.KThm{}, line), ds}, nt, zr, sc}
+            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.KThm{}, line), ds}, nt, zr, sc, pm, bl, yes, no}
         case R.KOpaque{}:
           MkPS{nl, lv, ne, ex,
-            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, R.KOpaque{}, line), ds}, nt, zr, sc}
+            Con{Parse.decl_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, R.KOpaque{}, line), ds}, nt, zr, sc, pm, bl, yes, no}
         case R.KMeta{}:
-          MkPS{nl, lv, ne, ex, ds, nt, zr, sc}
+          MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}
         case R.KName{}:
           MkPS{nl, lv, ne, ex, ds,
             Parse.upd_nat(line, nt),
             Parse.upd_under_nat(line, "zero", nt, zr),
-            Parse.upd_under_nat(line, "succ", nt, sc)}
+            Parse.upd_under_nat(line, "succ", nt, sc),
+            Parse.upd_prims(line, nt, pm),
+            Parse.upd_bool(line, bl),
+            Parse.upd_under_nat(line, "true", bl, yes),
+            Parse.upd_under_nat(line, "false", bl, no)}
         case R.KInductive{}:
           MkPS{nl, lv, ne, ex,
-            Parse.block_of(line, MkPS{nl, lv, ne, ex, ds, nt, zr, sc}),
-            nt, zr, sc}
+            Parse.block_of(line, MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}),
+            nt, zr, sc, pm, bl, yes, no}
         case R.KQuot{}:
           MkPS{nl, lv, ne, ex,
-            Con{Parse.quot_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc}, line), ds},
-            nt, zr, sc}
+            Con{Parse.quot_of(MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}, line), ds},
+            nt, zr, sc, pm, bl, yes, no}
         case R.KOther{}:
-          MkPS{nl, lv, ne, ex, ds, nt, zr, sc}
+          MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}
 
 # The file
 # --------
@@ -666,7 +753,7 @@ def Parse.rev_decls(fuel: Nat, +acc: List<&2, E.Decl>, xs: List<&2, E.Decl>) -> 
 # The declarations an export declares, in order.
 def Parse.decls_of(st: PState) -> List<&2, E.Decl>:
   match st:
-    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc}:
+    case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no}:
       Parse.rev_decls(Parse.fuel(), Nil{}, ds)
 
 # Parse a whole export.

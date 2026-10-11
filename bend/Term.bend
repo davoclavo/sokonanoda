@@ -20,6 +20,16 @@ type Term is Data:
   # The `idx`-th field of a structure. `tn` is the inductive's name, which the
   # export carries and which the type of the field is read from.
   TProj{tn: Nat, idx: Nat, s: Term}
+  # A `Nat` literal, with the name the export gives the type `Nat`.
+  #
+  # The arena enables a native `Nat`, where a literal is one term rather than
+  # a tower of `Nat.succ`, and arithmetic on two of them is a rule of the
+  # kernel. A tower cannot hold the arena's own numbers: `1000000` is one of
+  # them. The name travels in the term because inference has to answer with
+  # it and has no other way to learn it. `zr` and `sc` are the names of
+  # `Nat.zero` and `Nat.succ`, which let a literal be written as a
+  # constructor application when a recursor or a comparison needs one.
+  TNat{v: Nat, nm: Nat, zr: Nat, sc: Nat}
   # The term reduction gives back when it runs out of budget.
   #
   # Running out is not an answer. A kernel that treats it as one reports
@@ -76,6 +86,8 @@ def Term.same(a: Term, b: Term) -> Bool:
       Bool.and(
         Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)),
         Term.same(s1, s2))
+    case TNat{v1, m1, z1, s1} TNat{v2, m2, z2, s2}:
+      Nat.is_eq(v1, v2)
     case TLet{t1, v1, b1} TLet{t2, v2, b2}:
       Bool.and(
         Term.same(t1, t2),
@@ -100,6 +112,8 @@ def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
       TPi{Term.lift(ty, d, cut), Term.lift(bd, d, 1n+cut)}
     case TLet{ty, v, bd}:
       TLet{Term.lift(ty, d, cut), Term.lift(v, d, cut), Term.lift(bd, d, 1n+cut)}
+    case TNat{v, m, z, c}:
+      TNat{v, m, z, c}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:
@@ -126,6 +140,8 @@ def Term.subst(t: Term, +v: Term, +cut: Nat) -> Term:
       TPi{Term.subst(ty, v, cut), Term.subst(bd, v, 1n+cut)}
     case TLet{ty, vl, bd}:
       TLet{Term.subst(ty, v, cut), Term.subst(vl, v, cut), Term.subst(bd, v, 1n+cut)}
+    case TNat{v, m, z, c}:
+      TNat{v, m, z, c}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:
@@ -171,6 +187,8 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TPi{Term.remap_levels(ty, ps), Term.remap_levels(bd, ps)}
     case TLet{ty, v, bd}:
       TLet{Term.remap_levels(ty, ps), Term.remap_levels(v, ps), Term.remap_levels(bd, ps)}
+    case TNat{v, m, z, c}:
+      TNat{v, m, z, c}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:
@@ -193,6 +211,8 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TPi{Term.subst_levels(ty, vs), Term.subst_levels(bd, vs)}
     case TLet{ty, v, bd}:
       TLet{Term.subst_levels(ty, vs), Term.subst_levels(v, vs), Term.subst_levels(bd, vs)}
+    case TNat{v, m, z, c}:
+      TNat{v, m, z, c}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:

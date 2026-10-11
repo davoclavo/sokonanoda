@@ -76,5 +76,7 @@ def Show.term(+fuel: Nat, t: T.Term) -> String:
             ++ Show.term(f, bd) ++ ")"
         case T.TProj{tn, idx, s}:
           "(" ++ Show.term(f, s) ++ "." ++ Nat.show(idx) ++ "@" ++ Nat.show(tn) ++ ")"
+        case T.TNat{v, nm, zr, sc}:
+          Nat.show(v)
         case T.TUnk{}:
           "?"
