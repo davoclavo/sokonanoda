@@ -105,6 +105,20 @@ def Term.pi_count(t: Term, +acc: Nat) -> Nat:
     case x:
       acc
 
+# What a telescope reaches after `n` binders, read as syntax and with no
+# reduction. The binders are left open: the callers of this ask only whether
+# what they reach is a sort, and a sort is closed.
+def Term.pi_skip(n: Nat, t: Term) -> Term:
+  match n:
+    case 0n:
+      t
+    case 1n+m:
+      match t:
+        case TPi{ty, bd}:
+          Term.pi_skip(m, bd)
+        case x:
+          x
+
 # Add `d` to every free variable whose index is at least `cut`.
 def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
   match t:

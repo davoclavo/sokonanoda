@@ -284,6 +284,60 @@ def Infer.proj_base(+fuel: Nat, +env: E.DTable, +sty: T.Term) -> T.Term:
                 E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))),
       V.Eval.head_levels(V.Eval.head(sty))))
 
+# A projection out of a proposition may not produce data.
+#
+# Lean forbids it: a structure in `Prop` has one inhabitant as far as the
+# kernel can tell, so reading a field of some other sort out of one is large
+# elimination, and that is unsound. The arena attacks it four times, with
+# `projProp2` through `projProp6`, all on one structure in `Prop` that
+# carries six fields.
+#
+# The test on the structure answers no when it cannot tell, so a shape this
+# kernel does not recognise loses the check rather than rejecting a
+# projection that is in fact allowed.
+
+# Is this term a sort at level zero?
+def Infer.sort_is_prop(t: T.Term) -> Bool:
+  match t:
+    case T.TSort{l}:
+      L.Level.is_zero(l)
+    case x:
+      False{}
+
+# Is the structure being projected from a proposition? Its own declaration
+# states the sort, so no context is needed to read it.
+def Infer.ind_is_prop(+env: E.DTable, +sty: T.Term) -> Bool:
+  Infer.sort_is_prop(
+    T.Term.pi_skip(
+      Nat.add(
+        E.Decl.ind_np(
+          E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty))))),
+        E.Decl.ind_ni(
+          E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))),
+      E.Decl.ind_ty(
+        E.Lookup.get(E.Env.find(env, V.Eval.head_name(V.Eval.head(sty)))))))
+
+# The term whose sort the rule needs, or a sort when there is nothing to
+# check. Inferring a sort costs nothing, and that is what every projection
+# out of something that is not a proposition pays.
+def Infer.prop_subject(b: Bool, +fty: T.Term) -> T.Term:
+  match b:
+    case True{}:
+      fty
+    case False{}:
+      T.TSort{L.LZero{}}
+
+# Given the sort of the field, is the projection allowed? Not knowing the
+# sort stays not knowing.
+def Infer.prop_ok(b: Bool, +ps: T.Term) -> A.Ans:
+  match b:
+    case True{}:
+      A.Ans.and(
+        Infer.sort_ans(ps),
+        A.Ans.of(L.Level.is_zero(Infer.sort_level(ps))))
+    case False{}:
+      A.AYes{}
+
 # The type of `s.idx`, given the structure's own type.
 def Infer.proj_from(
   +fuel: Nat, +env: E.DTable, +sty: T.Term, +tn: Nat, +idx: Nat, +s: T.Term
@@ -341,10 +395,22 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
         case T.TUnk{}:
           RUnk{}
         case T.TProj{tn, +idx, +st}:
-          Infer.proj_from(
+          +sty = V.Eval.whnf(
+            f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{})
+          +fr = Infer.proj_from(f, env, sty, tn, idx, st)
+          +ps = V.Eval.whnf(
             f, env,
-            V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{}),
-            tn, idx, st)
+            Infer.res_ty(
+              Infer.infer(
+                f, env, ctx,
+                Infer.prop_subject(
+                  Infer.ind_is_prop(env, sty), Infer.res_ty(fr)))),
+            Nil{})
+          Infer.res_of(
+            A.Ans.and(
+              Infer.res_ans(fr),
+              Infer.prop_ok(Infer.ind_is_prop(env, sty), ps)),
+            Infer.res_ty(fr))
         case T.TLet{ty, +v, bd}:
           +vt = Infer.infer(f, env, ctx, v)
           +br = Infer.infer(f, env, ctx, T.Term.inst(bd, v))
