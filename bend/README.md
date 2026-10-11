@@ -27,6 +27,31 @@ devbox run bend-verdict  # the laws again, through Bend's Lean-proven kernel
 `tools/bend.sh` builds Bend 2 from its flake into `~/.cache/bend2` the first
 time and runs it after that.
 
+### Build it instead, to run it fast
+
+`bend file.bend` checks the file and then interprets it. Compiling it first is
+about twelve times faster and takes six seconds:
+
+```
+bend bend/check.bend -o checker
+SOKO_EXPORT=<an export> ./checker --threads 8
+```
+
+| | interpreted | built |
+|---|---|---|
+| the floor, on a 292-byte export | 279 ms | 19 ms |
+| `030_peano1` | 304 ms | 25 ms |
+| `112_structEta` | 514 ms | 60 ms |
+
+Medians of three. Pass `--threads`: the default spun for thirty seconds on a
+file that takes twenty milliseconds with it set, and the first run of a
+freshly written binary pays a cold start that is easy to mistake for the real
+cost. Both of those cost a measurement each before the numbers above settled.
+
+Twelve times faster does not rescue the eleven tests that time out. Every one
+of them still times out when built, at a limit of two minutes. They need less
+work, not faster work.
+
 `main.bend` prints:
 
 ```
