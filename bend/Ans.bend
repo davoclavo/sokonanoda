@@ -67,6 +67,13 @@ def Ans.is_yes(a: Ans) -> Bool:
     case o:
       False{}
 
+def Ans.is_no(a: Ans) -> Bool:
+  match a:
+    case ANo{}:
+      True{}
+    case o:
+      False{}
+
 def Ans.is_unk(a: Ans) -> Bool:
   match a:
     case AUnk{}:

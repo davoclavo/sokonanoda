@@ -103,23 +103,35 @@ def Level.mk_max(+a: Level, +b: Level) -> Level:
       Level.pick(Level.same(a, b), a, LMax{a, b})))
 
 # The smart constructor for imax. It collapses to zero when the right side is
-# zero, to max when the right side is a successor, and to the side itself when
-# both sides agree, since `imax u u` is zero when `u` is zero and `max u u` as
-# `u` otherwise, which is `u` either way. Only then does it stay an imax,
-# because the answer depends on an assignment this kernel does not have.
+# zero, to the right side when the left is zero, to max when the right side is
+# a successor, and to the side itself when both sides agree, since `imax u u`
+# is zero when `u` is zero and `max u u` as `u` otherwise, which is `u` either
+# way. Only then does it stay an imax, because the answer depends on an
+# assignment this kernel does not have.
 #
 # The idempotent case is what types a Church numeral. `Pi (_: a), a` at
 # `a : Sort u` has type `Sort (imax u u)`, and without the collapse that never
 # matches the `Sort u` the export declares. The arena's `030_peano1` and its
 # two siblings are exactly that.
+#
+# The zero left side is what types a function out of a proof. `imax 0 v` is
+# zero when `v` is zero and `max 0 v` as `v` otherwise, so it is `v` for every
+# `v` and no assignment is needed. A motive of the form `fun n => (h : p n) ->
+# C n h` has type `Nat -> Sort (imax 0 u)`, because the domain is a
+# proposition, and the eliminator that takes it declares `Nat -> Sort u`.
+# Without this rule the two never match and the declaration is rejected. That
+# is what six of the arena's files failed on, `Nat.div.go.match_1` in each.
 def Level.mk_imax(+a: Level, +b: Level) -> Level:
   Level.pick(
     Level.is_zero(b),
     LZero{},
     Level.pick(
-      Level.is_succ(b),
-      Level.mk_max(a, b),
-      Level.pick(Level.same(a, b), a, LIMax{a, b})))
+      Level.is_zero(a),
+      b,
+      Level.pick(
+        Level.is_succ(b),
+        Level.mk_max(a, b),
+        Level.pick(Level.same(a, b), a, LIMax{a, b}))))
 
 # Normalize bottom up, with the smart constructors.
 def Level.norm(l: Level) -> Level:
