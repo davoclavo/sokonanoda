@@ -46,7 +46,8 @@ refuse.
 |---|---|
 | `Level.bend` | universe levels, the smart constructors, normalization, substitution |
 | `Term.bend` | terms with de Bruijn indices, lifting, instantiation, level substitution |
-| `Env.bend` | declarations and the environment |
+| `Env.bend` | declarations, and the environment as a trie on a name |
+| `Table.bend` | the level and expression tables, as tries on an index |
 | `Eval.bend` | weak head normal form: beta, delta, zeta, iota, projections, quotients, native `Nat` |
 | `Ans.bend` | yes, no, and "I ran out of budget" |
 | `Shape.bend` | the type of a term, without checking it |
@@ -113,30 +114,77 @@ be stated and then mechanically proven, in the same language as the code.
 
 Honestly and in order of size.
 
-**The checks on an inductive block.** The block is read, every type in it is
-checked, and iota reduction works, so a recursor applied to a constructor
-computes. What is not here is the part that makes a verdict trustworthy:
-nothing derives the recursor from the inductive specification and compares the
-two, and nothing checks positivity or the universe of a constructor's fields.
-So such a file answers `declined`, never `accept`. The arena's `BogusRecursor`,
-`indNeg` and `typeWithTooHighTypeField` are exactly the attacks that check
-would stop, and all three currently decline rather than reject.
+**Deriving the recursor.** The block is read, every type in it is checked, and
+iota reduction works, so a recursor applied to a constructor computes. What is
+not here is the one part that would let such a file be *accepted*: nothing
+derives the recursor from the inductive specification and compares it to the
+one the file states. Until that exists, a file with an inductive block answers
+`declined` and never `accept`, and that is every one of the 67 remaining
+declines in the tutorial set.
 
-This is now the only thing between most of the declines and a verdict. It is
-also the largest piece of work left.
+It is the largest piece of work left and the only one worth real points.
 
-**Scale.** The reader works, but its tables are lists, so a lookup is linear
-and a file with fifty thousand expressions is far too slow. `Array` is the
-answer, and it is the same change the memory ceiling below needs. Ten `perf`
-tests time out for this reason and one is too large to read at all.
+**Reduction throughput.** Reading is no longer the problem: the level table,
+the expression table and the environment are tries now, and the arena's 3.7 MB
+`init-prelude` reads in two seconds where it took twenty-nine. What it then
+spends minutes on is the checking itself, and that is reduction and inference
+doing real work. Ten `perf` tests time out there, and a faster table will not
+move any of them. This was worth measuring rather than assuming: the
+environment lookup was the obvious suspect and it was not the cause.
 
 **The imax case split.** The case split on an imax whose right side is a bare
 parameter is not here, so two such atoms are still compared as syntax.
 
+**Whitespace in a reader.** A blank after a colon is handled. A blank anywhere
+else is not, and the real corpora are not promised to be formatted like the
+arena's tarball.
+
 **Performance.** Bend has no `U64`, so the parent's packed pointers and
-hash-consed terms cannot be carried over, and the environment is a list
-searched linearly where the parent resolves a constant in one load. The point
-of this folder is the proofs, not the clock.
+hash-consed terms cannot be carried over. The point of this folder is the
+proofs, not the clock.
+
+## The checks on an inductive block
+
+A block states more than it proves. Ten of its claims can be settled by
+reading it, with nothing derived, and together they are what took the whole
+small set from 74 correct to 99. Each one is an attack the arena makes.
+
+| The claim | What the arena sends |
+|---|---|
+| a constructor builds an inductive that exists | `orphan-ctor` names one that does not |
+| a recursor eliminates at least one, and each exists | `orphan-rec` names none at all |
+| a recursor carries the name a recursor has | `extra-rec`, `misnamed_rec_user`, `dup_rec_def2` |
+| a constructor's type opens with one binder per parameter and per field | `ctor-num-fields` |
+| an inductive's type is a telescope ending in a sort | `inductTooFewParams`, `inductBadNonSort2` |
+| a constructor's result is its own inductive | `inductWrongCtorParams` |
+| applied to its parameters in binding order | `inductWrongCtorResParams` |
+| at its own level parameters in that order | `inductWrongCtorResLevel`, `reduceCtorType` |
+| the inductive does not occur in its own indices | `inductInIndex` |
+| every field is strictly positive | `indNeg`, `indNegReducible` |
+| every field fits the inductive's universe | `typeWithTooHighTypeField`, `reflOccLeft` |
+| a projection out of a proposition yields a proposition | `projProp2`, `projProp4`, `projProp5`, `proj-of-imax-prop` |
+| a proposition with two constructors eliminates only into one | `large-elim-prop-bool` |
+
+Three of them took a wrong turn first, and each wrong turn was caught by
+running the kernel on all 94 good tutorial files rather than by thinking
+harder.
+
+**The universe rule, twice.** Taking the sort of the constructor's whole type
+rejected seventeen correct files: the parameters are binders of that type too,
+and `Prod` lives in `Type (max u v)` while its parameters live in `Type (u+1)`
+and `Type (v+1)`. Checking only the fields then rejected eight more, all
+propositions carrying data fields, because proof irrelevance exempts them and
+`imax` does not do it for you.
+
+**The recursor name.** Matching a recursor's name against its inductive's
+would have rejected the second recursor of every mutual block, since `I1` and
+`I2` yield `I1.rec` and `I2.rec` and both name both types. The rule now ignores
+the prefix and asks only that the last component be `rec`.
+
+**Positivity.** Only a domain is refused. `Nat -> I` to the right of an arrow
+is an ordinary recursive field, and `List I` is the nested case Lean accepts.
+Refusing either rejects types that are sound, which is worth more than a
+missed attack.
 
 ## What was missing and now works
 
@@ -202,21 +250,25 @@ Against all 141 of the arena's tutorial tests, with nothing left out:
 | | count |
 |---|---|
 | correct accept | 29 |
-| correct reject | 29 |
-| honest decline, an inductive block was trusted | 83 |
+| correct reject | 45 |
+| honest decline, an inductive block was trusted | 67 |
 | wrongly rejected | **0** |
 | wrongly accepted | **0** |
 | error or timeout | **0** |
 
 **Every verdict it gives is correct.** A decline is the arena's exit code 2 and
-scores nothing, so 58 of the 141 are verdicts and the other 83 are the work
+scores nothing, so 74 of the 141 are verdicts and the other 67 are the work
 that remains. Nothing times out and nothing errors.
 
 On the 37 tests that need no inductive block, it is 37 correct.
 
-The single thing standing between the 83 declines and 83 verdicts is deriving
-the recursor from the inductive specification and comparing the two. Nothing
-else is missing for them.
+The 67 declines are all files the arena expects to be **accepted**. Deriving
+the recursor and comparing it to the one the file states is what they wait on,
+and nothing else is missing for them.
+
+Every file the arena expects to be **rejected** now gets a verdict, bar one.
+That took ten checks on an inductive block, each of which reads the block
+rather than deriving anything; the section below lists them.
 
 Six real bugs turned up on the way, and every one was found by reading a
 failing declaration or the code, not by guessing.
@@ -279,8 +331,8 @@ tarball, 195 attempted and one too large to read:
 
 | | count |
 |---|---|
-| correct | 78 |
-| declined | 106 |
+| correct | 99 |
+| declined | 85 |
 | wrong | **0** |
 | error or timeout | 11 |
 
@@ -291,6 +343,11 @@ too large to read, all for the scale reason above.
 Getting to zero wrong answers took four rounds. The score was 24 wrong when
 the three-valued answer landed; projections took it to 11, quotients and the
 native `Nat` to 2, and the last two were not missing rules at all. See below.
+
+The climb from 74 correct to 99 is a different story and a duller one: ten
+checks on an inductive block, each worth one or two tests, none of them
+needing the recursor derived. The order they landed in was the order of
+cheapness, not of importance.
 
 The seven real-world corpora are not in that tarball and cannot be read at
 all, for the memory reason below. So this kernel is not ready to enter the
@@ -399,8 +456,9 @@ mathlib at 6 GB would want more than a terabyte.
 
 So holding the whole file as a cons list is a dead end for the large corpora.
 The fix is to stop holding it: read in chunks with `File.read_at`, or keep the
-bytes in an `Array<U32>`, which is one owner and compact. That is the same
-change the index tables need, so it is one step rather than two.
+bytes in an `Array<U32>`, which is one owner and compact. The byte list is the
+last structure that is still a list; the index tables and the environment are
+tries, and `Table.bend` says why they could not be `Array`.
 
 A bug worth recording: the first search skipped to the key's first byte and
 required the whole key there, with no retry. The first `"` in an export belongs
