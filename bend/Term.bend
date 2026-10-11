@@ -119,6 +119,34 @@ def Term.pi_skip(n: Nat, t: Term) -> Term:
         case x:
           x
 
+# Does the constant `n` appear anywhere in this term?
+def Term.occurs(t: Term, +n: Nat) -> Bool:
+  match t:
+    case TConst{m, ls}:
+      Nat.is_eq(m, n)
+    case TApp{f, a}:
+      Bool.or(Term.occurs(f, n), Term.occurs(a, n))
+    case TLam{ty, bd}:
+      Bool.or(Term.occurs(ty, n), Term.occurs(bd, n))
+    case TPi{ty, bd}:
+      Bool.or(Term.occurs(ty, n), Term.occurs(bd, n))
+    case TLet{ty, v, bd}:
+      Bool.or(
+        Term.occurs(ty, n),
+        Bool.or(Term.occurs(v, n), Term.occurs(bd, n)))
+    case TProj{tn, idx, st}:
+      Term.occurs(st, n)
+    case x:
+      False{}
+
+# Does the constant `n` appear in any of these terms?
+def Term.occurs_any(ts: List<&2, Term>, +n: Nat) -> Bool:
+  match ts:
+    case Nil{}:
+      False{}
+    case Con{h, t}:
+      Bool.or(Term.occurs(h, n), Term.occurs_any(t, n))
+
 # Add `d` to every free variable whose index is at least `cut`.
 def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
   match t:

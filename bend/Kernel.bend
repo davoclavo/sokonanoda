@@ -145,6 +145,27 @@ def Kernel.ctor_result_ok(+d: E.Decl) -> Bool:
         E.Decl.ctor_ty(d)),
       Nil{}))
 
+# The inductive being declared may not occur in its own indices.
+#
+# Lean refuses it outright, and so does this. The arena's `inductInIndex`
+# declares `inductInIndex : Prop -> Prop` with the one constructor
+# `mk : inductInIndex (inductInIndex aProp)`, where the index names the very
+# type being defined.
+#
+# Only the indices are read, never the fields. A recursive occurrence in a
+# field is what makes `Nat.succ` work and is allowed.
+def Kernel.ctor_index_ok(+d: E.Decl) -> Bool:
+  Bool.not(
+    T.Term.occurs_any(
+      V.Eval.drop(
+        V.Eval.spine(
+          T.Term.pi_skip(
+            Nat.add(E.Decl.ctor_np(d), E.Decl.ctor_nf(d)),
+            E.Decl.ctor_ty(d)),
+          Nil{}),
+        E.Decl.ctor_np(d)),
+      E.Decl.ctor_ind(d)))
+
 # A recursor eliminates at least one inductive, and every one it names must
 # exist. The arena's `orphan-rec` names none at all.
 def Kernel.rec_inds_ok(+env: E.DTable, +ns: List<&2, Nat>) -> Bool:
@@ -238,8 +259,11 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
               Kernel.ctor_ind_ok(env, E.DCtor{id, ps, ty, ind, cidx, np, nf}),
               Bool.and(
                 Kernel.ctor_arity_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}),
-                Kernel.ctor_result_ok(
-                  E.DCtor{id, ps, ty, ind, cidx, np, nf}))))),
+                Bool.and(
+                  Kernel.ctor_result_ok(
+                    E.DCtor{id, ps, ty, ind, cidx, np, nf}),
+                  Kernel.ctor_index_ok(
+                    E.DCtor{id, ps, ty, ind, cidx, np, nf})))))),
         Kernel.is_type(fuel, env, ty))
     case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
       A.Ans.and(
