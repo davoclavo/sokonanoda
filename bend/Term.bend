@@ -64,36 +64,113 @@ def Term.is_unk(t: Term) -> Bool:
     case x:
       False{}
 
-# Structural equality of two terms, without fuel. The recursion is on both
-# sides at once, so it is bounded by the smaller one. This is equality of
-# syntax, not of meaning, and that is what it is for: a guard that must never
-# say yes to two terms that differ.
-def Term.same(a: Term, b: Term) -> Bool:
+# Structural equality of two terms.
+#
+# This is equality of syntax, not of meaning, and that is what it is for: a
+# guard that must never say yes to two terms that differ.
+#
+# It is a worklist and not a plain recursion, for the same reason
+# `Conv.eq_all` is one. `Bool.and` evaluates both of its sides, because an
+# argument evaluates before the match picks an arm, so `and(same(f1, f2),
+# same(a1, a2))` walked the whole of both terms even when the heads already
+# differed. Conversion asks this of every pair it takes off its queue, and
+# most of those pairs differ, so most of that walking was waste.
+#
+# The answer so far travels in as a parameter, which a match can inspect, so
+# a difference stops the walk. The budget bounds what one question may cost,
+# and running out answers no: this is a guard, and a guard that gives up must
+# give up on the side that does more work rather than less.
+
+# One pair still to be compared.
+type TwoT is Data:
+  MkTT{a: Term, b: Term}
+
+# What comparing the heads of one pair settles.
+type SameStep is Data:
+  SDiff{}
+  SNext{ps: List<&2, TwoT>}
+
+def Term.step_ok(s: SameStep) -> Bool:
+  match s:
+    case SDiff{}:
+      False{}
+    case SNext{ps}:
+      True{}
+
+def Term.step_next(s: SameStep) -> List<&2, TwoT>:
+  match s:
+    case SDiff{}:
+      Nil{}
+    case SNext{ps}:
+      ps
+
+def Term.same_of(b: Bool) -> SameStep:
+  match b:
+    case True{}:
+      SNext{Nil{}}
+    case False{}:
+      SDiff{}
+
+def Term.same_proj(ok: Bool, s1: Term, s2: Term) -> SameStep:
+  match ok:
+    case True{}:
+      SNext{[MkTT{s1, s2}]}
+    case False{}:
+      SDiff{}
+
+# The heads of one pair, and the pairs they leave behind.
+def Term.same_step(a: Term, b: Term) -> SameStep:
   match a b:
     case TVar{i} TVar{j}:
-      Nat.is_eq(i, j)
+      Term.same_of(Nat.is_eq(i, j))
     case TSort{x} TSort{y}:
-      L.Level.same(x, y)
+      Term.same_of(L.Level.same(x, y))
     case TConst{n1, l1} TConst{n2, l2}:
-      Bool.and(Nat.is_eq(n1, n2), Term.same_levels(l1, l2))
+      Term.same_of(
+        Bool.and(Nat.is_eq(n1, n2), Term.same_levels(l1, l2)))
     case TApp{f1, a1} TApp{f2, a2}:
-      Bool.and(Term.same(f1, f2), Term.same(a1, a2))
+      SNext{[MkTT{f1, f2}, MkTT{a1, a2}]}
     case TLam{t1, b1} TLam{t2, b2}:
-      Bool.and(Term.same(t1, t2), Term.same(b1, b2))
+      SNext{[MkTT{t1, t2}, MkTT{b1, b2}]}
     case TPi{t1, b1} TPi{t2, b2}:
-      Bool.and(Term.same(t1, t2), Term.same(b1, b2))
+      SNext{[MkTT{t1, t2}, MkTT{b1, b2}]}
     case TProj{n1, i1, s1} TProj{n2, i2, s2}:
-      Bool.and(
-        Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)),
-        Term.same(s1, s2))
+      Term.same_proj(
+        Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)), s1, s2)
     case TNat{v1, m1, z1, s1} TNat{v2, m2, z2, s2}:
-      Nat.is_eq(v1, v2)
+      Term.same_of(Nat.is_eq(v1, v2))
     case TLet{t1, v1, b1} TLet{t2, v2, b2}:
-      Bool.and(
-        Term.same(t1, t2),
-        Bool.and(Term.same(v1, v2), Term.same(b1, b2)))
+      SNext{[MkTT{t1, t2}, MkTT{v1, v2}, MkTT{b1, b2}]}
+    case TUnk{} TUnk{}:
+      SNext{Nil{}}
     case x y:
+      SDiff{}
+
+def Term.same_all(+fuel: Nat, ok: Bool, work: List<&2, TwoT>) -> Bool:
+  match fuel:
+    case 0n:
       False{}
+    case 1n+f:
+      match ok work:
+        case False{} w:
+          False{}
+        case True{} Nil{}:
+          True{}
+        case True{} Con{MkTT{a, b}, rest}:
+          +st : SameStep = Term.same_step(a, b)
+          Term.same_all(
+            f,
+            Term.step_ok(st),
+            List.append(&2, TwoT, Term.step_next(st), rest))
+
+# How many pairs one question may cost. Large enough that no pair in the
+# arena's corpus reaches it, and small enough that a pathological pair cannot
+# cost the whole run.
+def Term.same_budget() -> Nat:
+  1000000n
+
+def Term.same(a: Term, b: Term) -> Bool:
+  Term.same_all(Term.same_budget(), True{}, [MkTT{a, b}])
 
 # How many binders a telescope opens with. The result type of a constructor
 # is an application of its inductive and never a pi, so this counts exactly
