@@ -25,11 +25,23 @@ import ./Ans.bend as A
 # parameter now, so that call is a tail call and the stack no longer sets the
 # cap. A fuel of 30000 runs a 598 kB export to an answer.
 #
-# What sets it now is time. Raising the fuel raises the work a declaration may
-# do before it gives up, so it buys answers on the files that decline and
-# costs time on the ones that already answer. Measure before you change it.
+# What sets it now is time, and this number is measured. Raising the fuel buys
+# answers on the files that decline and costs time on the ones that already
+# answer, and the arena scores a decline and a timeout the same, so the trade
+# is worth taking as long as no answer turns wrong.
+#
+# | fuel | correct | declined | error | wrong |
+# |---|---|---|---|---|
+# | 3000 | 179 | 11 | 5 | 0 |
+# | 10000 | 182 | 5 | 8 | 0 |
+# | 30000 | **186** | 0 | 9 | 0 |
+# | 100000 | 186 | 0 | 9 | 0 |
+#
+# Thirty thousand is where it stops paying. A hundred thousand buys nothing
+# and `perf/shared-subterm` runs the machine out of memory at it, which is a
+# worse answer than not knowing.
 def Check.fuel() -> Nat:
-  3000n
+  30000n
 
 def Check.bytes(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> List<&2, U32>:
   Result.default(&1, &1, U32 & String, List<&2, U32>,
