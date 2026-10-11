@@ -145,6 +145,48 @@ def Kernel.ctor_result_ok(+d: E.Decl) -> Bool:
         E.Decl.ctor_ty(d)),
       Nil{}))
 
+# Every field of a constructor is strictly positive in the inductive.
+#
+# The inductive may not occur in the domain of an arrow inside a field. A
+# field of type `I -> I` makes the type its own negation, which is unsound,
+# and the arena's `indNeg` declares exactly that. `indNegReducible` hides the
+# occurrence behind an application in the domain, and the rule catches it just
+# the same, because it reads every occurrence and not only a head.
+#
+# Only the domains are refused. An occurrence to the right of an arrow, as in
+# `Nat -> I`, is what an ordinary recursive field looks like, and an
+# occurrence under another inductive, as in `List I`, is the nested case that
+# Lean accepts. Refusing those would reject types that are in fact sound,
+# which is the one mistake worth more than a missed attack.
+
+# No occurrence of the inductive in any domain of this field's type.
+def Kernel.positive(t: T.Term, +ind: Nat) -> Bool:
+  match t:
+    case T.TPi{ty, bd}:
+      Bool.and(
+        Bool.not(T.Term.occurs(ty, ind)),
+        Kernel.positive(bd, ind))
+    case x:
+      True{}
+
+# Walk the constructor's telescope. The first `n` binders are its parameters
+# and are not fields; every binder after them is one.
+def Kernel.ctor_pos(t: T.Term, +n: Nat, +ind: Nat) -> Bool:
+  match t:
+    case T.TPi{ty, bd}:
+      match n:
+        case 0n:
+          Bool.and(
+            Kernel.positive(ty, ind),
+            Kernel.ctor_pos(bd, 0n, ind))
+        case 1n+m:
+          Kernel.ctor_pos(bd, m, ind)
+    case x:
+      True{}
+
+def Kernel.ctor_pos_ok(+d: E.Decl) -> Bool:
+  Kernel.ctor_pos(E.Decl.ctor_ty(d), E.Decl.ctor_np(d), E.Decl.ctor_ind(d))
+
 # The inductive being declared may not occur in its own indices.
 #
 # Lean refuses it outright, and so does this. The arena's `inductInIndex`
@@ -222,6 +264,99 @@ def Kernel.ind_shape(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
       Nat.add(E.Decl.ind_np(d), E.Decl.ind_ni(d)),
       V.Eval.whnf(fuel, env, E.Decl.ind_ty(d), Nil{})))
 
+# A constructor's fields must fit in the inductive's own universe.
+#
+# Only the fields. The parameters are binders of the constructor's type too,
+# and their sorts are higher than the inductive's by design: `Prod` lives in
+# `Type (max u v)` while its two parameters live in `Type (u+1)` and
+# `Type (v+1)`. Taking the sort of the whole type rejected seventeen correct
+# files before this was split out.
+#
+# A field's sort is read in a context holding the binders before it, because
+# a later field may be typed by an earlier one.
+#
+# An inductive in `Prop` is exempt. Proof irrelevance makes every proof of
+# one proposition equal, so a field of any sort is sound there, and Lean
+# allows it. `Exists`, `Acc` and the arena's own `Prop` structures all carry
+# fields above `Prop`, and eight correct files were rejected before this was
+# written down. What such a type may not do is let a field back out, and that
+# is the separate rule in `Infer.proj_from`.
+def Kernel.field_fits(+w: T.Term, +s: L.Level, +fuel: Nat) -> A.Ans:
+  A.Ans.and(
+    I.Infer.sort_ans(w),
+    A.Ans.of(L.Level.leq(fuel, I.Infer.sort_level(w), s)))
+
+def Kernel.field_univ(
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>,
+  +ty: T.Term, +s: L.Level
+) -> A.Ans:
+  Kernel.field_fits(
+    V.Eval.whnf(
+      fuel, env,
+      I.Infer.res_ty(I.Infer.infer(fuel, env, ctx, ty)),
+      Nil{}),
+    s,
+    fuel)
+
+# Walk the constructor's telescope. The first `n` binders are parameters and
+# only join the context; every binder after one is a field and is checked.
+def Kernel.fields_univ(
+  fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term,
+  +n: Nat, +s: L.Level
+) -> A.Ans:
+  match fuel:
+    case 0n:
+      A.AUnk{}
+    case 1n+(+f):
+      match t:
+        case T.TPi{+ty, bd}:
+          match n:
+            case 0n:
+              A.Ans.and(
+                Kernel.field_univ(f, env, ctx, ty, s),
+                Kernel.fields_univ(f, env, Con{ty, ctx}, bd, 0n, s))
+            case 1n+m:
+              Kernel.fields_univ(f, env, Con{ty, ctx}, bd, m, s)
+        case x:
+          A.AYes{}
+
+def Kernel.univ_skip(
+  b: Bool, +fuel: Nat, +env: E.DTable, +d: E.Decl, +s: L.Level
+) -> A.Ans:
+  match b:
+    case True{}:
+      A.AYes{}
+    case False{}:
+      Kernel.fields_univ(
+        fuel, env, Nil{}, E.Decl.ctor_ty(d), E.Decl.ctor_np(d), s)
+
+def Kernel.ctor_univ_at(
+  +fuel: Nat, +env: E.DTable, +d: E.Decl, +ds: T.Term
+) -> A.Ans:
+  A.Ans.and(
+    I.Infer.sort_ans(ds),
+    Kernel.univ_skip(
+      L.Level.is_zero(I.Infer.sort_level(ds)),
+      fuel, env, d, I.Infer.sort_level(ds)))
+
+def Kernel.ctor_univ(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans:
+  Kernel.ctor_univ_at(
+    fuel,
+    env,
+    d,
+    Kernel.strip(
+      fuel,
+      env,
+      Nat.add(
+        E.Decl.ind_np(
+          E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d)))),
+        E.Decl.ind_ni(
+          E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d))))),
+      V.Eval.whnf(
+        fuel, env,
+        E.Decl.ind_ty(E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d)))),
+        Nil{})))
+
 # Check one declaration against the declarations before it.
 def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
   match d:
@@ -252,6 +387,9 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
         Kernel.is_type(fuel, env, ty))
     case E.DCtor{+id, +ps, +ty, +ind, +cidx, +np, +nf}:
       A.Ans.and(
+        Kernel.ctor_univ(
+          fuel, env, E.DCtor{id, ps, ty, ind, cidx, np, nf}),
+      A.Ans.and(
         A.Ans.of(
           Bool.and(
             E.Decl.no_dupes(ps),
@@ -262,9 +400,12 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
                 Bool.and(
                   Kernel.ctor_result_ok(
                     E.DCtor{id, ps, ty, ind, cidx, np, nf}),
-                  Kernel.ctor_index_ok(
-                    E.DCtor{id, ps, ty, ind, cidx, np, nf})))))),
-        Kernel.is_type(fuel, env, ty))
+                  Bool.and(
+                    Kernel.ctor_index_ok(
+                      E.DCtor{id, ps, ty, ind, cidx, np, nf}),
+                    Kernel.ctor_pos_ok(
+                      E.DCtor{id, ps, ty, ind, cidx, np, nf}))))))),
+        Kernel.is_type(fuel, env, ty)))
     case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
       A.Ans.and(
         A.Ans.of(
