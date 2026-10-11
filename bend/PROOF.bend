@@ -59,6 +59,11 @@ def Laws.term_subst_levels_nil(t):
       %Laws.term_subst_levels_nil(ty) : {T.TPi{T.Term.subst_levels(ty, []), T.Term.subst_levels(bd, [])} == T.TPi{_, bd} : T.Term}
       %Laws.term_subst_levels_nil(bd) : {T.TPi{T.Term.subst_levels(ty, []), T.Term.subst_levels(bd, [])} == T.TPi{T.Term.subst_levels(ty, []), _} : T.Term}
       {==}
+    case T.TProj{tn, idx, st}:
+      %Laws.term_subst_levels_nil(st) : {T.TProj{tn, idx, T.Term.subst_levels(st, [])} == T.TProj{tn, idx, _} : T.Term}
+      {==}
+    case T.TUnk{}:
+      {==}
     case T.TLet{ty, v, bd}:
       %Laws.term_subst_levels_nil(ty) : {T.TLet{T.Term.subst_levels(ty, []), T.Term.subst_levels(v, []), T.Term.subst_levels(bd, [])} == T.TLet{_, v, bd} : T.Term}
       %Laws.term_subst_levels_nil(v) : {T.TLet{T.Term.subst_levels(ty, []), T.Term.subst_levels(v, []), T.Term.subst_levels(bd, [])} == T.TLet{T.Term.subst_levels(ty, []), _, bd} : T.Term}
