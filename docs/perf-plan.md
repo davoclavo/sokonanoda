@@ -779,3 +779,52 @@ needs `Term.occurs`, `Term.pars_ok`, `Term.has_bvar`, `Term.pi_count` and
 `Term.pi_skip` to resolve, which needs the expression table visible from
 `Term.bend`. The work is saved as a patch rather than committed, because the
 half-built version is a point worse than none.
+
+### The rig: do not use `--threads 8` on this machine
+
+A whole stretch of measurements was poisoned by it. The same binary answers a
+292-byte export in 11 ms with `--threads 1`, `--threads 4` or no flag, and
+**hangs** with `--threads 8`, because this machine runs at a load average near
+seven and Bend's scheduler is contention-free: every task is handed to a core
+exactly once and never moved. Eight threads that cannot all run therefore
+stall rather than share.
+
+The symptom is confusing: a fresh build appears broken while an older binary
+of the same source is fast, and a 292-byte file takes two hundred seconds. It
+led to reverting work that was sound. The rig uses `--threads 4` now, and the
+perf plan's own rule about a thread count being a collective question stands.
+
+### The four classes, and the order they put the work in
+
+| file | closed, level-free | closed, with level | open, level-free | open, with level |
+|---|---|---|---|---|
+| `perf/app-lam` | 0.1% | 0.5% | **98.5%** | 0.9% |
+| `perf/fueled-chain` | 0.6% | 5.1% | 4.3% | **90.0%** |
+| `good/init-prelude` | 1.8% | 13.3% | 9.5% | **75.3%** |
+| `perf/shared-subterm` | **88.0%** | 3.5% | 4.0% | 4.5% |
+
+A reference now covers the first column, which is why `shared-subterm` builds
+4,282 nodes instead of 6,292 and why the other three gain almost nothing.
+
+The table orders what is left:
+
+1. **A shift in the reference**, so it may stand for an **open** expression.
+   `TRef{i, sh}` denotes the entry lifted by `sh`, and the entry's own count
+   of outside binders decides when `Term.lift` and `Term.subst` may answer in
+   one step and when they must expand. That is 98.5% of `app-lam`, the file
+   that cannot be read at all.
+2. **A level substitution in the reference**, so it may stand for an
+   expression that names a universe. The per-declaration remapping is why it
+   may not today, and the composition of that remapping with any later
+   substitution is an association list from name to level, which is short
+   enough to carry. That is 90% of `fueled-chain` and 75% of the prelude.
+3. **The analysis passes resolve.** `Term.occurs`, `Term.pars_ok`,
+   `Term.has_bvar`, `Term.pi_count` and `Term.pi_skip` read a reference as a
+   leaf, which is why a type is expanded today. Moving them to a module that
+   can see the table is the pattern already proven by moving the syntactic
+   test from `Term` to `Conv`.
+4. **One table, not three.** `ETable` should hold each entry's term beside
+   its size, its free-variable count and whether it names a universe. Three
+   tables mean three copies of a growing trie per expression line, because
+   `Parse.expr_of` takes the whole state, and that is what took
+   `perf/beta-ladder` from 0.16 s to 2.4 s to read.
