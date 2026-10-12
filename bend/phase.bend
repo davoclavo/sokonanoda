@@ -117,11 +117,10 @@ def Peek.pick(b: Bool, x: String, y: String) -> String:
     case False{}:
       y
 
-def Peek.inf(+env: E.DTable, +d: E.Decl) -> String:
-  A.Ans.show(
-    A.Ans.and(
-      A.Ans.of(K.Kernel.safe_uses(d, env)),
-      K.Kernel.check_decl(400000n, env, d)))
+def Peek.inf(+env: E.DTable, +d: E.Decl) -> A.Ans:
+  A.Ans.and(
+    A.Ans.of(K.Kernel.safe_uses(d, env)),
+    K.Kernel.check_decl(400000n, env, d))
 
 def Peek.show(+env: E.DTable, +t: T.Term) -> String:
   +root : T.Term = Peek.deref(env, Peek.deref(env, t))
@@ -139,9 +138,12 @@ def Peek.show(+env: E.DTable, +t: T.Term) -> String:
 # Check the first `k` declarations, each against the ones before it. The
 # limit is what makes a 3.7 MB file bisectable: the time for a prefix says
 # where the cost is, and one process parses once.
+# The answers are combined, not replaced. An answer that is replaced is
+# never read, and nothing is evaluated that nothing reads, so a walk that
+# kept only the last one measured only the last declaration.
 def Peek.last(
-  ds: List<&2, E.Decl>, +k: Nat, +env: E.DTable, +acc: String
-) -> String:
+  ds: List<&2, E.Decl>, +k: Nat, +env: E.DTable, +acc: A.Ans
+) -> A.Ans:
   match ds:
     case Nil{}:
       acc
@@ -151,7 +153,8 @@ def Peek.last(
           acc
         case 1n+j:
           Peek.last(
-            t, j, E.Env.add(env, h), Peek.inf(env, h))
+            t, j, E.Env.add(env, h),
+            A.Ans.and(acc, Peek.inf(env, h)))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -170,5 +173,5 @@ def main() -> IO(Unit):
           Peek.trust_pre(
             P.Parse.decls_of(st), kv,
             E.Env.over(P.Parse.exps_of(st)), False{})),
-        Peek.last(
-          P.Parse.decls_of(st), kv, env, "none")))
+        A.Ans.show(
+          Peek.last(P.Parse.decls_of(st), kv, env, A.AYes{}))))
