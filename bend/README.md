@@ -380,15 +380,15 @@ tarball, 195 attempted and one too large to read:
 
 | | before the speed work | after the level rules | after the recursor | the term kernel | the value kernel |
 |---|---|---|---|---|---|
-| correct | 101 | 101 | 173 | 186 | **189** |
+| correct | 101 | 101 | 173 | 186 | **190** |
 | declined | 82 | 87 | 17 | 0 | **0** |
 | wrong | 0 | 0 | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 | 10 | **7** |
+| error or timeout | 11 | 7 | 5 | 10 | **6** |
 
 **Every file it reads gets an answer, every answer is correct, and nothing is
-declined.** The seven it does not answer are `init-prelude`,
-`perf/fueled-chain`, `perf/grind-ring-5` and the four `perf/magma-*`
-tests. Each of those spends its **whole** arena limit, from
+declined.** The six it does not answer are `init-prelude`,
+`perf/fueled-chain`, `perf/grind-ring-5` and three of the four
+`perf/magma-*` tests. Each of those spends its **whole** arena limit, from
 fifty seconds to three hundred and ninety, so no constant factor reaches
 any of them.
 

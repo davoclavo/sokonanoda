@@ -1472,3 +1472,45 @@ economy. The rule it teaches: a reduction whose answer is written into the
 heap must have the budget of whatever will read it, or the write must be
 refused. The reading now takes the comparison's budget, so a reduction that
 does not finish means the comparison has not finished either.
+
+## Two comparisons, and which question each one is good at
+
+The value comparison walks values and the older one substitutes, and they
+decide the same relation. Until now only the first was asked, and the files
+it cannot finish are the files the other one finishes easily.
+
+`perf/fueled-chain` is what made that plain. Its wall is `chain6_datF`, the
+smallest member of its own family -- so there is nothing smaller in the file
+to scale down to -- and the theorem cuts to 97 declarations:
+
+| | the `chain6_datF` cut |
+|---|---|
+| the term kernel | **accept in 4.4 s** |
+| the value kernel | no answer in 60 s |
+
+So `Vconv.eq_in` asks the term comparison first, with a budget of three
+thousand pairs. A yes or a no from it is the answer; "do not know" costs
+that budget and the value comparison carries on.
+
+| | before | after |
+|---|---|---|
+| correct | 189 | **190** |
+| past its limit | 7 | **6** |
+| the corpus, 196 files at a 50 s cap | 444.2 s | **357.4 s** |
+| `perf/beta-ladder` | 2.6 s | **0.57 s** |
+| the `chain6_datF` cut | no answer | **accept in 7.3 s** |
+
+`perf/magma-list-pair-n7` answers now, which is the file the
+`offer` comment has carried a note about since the dear route was written.
+
+### The budget is a trade, and it is measured
+
+| budget | what it costs |
+|---|---|
+| 3,000 | the committed one: 190 correct, 357.4 s |
+| 10,000 | `perf/beta-ladder` and `perf/magma-list-pair-n7` stop answering |
+| 40,000 | `perf/church-numerals` answers in 0.11 s; `perf/beta-ladder` and `perf/shared-subterm` stop answering |
+
+A first attempt that is allowed to go on too long is paid for by every file
+whose answer is a computation. Three thousand is where the two sides of the
+trade cross.
