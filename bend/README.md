@@ -880,10 +880,18 @@ literal that reaches it is read as unknown.
 ## One wrong answer still open, and how to reach it
 
 `tools/declsweep.py` cut all 2,269 declarations of `perf/grind-ring-5` out
-and checked each on its own. Of them, 40 answer `reject`, and every one of
-the 40 names the same cause: `thm 11861`,
+and checked each on its own:
+
+| | count |
+|---|---|
+| accept | 1,998 |
+| declined, the budget ran out | 97 |
+| ran past thirty seconds | 128 |
+| **reject** | **46** |
+
+Every one of the 46 names the same cause: `thm 11861`,
 `Nat.Internal.Linear.ExprCnstr.denote_toNormPoly`. So there is one bug left
-in that corpus, not forty.
+in that corpus, not forty-six.
 
 To reach it in 296 kB instead of 9.8 MB:
 
