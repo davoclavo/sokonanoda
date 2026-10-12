@@ -877,6 +877,95 @@ for the size of a `UInt64`. Reading it crashed the kernel, and a crash is the
 one answer worse than not knowing. The reader now saturates at a cap and a
 literal that reaches it is read as unknown.
 
+## The expression graph, and the nine that are left
+
+An export's expression table is a **graph**: one expression is named by many
+others. This kernel read it as a tree, because Bend is affine and a value
+read twice is copied. `T.TRef{i, k, m}` is what reads it as a graph.
+
+`i` names the entry. `k` shifts its free variables into the scope the
+reference stands in, and `m` bounds them, so the variables a reference uses
+are the ones from `k` up to `k + m`. A lift or a substitution compares its
+cutoff against that range and answers in one of three ways:
+
+1. no variable of the reference reaches the cutoff, so leave the reference,
+2. every one does, so change `k` and leave the entry alone,
+3. the cutoff falls inside the range, and only then is the entry read and
+   walked.
+
+The parser writes a shift of zero, because an expression of the table is
+named by expressions at its own binder depth, and a de Bruijn term is the
+same term wherever it is named from. That is how Lean shares its own
+expressions.
+
+Three conditions keep it sound, and each was learned by breaking it.
+
+**A reference may not name an expression that mentions a level parameter.**
+The remapping of level parameters is per declaration and the table is shared
+by all of them.
+
+**A declaration's own type is stored with its references expanded.** Every
+pass that reads a type as syntax reads a reference as a leaf, so positivity
+would not see the inductive inside one and the projection rules would not see
+a field. With references in types, 65 files answered wrongly.
+
+**Only the walks that may meet a reference in a value take the table.**
+`Term.lift_at`, `Term.subst_at` and `Term.inst_at` resolve one;
+`Term.lift` and `Term.subst` keep their old signature and resolve against an
+empty table, which answers the unknown term. So a reference that ever
+reached the wrong walk would be answered "do not know" rather than answered
+wrongly.
+
+What it was worth, measured by summing the nodes of every stored entry:
+
+| file | stored before | stored after | read into terms |
+|---|---|---|---|
+| `perf/shared-subterm` | 5,893 | 5,893 | 0.0 s |
+| `perf/beta-ladder` | 56,009,873 | **34,280** | 0.2 s |
+| `perf/fueled-chain` | 6,646,462,095 | **222,028** | 0.4 s |
+| `perf/app-lam` | could not be read | **70,326** | 0.7 s |
+
+### Why the nine that remain need a memo, not a tuning
+
+The parse is no longer the wall for any of them. Every one is now the
+checker's own work, and `perf/shared-subterm` says exactly what is missing.
+It is five declarations, 1,252 lines, and it states
+
+```
+ldepth (perfect n leaf) = ldepth2 (perfect n leaf)
+```
+
+by `refl`, where `n` is a tower of 1,100 `succ`. So the kernel must reduce
+both sides, and `perfect n leaf` is a perfect tree of 2^1100 nodes. The
+reduction is finite only if the two recursive calls on the same subtree are
+done once.
+
+Sharing the **term** is not enough, and that is the point worth recording.
+The recursor's own rule builds `succ (max (rec t) (rec t))`: the field `t` is
+shared, but the two `rec t` are two distinct computations on it. No
+representation of terms makes them one. Reducing the argument first does not
+either, because what is duplicated is the computation and not the value.
+
+What makes it finite is a cache from a term to its weak head normal form,
+which is what the Rust kernel gets from a pointer and a hash table. Four of
+the nine are the arena's `magma-*` family, which exists to punish a cache
+that drops entries, so seven of the nine are the same ask.
+
+A cache cannot be threaded through this kernel as it stands. `Eval.whnf`
+would have to hand one back as well as a term, so every one of its fourteen
+self-calls would need a helper to take the pair apart, and Bend does not let
+a helper call the function it helps. The shape that works is an abstract
+machine: one tail-recursive loop whose state holds the fuel, the
+environment, the cache, the term under control, the spine, and a stack of
+frames for the nested reductions that `whnf` does today inside an argument.
+`Conv.eq_all` is already such a loop and would carry the cache in its
+accumulator.
+
+That is the next piece of work, and it is a rewrite of the evaluator rather
+than a change to it. `good/init-prelude` needs it too and needs more: 1,824
+declarations, each of them real work, and it does not finish in nine hundred
+seconds.
+
 ## Reading an export
 
 The first attempt used `String`, and it failed hard. A Bend string is a linked
