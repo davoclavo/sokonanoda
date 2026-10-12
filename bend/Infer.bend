@@ -481,77 +481,241 @@ def Infer.proj_from(
   Infer.proj_pick(
     T.Term.is_unk(sty), fuel, env, ctx, sty, tn, idx, s)
 
-# Infer the type of `t` in the context `ctx`.
-def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -> Res:
+def Infer.res_pick(b: Bool, x: Res, y: Res) -> Res:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+def Infer.pick_term(b: Bool, x: T.Term, y: T.Term) -> T.Term:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The head of an application, and its arguments in the order they are
+# applied.
+#
+# A reference in the head is resolved and the walk goes on through it. The
+# export records `(f X) X` as three entries, and the inner application is
+# one of them, so a walk that stops at a reference sees a spine of one
+# argument and never sees the two copies of `X` together. What the table
+# holds has references for its own children, so resolving the head costs
+# one step however large the expression it names.
+def Infer.sp_head(+env: E.DTable, +fuel: Nat, t: T.Term) -> T.Term:
+  match fuel:
+    case 0n:
+      t
+    case 1n+(+f):
+      match t:
+        case T.TApp{+g, a}:
+          Infer.sp_head(env, f, g)
+        case T.TRef{+i, +k, m}:
+          Infer.sp_head(env, f, E.Env.expr_at(env, i, k))
+        case o:
+          o
+
+def Infer.sp_args(
+  +env: E.DTable, +fuel: Nat, t: T.Term, +acc: List<&2, T.Term>
+) -> List<&2, T.Term>:
+  match fuel:
+    case 0n:
+      acc
+    case 1n+(+f):
+      match t:
+        case T.TApp{+g, +a}:
+          Infer.sp_args(env, f, g, Con{a, acc})
+        case T.TRef{+i, +k, m}:
+          Infer.sp_args(env, f, E.Env.expr_at(env, i, k), acc)
+        case o:
+          acc
+
+# The type of one argument, remembered by the entry it names.
+#
+# `perf/app-lam` is the file this is for. At each level it applies a
+# constant to two copies of one shared expression, which the export records
+# as a single entry and the reader as one reference, and each copy carries
+# the level below it. Inferring the type of each copy again is work that
+# doubles at every level: the file's own description calls what it wants an
+# **infer cache**, and a generated family of the same shape measures the
+# kernel at `2^n` without one.
+#
+# The key is the entry a reference names, and the shift it is read at. Two
+# references with the same pair name the same term, and the type of one
+# term in one context is one type -- the context is the same for every
+# argument of one spine, which is why this is remembered per spine and not
+# across the walk.
+type Memo is Data:
+  MkMemo{i: Nat, k: Nat, r: Res}
+
+def Infer.ref_key(t: T.Term) -> Nat:
+  match t:
+    case T.TRef{+i, k, m}:
+      1n+i
+    case o:
+      0n
+
+def Infer.ref_shift(t: T.Term) -> Nat:
+  match t:
+    case T.TRef{i, +k, m}:
+      k
+    case o:
+      0n
+
+def Infer.memo_has(ms: List<&2, Memo>, +i: Nat, +k: Nat) -> Bool:
+  match ms:
+    case Nil{}:
+      False{}
+    case Con{MkMemo{+j, +k2, r}, t}:
+      Bool.or(
+        Bool.and(Nat.is_eq(i, j), Nat.is_eq(k, k2)),
+        Infer.memo_has(t, i, k))
+
+def Infer.memo_get(ms: List<&2, Memo>, +i: Nat, +k: Nat) -> Res:
+  match ms:
+    case Nil{}:
+      RUnk{}
+    case Con{MkMemo{+j, +k2, +r}, t}:
+      Infer.res_pick(
+        Bool.and(Nat.is_eq(i, j), Nat.is_eq(k, k2)), r,
+        Infer.memo_get(t, i, k))
+
+def Infer.memo_pick(
+  b: Bool, +x: List<&2, Memo>, +y: List<&2, Memo>
+) -> List<&2, Memo>:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# An argument that is not a reference has no key, and nothing is kept for
+# it.
+def Infer.memo_put(
+  +ms: List<&2, Memo>, +i: Nat, +k: Nat, +r: Res
+) -> List<&2, Memo>:
+  Infer.memo_pick(Nat.is_eq(i, 0n), ms, Con{MkMemo{i, k, r}, ms})
+
+# What the walk is working on: a term, or a type with the arguments still to
+# be applied to it.
+type IC is Data:
+  IT{t: T.Term}
+  ISp{ty: T.Term, ok: A.Ans, args: List<&2, T.Term>, ms: List<&2, Memo>}
+
+def Infer.go(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, c: IC) -> Res:
   match fuel:
     case 0n:
       RUnk{}
     case 1n+f:
-      match t:
-        case T.TVar{+i}:
-          Infer.lift_res(Infer.ctx_nth(ctx, i), 1n+i)
-        case T.TSort{l}:
-          ROk{T.TSort{L.LSucc{l}}}
-        case T.TConst{+n, +ls}:
-          Infer.res_if(
-            Infer.const_arity_ok(E.Env.find(env, n), ls),
-            Infer.const_type(E.Env.find(env, n), ls))
-        case T.TApp{g, +a}:
-          +gt = V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, g)), Nil{})
-          +at = Infer.infer(f, env, ctx, a)
-          Infer.res_of(
-            X.Vconv.eq_unless_no(
+      match c:
+        case IT{t}:
+        match t:
+          case T.TVar{+i}:
+            Infer.lift_res(Infer.ctx_nth(ctx, i), 1n+i)
+          case T.TSort{l}:
+            ROk{T.TSort{L.LSucc{l}}}
+          case T.TConst{+n, +ls}:
+            Infer.res_if(
+              Infer.const_arity_ok(E.Env.find(env, n), ls),
+              Infer.const_type(E.Env.find(env, n), ls))
+          case T.TApp{+g, +a}:
+            # The whole spine at once, so that an argument which appears
+            # twice in it is inferred once.
+            +hr : Res =
+              Infer.go(
+                f, env, ctx, IT{Infer.sp_head(env, f, T.TApp{g, a})})
+            Infer.go(
+              f, env, ctx,
+              ISp{
+                V.Eval.whnf(f, env, Infer.res_ty(hr), Nil{}),
+                Infer.res_ans(hr),
+                Infer.sp_args(env, f, T.TApp{g, a}, Nil{}), Nil{}})
+          case T.TLam{+ty, bd}:
+            +bt = Infer.go(f, env, Con{ty, ctx}, IT{bd})
+            Infer.res_of(Infer.res_ans(bt), T.TPi{ty, Infer.res_ty(bt)})
+          case T.TPi{+ty, bd}:
+            +tr = Infer.go(f, env, ctx, IT{ty})
+            +br = Infer.go(f, env, Con{ty, ctx}, IT{bd})
+            +ts = V.Eval.whnf(f, env, Infer.res_ty(tr), Nil{})
+            +bs = V.Eval.whnf(f, env, Infer.res_ty(br), Nil{})
+            Infer.res_of(
               A.Ans.and(
-                Infer.pi_ans(gt),
-                Infer.res_ans(at)),
-              f, env, ctx, Infer.res_ty(at), Infer.pi_dom(gt)),
-            T.Term.inst_at(E.Env.tab(env), Infer.pi_bd(gt), a))
-        case T.TLam{+ty, bd}:
-          +bt = Infer.infer(f, env, Con{ty, ctx}, bd)
-          Infer.res_of(Infer.res_ans(bt), T.TPi{ty, Infer.res_ty(bt)})
-        case T.TPi{+ty, bd}:
-          +tr = Infer.infer(f, env, ctx, ty)
-          +br = Infer.infer(f, env, Con{ty, ctx}, bd)
-          +ts = V.Eval.whnf(f, env, Infer.res_ty(tr), Nil{})
-          +bs = V.Eval.whnf(f, env, Infer.res_ty(br), Nil{})
-          Infer.res_of(
-            A.Ans.and(
-              A.Ans.and(Infer.res_ans(tr), Infer.res_ans(br)),
+                A.Ans.and(Infer.res_ans(tr), Infer.res_ans(br)),
+                A.Ans.and(
+                  Infer.sort_ans(ts),
+                  Infer.sort_ans(bs))),
+              T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
+          case T.TNat{+v, +nm, +zr, +sc}:
+            ROk{T.TConst{nm, Nil{}}}
+          case T.TUnk{}:
+            RUnk{}
+          case T.TRef{+i, +k, m}:
+            # A reference is resolved against the table and asked again. What
+            # the table holds has references for its own children, so this costs
+            # one step however large the expression it names.
+            Infer.go(f, env, ctx, IT{E.Env.expr_at(env, i, k)})
+          case T.TProj{tn, +idx, +st}:
+            +sty = V.Eval.whnf(
+              f, env, Infer.res_ty(Infer.go(f, env, ctx, IT{st})), Nil{})
+            +fr = Infer.proj_from(f, env, ctx, sty, tn, idx, st)
+            +ps = V.Eval.whnf(
+              f, env,
+              Infer.res_ty(
+                Infer.go(
+                  f, env, ctx,
+                  IT{
+                    Infer.prop_subject(
+                      Infer.ind_is_prop(env, sty), Infer.res_ty(fr))})),
+              Nil{})
+            Infer.res_of(
               A.Ans.and(
-                Infer.sort_ans(ts),
-                Infer.sort_ans(bs))),
-            T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
-        case T.TNat{+v, +nm, +zr, +sc}:
-          ROk{T.TConst{nm, Nil{}}}
-        case T.TUnk{}:
-          RUnk{}
-        case T.TRef{+i, +k, m}:
-          # A reference is resolved against the table and asked again. What
-          # the table holds has references for its own children, so this costs
-          # one step however large the expression it names.
-          Infer.infer(f, env, ctx, E.Env.expr_at(env, i, k))
-        case T.TProj{tn, +idx, +st}:
-          +sty = V.Eval.whnf(
-            f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{})
-          +fr = Infer.proj_from(f, env, ctx, sty, tn, idx, st)
-          +ps = V.Eval.whnf(
-            f, env,
-            Infer.res_ty(
-              Infer.infer(
+                Infer.res_ans(fr),
+                Infer.prop_ok(Infer.ind_is_prop(env, sty), ps)),
+              Infer.res_ty(fr))
+          case T.TLet{ty, +v, bd}:
+            +vt = Infer.go(f, env, ctx, IT{v})
+            +br = Infer.go(f, env, ctx, IT{T.Term.inst_at(E.Env.tab(env), bd, v)})
+            Infer.res_of(
+              X.Vconv.eq_unless_no(
+                A.Ans.and(Infer.res_ans(vt), Infer.res_ans(br)),
+                f, env, ctx, Infer.res_ty(vt), ty),
+              Infer.res_ty(br))
+        case ISp{+ty, +ok, args, +ms}:
+          match args:
+            case Nil{}:
+              Infer.res_of(ok, ty)
+            case Con{+a, rest}:
+              # An argument whose type is already known is not inferred
+              # again. The branch that is not taken is handed the unknown
+              # term, because an argument reduces before a match picks an
+              # arm and a `pick` over two inferences runs both.
+              +key : Nat = Infer.ref_key(a)
+              +sh : Nat = Infer.ref_shift(a)
+              +hit : Bool = Infer.memo_has(ms, key, sh)
+              +fresh : Res =
+                Infer.go(
+                  f, env, ctx, IT{Infer.pick_term(hit, T.TUnk{}, a)})
+              +at : Res =
+                Infer.res_pick(hit, Infer.memo_get(ms, key, sh), fresh)
+              Infer.go(
                 f, env, ctx,
-                Infer.prop_subject(
-                  Infer.ind_is_prop(env, sty), Infer.res_ty(fr)))),
-            Nil{})
-          Infer.res_of(
-            A.Ans.and(
-              Infer.res_ans(fr),
-              Infer.prop_ok(Infer.ind_is_prop(env, sty), ps)),
-            Infer.res_ty(fr))
-        case T.TLet{ty, +v, bd}:
-          +vt = Infer.infer(f, env, ctx, v)
-          +br = Infer.infer(f, env, ctx, T.Term.inst_at(E.Env.tab(env), bd, v))
-          Infer.res_of(
-            X.Vconv.eq_unless_no(
-              A.Ans.and(Infer.res_ans(vt), Infer.res_ans(br)),
-              f, env, ctx, Infer.res_ty(vt), ty),
-            Infer.res_ty(br))
+                ISp{
+                  V.Eval.whnf(
+                    f, env,
+                    T.Term.inst_at(E.Env.tab(env), Infer.pi_bd(ty), a),
+                    Nil{}),
+                  X.Vconv.eq_unless_no(
+                    A.Ans.and(
+                      A.Ans.and(ok, Infer.pi_ans(ty)),
+                      Infer.res_ans(at)),
+                    f, env, ctx, Infer.res_ty(at), Infer.pi_dom(ty)),
+                  rest,
+                  Infer.memo_put(ms, key, sh, at)})
+
+# Infer the type of `t` in the context `ctx`.
+def Infer.infer(
+  +fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term
+) -> Res:
+  Infer.go(fuel, env, ctx, IT{t})

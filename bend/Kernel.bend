@@ -21,6 +21,7 @@ import ./Infer.bend as I
 import ./Ans.bend as A
 import ./Rec.bend as R
 import ./Quo.bend as Q
+import ./Table.bend as Tb
 
 # Is this term a type, that is, does its own type reduce to a sort?
 def Kernel.is_type(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
@@ -610,38 +611,83 @@ def Kernel.pars_ok(+d: E.Decl) -> Bool:
 # blind and `140_falseFromUnsafe` is accepted. Resolving is not a structural
 # step, so the walk carries a budget, and running out answers no, which is the
 # permissive side and cannot turn an unknown into a rejection.
-def Kernel.uses_unsafe(+fuel: Nat, t: T.Term, +env: E.DTable) -> Bool:
+#
+# Each entry of the table is resolved **once**. A term may name one entry
+# twice, and `perf/app-lam` names every one of its four thousand levels
+# twice, so a walk that resolved a reference wherever it met one did the
+# work of the whole expansion: `2^n`. A generated family of that shape
+# measured this walk at a factor of two per level, and the file could not be
+# read at all. What the entry holds is the same term wherever it is named
+# from, and the shift does not change which constants it mentions, so the
+# number of the entry is the whole of the key.
+def Kernel.uses_stop(
+  bad: Bool, +rest: List<&2, T.Term>
+) -> List<&2, T.Term>:
+  match bad:
+    case True{}:
+      Nil{}
+    case False{}:
+      rest
+
+def Kernel.uses_push(
+  seen: Bool, +env: E.DTable, +i: Nat, +k: Nat,
+  +rest: List<&2, T.Term>
+) -> List<&2, T.Term>:
+  match seen:
+    case True{}:
+      rest
+    case False{}:
+      Con{E.Env.expr_at(env, i, k), rest}
+
+def Kernel.uses_mark(
+  seen: Bool, +tb: Tb.NTable, +i: Nat
+) -> Tb.NTable:
+  match seen:
+    case True{}:
+      tb
+    case False{}:
+      Tb.Table.write_nat(tb, i, 1n)
+
+def Kernel.uses_go(
+  +fuel: Nat, +env: E.DTable, +tb: Tb.NTable, work: List<&2, T.Term>
+) -> Bool:
   match fuel:
     case 0n:
       False{}
     case 1n+f:
-      match t:
-        case T.TRef{+i, +k, m}:
-          Kernel.uses_unsafe(f, E.Env.expr_at(env, i, k), env)
-        case T.TConst{+n, ls}:
-          E.Decl.is_unsafe(E.Lookup.get(E.Env.find(env, n)))
-        case T.TApp{g, a}:
-          Bool.or(
-            Kernel.uses_unsafe(f, g, env),
-            Kernel.uses_unsafe(f, a, env))
-        case T.TLam{ty, bd}:
-          Bool.or(
-            Kernel.uses_unsafe(f, ty, env),
-            Kernel.uses_unsafe(f, bd, env))
-        case T.TPi{ty, bd}:
-          Bool.or(
-            Kernel.uses_unsafe(f, ty, env),
-            Kernel.uses_unsafe(f, bd, env))
-        case T.TLet{ty, v, bd}:
-          Bool.or(
-            Bool.or(
-              Kernel.uses_unsafe(f, ty, env),
-              Kernel.uses_unsafe(f, v, env)),
-            Kernel.uses_unsafe(f, bd, env))
-        case T.TProj{tn, idx, st}:
-          Kernel.uses_unsafe(f, st, env)
-        case o:
+      match work:
+        case Nil{}:
           False{}
+        case Con{t, +rest}:
+          match t:
+            case T.TRef{+i, +k, m}:
+              +sn : Bool = Nat.is_lt(0n, Tb.Table.read_nat(tb, i))
+              Kernel.uses_go(
+                f, env, Kernel.uses_mark(sn, tb, i),
+                Kernel.uses_push(sn, env, i, k, rest))
+            case T.TConst{+n, ls}:
+              +bad : Bool =
+                E.Decl.is_unsafe(E.Lookup.get(E.Env.find(env, n)))
+              Bool.or(
+                bad,
+                Kernel.uses_go(
+                  f, env, tb, Kernel.uses_stop(bad, rest)))
+            case T.TApp{+g, +a}:
+              Kernel.uses_go(f, env, tb, Con{g, Con{a, rest}})
+            case T.TLam{+ty, +bd}:
+              Kernel.uses_go(f, env, tb, Con{ty, Con{bd, rest}})
+            case T.TPi{+ty, +bd}:
+              Kernel.uses_go(f, env, tb, Con{ty, Con{bd, rest}})
+            case T.TLet{+ty, +v, +bd}:
+              Kernel.uses_go(
+                f, env, tb, Con{ty, Con{v, Con{bd, rest}}})
+            case T.TProj{tn, idx, +st}:
+              Kernel.uses_go(f, env, tb, Con{st, rest})
+            case o:
+              Kernel.uses_go(f, env, tb, rest)
+
+def Kernel.uses_unsafe(+fuel: Nat, t: T.Term, +env: E.DTable) -> Bool:
+  Kernel.uses_go(fuel, env, Tb.NTable.new(), [t])
 
 # How far the walk for an unsafe use may go. It is not the declaration's
 # budget: this is a walk of a term and not a reduction, and giving up answers
