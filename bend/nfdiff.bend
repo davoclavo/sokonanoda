@@ -67,9 +67,18 @@ def Nf.go(+fuel: Nat, +env: E.DTable, c: NC) -> T.Term:
 def Nf.eager(+fuel: Nat, +env: E.DTable, +t: T.Term) -> T.Term:
   Nf.go(fuel, env, NRaw{t})
 
+# The comparison gets a budget of its own, far above the kernel's. Two
+# normal forms can hold millions of nodes -- `perf/repeated-subproblem` is
+# one -- and `Conv.same` answers "not the same" when it runs out, which
+# reported a disagreement where the two terms print the same to the last
+# character.
+def Nf.same_budget() -> Nat:
+  400000000n
+
 def Nf.agree(+env: E.DTable, +t: T.Term) -> Bool:
-  C.Conv.same(
-    env, Nf.eager(Nf.fuel(), env, t), W.Val.nf_in(Nf.fuel(), env, t))
+  C.Conv.same_in(
+    Nf.same_budget(), env, Nf.eager(Nf.fuel(), env, t),
+    W.Val.nf_in(Nf.fuel(), env, t))
 
 def Nf.show(+env: E.DTable, +nm: String, +t: T.Term) -> String:
   "  " ++ nm ++ "\n    eager " ++

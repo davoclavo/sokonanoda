@@ -254,6 +254,18 @@ def Conv.same_budget() -> Nat:
 def Conv.same(+env: E.DTable, a: T.Term, b: T.Term) -> Bool:
   Conv.same_all(Conv.same_budget(), env, True{}, [MkTT{a, b}])
 
+# The same comparison with a budget the caller chooses.
+#
+# `Conv.same_all` answers "not the same" when it runs out, which is the safe
+# side for a kernel and the wrong side for a gate: `bend/nfdiff.bend`
+# compares two normal forms that can hold millions of nodes, and a budget
+# that runs out there reports a disagreement that is not one. The gate asks
+# for a budget of its own.
+def Conv.same_in(
+  +fuel: Nat, +env: E.DTable, a: T.Term, b: T.Term
+) -> Bool:
+  Conv.same_all(fuel, env, True{}, [MkTT{a, b}])
+
 # Compare two lists of levels pairwise.
 def Conv.levels_eq(+fuel: Nat, xs: List<&2, L.Level>, ys: List<&2, L.Level>) -> Bool:
   match xs ys:
