@@ -817,8 +817,13 @@ content costs what the reduction costs.
 | key cap | result |
 |---|---|
 | 24 nodes | `perf/church-numerals` 0.2 s, and no hit on any of the nine |
-| 200 nodes | a 292-byte export does not finish in sixty seconds |
+| 200 nodes | a 292-byte export does not finish in **four hundred** seconds |
 | no cap | `perf/church-numerals` goes from 0.1 s to more than sixty |
+
+The 200-node row was re-measured after the cold-start rule below, with the
+first run of the binary allowed to finish: it is the real cost and not the
+artefact. What that row says is that one lookup of a 200-node key, at every
+reduction step, is already more expensive than every step the file needs.
 
 A small cap never hits, because the terms whose reduction repeats are built
 by substitution and a term built by substitution is large. A large cap hits
