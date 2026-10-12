@@ -1311,3 +1311,41 @@ Three shapes of that walk were tried against the phantom and reverted: the
 tests in a helper, the answer travelling last, and the walk not reading the
 answer. None of them was ever worth anything, and the record of them is
 gone from the kernel.
+
+### Three lazy dear routes, and the one thing they all miss
+
+`Val.delta_h` unfolds a head **and reduces every argument to a normal
+form**. That is what makes the comparison of `ByteArray.IsValidUTF8.recOn`
+compute `List.utf8Encode` of a real list, and it is the wall in
+`good/init-prelude`. The kernel that substitutes does not do it: it unfolds
+one head, asks again, and lets the comparison reach the arguments one pair
+at a time. Three ways of doing the same here were measured and all three
+answer **reject** on a file the arena expects to accept.
+
+| what was tried | the 528 kB cut | `perf/magma-list-pair-n7` |
+|---|---|---|
+| each argument unfolded one step, not to a normal form | reject in 0.27 s | reject |
+| one step on the head, then ask again | reject in 0.27 s | reject |
+| the same, with a stack of frames so every alternative is kept | reject in 0.27 s | reject |
+| the same, one step everywhere and ask again | reject in 0.27 s | reject |
+| **what is committed: both sides normalised** | no answer in 90 s | no answer |
+
+The frame stack is worth a line of its own. The queue keeps one alternative
+and drops the rest, and a dropped alternative turns a yes into a no, so a
+lazy route needs the stack. It was written, measured, and it did not change
+any of these answers: the fault is not the backtracking.
+
+What all three miss is a **stuck recursor**. A recursor stands with its rule
+unfired until its major premise reduces to a constructor application, and
+the eager walk is what reduced it: it normalised the arguments, the major
+premise among them. Lazily, the test for "can either side still move" is
+`Val.can_delta`, which asks whether the **head** is a definition -- and a
+recursor is not one. So the loop decides nothing has moved, falls through to
+the structural comparison, and that compares a stuck recursor against a
+constructor application and answers no.
+
+A lazy route therefore needs a test for "this side is a constant
+application whose rule could still fire if an argument reduced", and it
+needs that test to say no eventually, or the loop does not stop. That is the
+next piece of work on this, and it is the same question the `offer` comment
+has carried since `perf/magma-list-pair-n7` was first answered.
