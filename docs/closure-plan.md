@@ -87,6 +87,94 @@ that reads a closure as a leaf would read the wrong term. The 65 wrong
 answers that a reference in a type once caused are the evidence that this
 discipline is not optional.
 
+## The machine carries the environment, not only the closure
+
+The first attempt at stage 3 breaks on the invariant, and the way it breaks
+is worth writing down because it decides the shape of the whole machine.
+
+A beta step wants to turn `(lam ty bd) a` into `TClos{bd, [slot of a]}`. But
+`bd` has free variables other than its own binder -- the ones of the context
+the lambda stands in -- and the environment `[slot]` does not cover them. The
+closure is ill formed, and a variable lookup would read the wrong slot.
+
+So the environment belongs to the **machine**, not to one closure:
+
+```
+Eval.whnf_h(fuel, env, heap, sl, ctrl, sp) -> Red
+```
+
+where `sl` is the environment of `ctrl`, innermost binder first, and the
+invariant holds by construction because `sl` grows exactly when the machine
+goes under a binder:
+
+| control | what the step does |
+|---|---|
+| `TApp{g, a}` | push `TClos{a, sl}` on the spine, control becomes `g`, `sl` unchanged |
+| `TLam{ty, bd}` with an argument | take a slot for the argument, control becomes `bd`, `sl` becomes `Con{slot, sl}` |
+| `TVar{i}`, `i` inside `sl` | read the slot: a reduced cell is the answer, a raw one is reduced and **written back** |
+| `TVar{i}`, `i` beyond `sl` | a variable of the ambient context: the answer is `TVar{i - length sl}` |
+| `TClos{bd, sl2}` | control becomes `bd` with `sl` replaced by `sl2` |
+| anything else | as today, with `sl` carried along |
+
+A spine entry is a closure, so it is self contained and the rules may treat
+it as opaque -- which they already do, since `Eval.iota_term`,
+`Eval.quot_term` and `Eval.proj_field` move terms about without looking
+inside them.
+
+## Reading back, and why it does not undo the sharing
+
+The machine's answer is a term of the ambient context, so a closure cannot
+escape in it. The answer is read back **one constructor deep**: the head is
+explicit and every child stays a closure. That is what weak head normal form
+means, and it is what keeps the sharing: `Conv` descends into a child by
+reducing it, and reduction understands a closure.
+
+A pass that is not reduction may not see one, so `Eval.force` expands a
+closure whole, and that costs the size of the term. It is called where
+`Conv.same`, `Infer.infer` and the analysis walks look, and nowhere else.
+
+## The one hard case: reading back a lambda that is the answer
+
+Every step above is mechanical except this one, and it is the step that
+turns the plan from a machine into normalisation by evaluation. Get it wrong
+and the kernel accepts a false proof, so it is the step to write a law for
+before writing the code.
+
+When the control is `TLam{ty, bd}` and the spine is empty, the lambda **is**
+the answer, and the answer must be a term of the ambient context. The body
+`bd` has a free variable 0 that the machine's environment does not cover: it
+is bound by the very lambda being returned, not by a slot.
+
+So an environment entry cannot only be a slot. It is one of two things:
+
+```
+type EEnt is Data:
+  # the value of this binder lives in a heap slot
+  ESlot{n: Nat}
+  # this binder is rigid: it stands for a variable of the answer
+  ERigid{}
+```
+
+Reading a lambda back pushes `ERigid{}` and leaves the body as a closure
+over the extended environment. A variable that resolves to `ERigid` becomes
+`TVar{d}` where `d` counts the rigid entries between it and the end of the
+environment -- a de Bruijn **level** counted from the inside, converted back
+to an index at the point it is read.
+
+That conversion is the whole risk. Two laws worth stating in `LAWS.bend` and
+proving in `PROOF.bend` before trusting it:
+
+1. reducing a closed term with an empty environment gives the same term as
+   the reduction that substitutes eagerly, for every term the regression
+   tests hold;
+2. a term with no closure in it reduces to the same answer whether the
+   machine carries an environment or not, which is what makes stage 2
+   behaviour-neutral and is already true of the code on the branch
+   `closure`.
+
+Until law 1 holds on `bend/main.bend`'s seventeen declarations **and** on the
+arena's `bad` corpus, the machine is a measurement and not a merge.
+
 ## The variable question, which is where this goes wrong
 
 A closure's environment must cover **every** free variable of its body, or
@@ -177,3 +265,84 @@ Two further gates, both cheap and both learned the hard way:
 - The first run of a new binary on this machine can cost tens of seconds, so
   run each binary once on a small file and report the second run. A whole
   day's conclusions were once wrong because of this.
+
+## Stage 3, attempted: what the machine got right and where it stopped
+
+The machine was built: `Eval.mach` carries the environment, the heap and the
+depth; `Eval.force` reads an answer back; `Conv.classify_work` reduces with
+it. It is about four hundred lines. Every module verifies, the laws check,
+and all 17 regression tests pass on it. What follows is what the attempt
+established, so the next one does not pay for it twice.
+
+### Four bugs, three of them fixed
+
+**A lambda handed back is applied in the wrong place.** The machine reads a
+lambda back one constructor deep and the body keeps an environment whose
+innermost entry is the binder with no value. Applying that lambda must put
+the argument **in** that entry; extending the environment above it loses the
+argument, and the variable then reads the empty entry and comes back as a
+variable of the answer. `perf/church-numerals` finds this at once, because a
+slot there holds a function which is reduced and then applied.
+
+**`Eval.pick_p` runs both branches, so a slot read cost twice over.** Reading
+a slot has to choose between the value already reduced and reducing it, and
+both arms of a pick are evaluated. One call with the choice made inside the
+arguments costs what one read should; two calls made a slot read inside a
+slot read cost twice, and `good/other/nat-lit-ble` went from a tenth of a
+second to past sixty.
+
+**A rigid binder needs a level, not a flag.** A slot holds a value captured
+under one set of binders and read back under a deeper one, so its variables
+have to move: `(fun f => fun x => f x) #5` is `fun x => #6 #0` and not
+`fun x => #5 #0`. An environment entry that only says "rigid" cannot say how
+far; a depth counted from the outside says it exactly, and the read back
+turns a level into an index with the depth it is at. That is the de Bruijn
+conversion this plan named as the whole risk, and it was wrong on the first
+try in exactly the way the plan predicted.
+
+**A reference has to be resolved where the read back renumbers around it.**
+The variables inside a table entry belong to the place it is named from.
+Leaving the reference alone under a binder the read back has entered puts two
+numberings in one term, and conversion then refuses a pair that is equal.
+Resolving where nothing is renumbered -- a closed entry, or a read back that
+has entered no binder -- is free, and that is most of them.
+
+### The fourth: a value's scope, which is the representation
+
+Two variants, each correct where the other is wrong:
+
+| variant | `perf/church-numerals` | the prelude's `noConfusion_of_Nat.aux._f` |
+|---|---|---|
+| a slot holds a closure, reduced on first read | **accept** | reject |
+| a slot holds the value read back at capture | reject | **accept** |
+
+The second variant is right on 185 of the 186 small files and gives up the
+sharing the machine was built for, because reading the argument back is
+copying it.
+
+What this says is that a `Term` with a closure in it cannot carry a value's
+scope. A heap slot is read in whatever scope the reader stands in, and the
+read back assigns de Bruijn levels by its own descent, so a value captured
+in one scope and read in another gets indices that belong to neither. Each
+of the two variants picks one of the two scopes and is wrong about the other.
+
+A proper normalisation by evaluation keeps values in a type of their own --
+a neutral with a spine, a closure with its environment, a constructor with
+its arguments -- and reads back exactly once, at the depth it has reached.
+Then a value is never reinterpreted, because it is never a term until the
+read back makes it one. That is the next attempt, and it is a value type and
+a new conversion against it, not a patch to this one.
+
+### What to keep from this attempt
+
+The branch `closure` holds it. Worth keeping: `Eval.force` and the level
+arithmetic in `Term.bend` (`EEnt`, `ELook`, `EEnt.look`), the heap, the
+`Data` record that lets reduction hand back two things, and the four
+differential tests in the scratchpad that compare the machine against the
+reduction that substitutes on hand-built terms -- they caught the first two
+bugs in seconds and are the first thing to write next time.
+
+`bend/cmp.bend` is also worth keeping: it walks a declaration's value and
+stops at the smallest subterm where the two reducers disagree. That is what
+found the fourth bug, and no amount of reasoning about de Bruijn indices
+found it before the tool did.
