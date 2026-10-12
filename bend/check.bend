@@ -37,11 +37,21 @@ import ./Ans.bend as A
 # | 30000 | **186** | 0 | 9 | 0 |
 # | 100000 | 186 | 0 | 9 | 0 |
 #
-# Thirty thousand is where it stops paying. A hundred thousand buys nothing
-# and `perf/shared-subterm` runs the machine out of memory at it, which is a
-# worse answer than not knowing.
+# Thirty thousand is where it stopped paying for the reduction that
+# substitutes. The value kernel wants more, and the reason is call by need:
+# reading a slot adds steps to the chain, so the same reduction now runs
+# deeper even though it does less work. At 30000 four files answered
+# "declined" that answer correctly at 400000 --
+# `perf/folded-constant-first`, `perf/folded-constant-last`,
+# `perf/unroll-versus-evaluate` and `bad/perf/refute-cheap-last` -- and
+# each of them answers in about twenty seconds, well inside its limit of
+# fifty.
+#
+# The number is a depth and not an amount of work. A file that cannot
+# answer spends longer before it says so, and the arena scores a decline
+# and a timeout the same, so that costs nothing.
 def Check.fuel() -> Nat:
-  30000n
+  400000n
 
 def Check.bytes(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> List<&2, U32>:
   Result.default(&1, &1, U32 & String, List<&2, U32>,

@@ -113,13 +113,57 @@ def Vconv.out_of_fuel(acc: A.Ans, alts: List<&2, VAlt>) -> A.Ans:
     case Con{h, t}:
       A.AUnk{}
 
-# One pair per argument, at the same depth.
+# Are these two values the same slot of the heap?
+#
+# Two arguments in one slot are one argument. The question they pose is the
+# same question, and proving it once proves it for both.
+def Vconv.same_slot(a: W.Val, b: W.Val) -> Bool:
+  match a b:
+    case W.VSlot{+i} W.VSlot{+j}:
+      Nat.is_eq(i, j)
+    case x y:
+      False{}
+
+def Vconv.pair_same(p: VPair, +x: W.Val, +y: W.Val) -> Bool:
+  match p:
+    case VP{cx, a, b}:
+      Bool.and(Vconv.same_slot(a, x), Vconv.same_slot(b, y))
+    case o:
+      False{}
+
+def Vconv.has_pair(
+  ps: List<&2, VPair>, +x: W.Val, +y: W.Val
+) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case Con{+h, t}:
+      Bool.or(Vconv.pair_same(h, x, y), Vconv.has_pair(t, x, y))
+
+def Vconv.pairs_pick(
+  b: Bool, +ps: List<&2, VPair>, +p: VPair
+) -> List<&2, VPair>:
+  match b:
+    case True{}:
+      ps
+    case False{}:
+      Con{p, ps}
+
+# One pair per argument, at the same depth, and a pair that is already in
+# the list only once.
+#
+# `perf/repeated-subproblem` is built out of this. It compares `Tr.node u u`
+# against `Tr.node v v` at every level, where both argument positions hold
+# the same slot, so the pairs double at each level: the comparison meets
+# `2^n` of them where `n` are distinct.
 def Vconv.zip(
   +cx: List<&2, T.Term>, xs: List<&2, W.Val>, ys: List<&2, W.Val>
 ) -> List<&2, VPair>:
   match xs ys:
-    case Con{x, xr} Con{y, yr}:
-      Con{VP{cx, x, y}, Vconv.zip(cx, xr, yr)}
+    case Con{+x, xr} Con{+y, yr}:
+      +rest : List<&2, VPair> = Vconv.zip(cx, xr, yr)
+      Vconv.pairs_pick(
+        Vconv.has_pair(rest, x, y), rest, VP{cx, x, y})
     case x y:
       Nil{}
 
@@ -148,6 +192,28 @@ def Vconv.pick_sh(b: Bool, x: VSH, y: VSH) -> VSH:
       x
     case False{}:
       y
+
+# Could a step unfold the head of this value?
+#
+# A projection counts when its subject could unfold. The projection of a
+# constructor application is one of its fields, so unfolding the subject is
+# what makes the projection reduce -- and reducing it is the cheap answer.
+# Comparing the two subjects instead is what `perf/proj-lazy-struct` is
+# about: there each subject holds a hundred thousand steps of work and the
+# two fields the question is about are both zero.
+def Vconv.proj_hd(hd: W.Head, +sp: List<&2, W.Val>) -> Bool:
+  match hd:
+    case W.HProj{tn, idx}:
+      W.Val.head_const(W.Val.sp_nth(0n, sp))
+    case o:
+      False{}
+
+def Vconv.can_unfold(v: W.Val) -> Bool:
+  match v:
+    case W.VNe{+hd, +sp}:
+      Bool.or(W.Val.head_const(W.VNe{hd, sp}), Vconv.proj_hd(hd, sp))
+    case o:
+      False{}
 
 # Offer the cheap route when the two sides are the same head applied to the
 # same number of arguments, and keep the dear one for a no.
@@ -664,7 +730,7 @@ def Vconv.offer_go(
         hp}
     case False{}:
       Vconv.offer_last(
-        Bool.or(W.Val.head_const(a), W.Val.head_const(b)),
+        Bool.or(Vconv.can_unfold(a), Vconv.can_unfold(b)),
         fuel, env, hp, cx, a, b)
 
 def Vconv.offer(

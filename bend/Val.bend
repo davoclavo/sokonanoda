@@ -716,6 +716,28 @@ def Val.nx_sp(x: Next) -> List<&2, Val>:
     case MkNx{c, sp}:
       sp
 
+# What a projection reduces to: the field, if the subject is a constructor
+# application, and the projection left stuck if it is not.
+#
+# This is out of the loop because the unfolding walk needs it as well. A
+# projection whose subject is a definition is stuck until the subject
+# unfolds, and the walk is what unfolds it, so the walk has to try the rule
+# again afterwards.
+def Val.proj_ctrl(
+  +env: E.DTable, +tn: Nat, +idx: Nat, +sv: Val
+) -> Ctrl:
+  +cw : Val = Val.lit_ctor(sv)
+  +di : E.Decl = E.Lookup.get(E.Env.find(env, Val.head_name(cw)))
+  Val.pick_c(
+    Bool.and(
+      E.Decl.is_ctor(di),
+      Nat.is_lt(
+        Nat.add(E.Decl.ctor_np(di), idx),
+        Val.sp_len(Val.args(cw), 0n))),
+    CVal{
+      Val.sp_nth(Nat.add(idx, E.Decl.ctor_np(di)), Val.args(cw))},
+    CVal{VNe{HProj{tn, idx}, [sv]}})
+
 # The argument of an application, and of a let.
 #
 # A variable, a sort or a literal is read where it stands. There is nothing
@@ -842,31 +864,9 @@ def Val.go(
               Val.go(f, env, dl, hp, CTerm{E.Env.expr_at(env, i, k), en}, sp)
             case T.TProj{+tn, +idx, +st}:
               +r : VR = Val.go(f, env, dl, hp, CTerm{st, en}, Nil{})
-              +sv : Val = VR.val(r)
-              +cw : Val = Val.lit_ctor(sv)
               Val.go(
                 f, env, dl, VR.heap(r),
-                Val.pick_c(
-                  Bool.and(
-                    E.Decl.is_ctor(
-                      E.Lookup.get(E.Env.find(env, Val.head_name(cw)))),
-                    Nat.is_lt(
-                      Nat.add(
-                        E.Decl.ctor_np(
-                          E.Lookup.get(
-                            E.Env.find(env, Val.head_name(cw)))),
-                        idx),
-                      Val.sp_len(Val.args(cw), 0n))),
-                  CVal{
-                    Val.sp_nth(
-                      Nat.add(
-                        idx,
-                        E.Decl.ctor_np(
-                          E.Lookup.get(
-                            E.Env.find(env, Val.head_name(cw))))),
-                      Val.args(cw))},
-                  CVal{VNe{HProj{tn, idx}, [sv]}}),
-                sp)
+                Val.proj_ctrl(env, tn, idx, VR.val(r)), sp)
             case T.TConst{+n, +ls}:
               +d : E.Decl = E.Lookup.get(E.Env.find(env, n))
               # A rule reads a value, and a slot is not one. Three arguments
@@ -977,7 +977,49 @@ def Val.more_h(
 # are being unfolded one at a time.
 type DC is Data:
   DV{v: Val}
-  DS{hd: Head, done: List<&2, Val>, rest: List<&2, Val>}
+  DS{hd: Head, done: List<&2, Val>, rest: List<&2, Val>, i: Nat}
+
+def Val.pick_dc(b: Bool, x: DC, y: DC) -> DC:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# Does a rule of this head read the argument at this position?
+#
+# Those are the only arguments a step may unfold. A primitive reads its two
+# as numbers, a recursor reads its major premise, a quotient reads the
+# quotient itself, and a projection reads its subject. Every other argument
+# is handed on as it stands, and a rule never looks inside it.
+#
+# Unfolding all of them is what made `perf/proj-lazy-struct` evaluate a
+# hundred thousand steps it was not asked about: the two sides are
+# `(P (slow 100000)).1` and `(Q (slow 100001)).1`, the field the question is
+# about is zero on both sides, and `slow` sits in the field nobody reads.
+# A definition is left out of this: its body may read any of its arguments,
+# and which ones is not known until it unfolds. `perf/magma-list-pair-n7`
+# answered `reject` when its arguments stopped unfolding, so a definition
+# unfolds all of them, as it did before.
+def Val.reads_at(+d: E.Decl, +i: Nat) -> Bool:
+  Bool.or(
+    E.Decl.is_def(d),
+    Bool.or(
+      Bool.and(
+        Bool.not(Nat.is_eq(E.Decl.prim_op(d), 0n)), Nat.is_lt(i, 2n)),
+      Bool.or(
+        Bool.and(E.Decl.is_rec(d), Nat.is_eq(i, V.Eval.major_idx(d))),
+        Nat.is_eq(i, V.Eval.quot_pos(d)))))
+
+def Val.reads_arg(+env: E.DTable, hd: Head, +i: Nat) -> Bool:
+  match hd:
+    case HProj{tn, idx}:
+      # only the subject, which is what makes the projection reduce
+      Nat.is_eq(i, 0n)
+    case HConst{+n, ls}:
+      Val.reads_at(E.Lookup.get(E.Env.find(env, n)), i)
+    case HVar{l}:
+      False{}
 
 # The head put back together with its arguments, and the constant rule given
 # another chance now that the arguments have unfolded.
@@ -987,6 +1029,15 @@ def Val.head_back_h(
   match hd:
     case HConst{+n, +ls}:
       Val.go(fuel, env, True{}, hp, CTerm{T.TConst{n, ls}, Nil{}}, sp)
+    case HProj{+tn, +idx}:
+      # The subject may have unfolded into a constructor application on the
+      # way here, and then the projection is not stuck any more. Leaving it
+      # stuck is what made `perf/proj-lazy-struct` compare the two whole
+      # structures instead of the two fields it was asked about.
+      Val.go(
+        fuel, env, True{}, hp,
+        Val.proj_ctrl(env, tn, idx, Val.sp_nth(0n, sp)),
+        Val.sp_drop(1n, sp))
     case o:
       MkVR{VNe{o, sp}, hp}
 
@@ -1003,19 +1054,25 @@ def Val.dgo(+fuel: Nat, +env: E.DTable, +hp: Hp, c: DC) -> VR:
       MkVR{VUnk{}, hp}
     case 1n+(+f):
       match c:
-        case DS{+hd, +done, rest}:
+        case DS{+hd, +done, rest, +i}:
           match rest:
             case Nil{}:
               Val.head_back_h(f, env, hp, hd, done)
-            case Con{v, more}:
-              +r : VR = Val.dgo(f, env, hp, DV{v})
+            case Con{+v, more}:
+              +rd : Bool = Val.reads_arg(env, hd, i)
+              +r : VR =
+                Val.dgo(f, env, hp, Val.pick_dc(rd, DV{v}, DV{VUnk{}}))
               Val.dgo(
                 f, env, VR.heap(r),
-                DS{hd, List.append(&2, Val, done, [VR.val(r)]), more})
+                DS{
+                  hd,
+                  List.append(
+                    &2, Val, done, [Val.pick(rd, VR.val(r), v)]),
+                  more, 1n+i})
         case DV{v}:
           match v:
             case VNe{+hd, +sp}:
-              Val.dgo(f, env, hp, DS{hd, Nil{}, sp})
+              Val.dgo(f, env, hp, DS{hd, Nil{}, sp, 0n})
             case VSlot{+k}:
               # A slot has to leave it before the walk can see a head.
               +r : VR = Val.go(f, env, True{}, hp, CVal{VSlot{k}}, Nil{})
