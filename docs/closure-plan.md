@@ -614,3 +614,43 @@ term with its environment or a value, **and an update when it is first
 read**. The update is what makes the saving stick, and the update is what
 needs the heap threaded. A heap of values is sound, which is the one thing
 the branch `closure` could not say about a heap of terms.
+
+## Stage 9: the tension the last two files sit on
+
+The deep route unfolds a neutral's head **and its arguments**. Restricting it
+to the head was tried, and the two things it does are both load bearing:
+
+| with the arguments unfolded | with only the head |
+|---|---|
+| `good/other/nat-lit-ble` accepts | **rejects** |
+| `good/other/nat-lit-add` accepts | **rejects** |
+| `perf/magma-list-pair-n7` out of time | **rejects** |
+| `perf/proj-lazy-struct` out of time | **rejects** |
+| `perf/discarded-argument-match` out of time | **accepts** |
+| `bad/perf/refute-cheap-last` declines | declines |
+| `perf/repeated-subproblem` declines | declines |
+
+So the argument unfolding is needed for correctness -- a primitive fires only
+on two literals, and in `nat-lit-ble` they arrive as `OfNat.ofNat 1000000` of
+a definition -- and it is what costs `perf/discarded-argument-match`.
+
+Asking the **rule** to unfold what it reads, rather than unfolding every
+argument of every head, is the shape that resolves it, and it was tried too:
+the major premise unfolded where delta is allowed, and a primitive's two
+arguments likewise. It has to be written out inside the constant rule,
+because a helper that unfolded a head would have to call the evaluator and
+Bend has no mutual recursion. That version rejects `nat-lit-*`,
+`magma-list-pair-n7` and `proj-lazy-struct`: unfolding an argument's head
+once is not the same as reducing it with every rule, which is what the walk
+over the arguments did.
+
+Both attempts are reverted. What the two of them say together is that the
+deep route needs to reduce an argument **on demand and once** -- which is
+call by need, which is the heap, which is the piece that has been named at
+the end of every stage since the fourth. There is no cheaper arrangement of
+the same rules: this stage ruled out the two obvious ones with a measurement
+each.
+
+The value kernel stands where stage 7 left it: 181 correct, nothing wrong,
+two declines and twelve files out of time, with `main` at 186 and nothing
+wrong.
