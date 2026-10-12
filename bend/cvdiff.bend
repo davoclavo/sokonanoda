@@ -81,7 +81,8 @@ def Cv.kparts(
 ) -> String:
   +d : E.Decl = E.Lookup.get(E.Env.find(env, W.Val.head_name(v)))
   +sj : W.Val = W.Val.sp_nth(V.Eval.major_idx(d), W.Val.args(v))
-  +qs : T.Term = W.Val.quote_d(fuel, env, X.Vconv.depth(cx, 0n), sj)
+  +qs : T.Term =
+    W.Val.quote_d_h(fuel, env, W.Hp.new(), X.Vconv.depth(cx, 0n), sj)
   +ty : T.Term =
     V.Eval.whnf(
       fuel, env, H.Shape.ty(H.Shape.infer(fuel, env, cx, qs)), Nil{})
@@ -95,15 +96,16 @@ def Cv.kparts(
   "\n      K gives " ++
     S.Show.term(
       14n,
-      W.Val.quote_d(
-        fuel, env, X.Vconv.depth(cx, 0n),
-        X.Vconv.k_fix(fuel, env, cx, v))) ++
+      W.Val.quote_d_h(
+        fuel, env, W.Hp.new(), X.Vconv.depth(cx, 0n),
+        W.VR.val(X.Vconv.k_fix(fuel, env, W.Hp.new(), cx, v)))) ++
   "\n      terms give " ++
     S.Show.term(
       14n,
       C.Conv.k_fix(
         fuel, env, cx,
-        W.Val.quote_d(fuel, env, X.Vconv.depth(cx, 0n), v))) ++ "\n"
+        W.Val.quote_d_h(
+          fuel, env, W.Hp.new(), X.Vconv.depth(cx, 0n), v))) ++ "\n"
 
 def Cv.kshow(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +t: T.Term, near: Bool
@@ -114,7 +116,9 @@ def Cv.kshow(
     case True{}:
       Cv.kparts(
         fuel, env, cx,
-        W.Val.core_in(fuel, env, X.Vconv.depth(cx, 0n), t))
+        W.VR.val(
+          W.Val.core_in_h(
+            fuel, env, W.Hp.new(), X.Vconv.depth(cx, 0n), t)))
 
 def Cv.kpick(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +t: T.Term
@@ -123,7 +127,9 @@ def Cv.kpick(
     fuel, env, cx, t,
     X.Vconv.k_near(
       env,
-      W.Val.core_in(fuel, env, X.Vconv.depth(cx, 0n), t)))
+      W.VR.val(
+        W.Val.core_in_h(
+          fuel, env, W.Hp.new(), X.Vconv.depth(cx, 0n), t))))
 
 # Walk a term to the first application whose head is a recursor the K-like
 # rule would look at, and print what the rule sees there: the subject, the
@@ -150,19 +156,30 @@ def Cv.kfind(
 def Cv.kprobe(+fuel: Nat, +env: E.DTable, +t: T.Term) -> String:
   Cv.kfind(200n, fuel, env, Nil{}, t)
 
+# The core reduction of a term, read back. The heap of the reduction is the
+# one the read back uses, because the value may hold a slot of it.
+def Cv.core_term(+fuel: Nat, +env: E.DTable, +t: T.Term) -> T.Term:
+  +r : W.VR = W.Val.core_h(fuel, env, W.Hp.new(), t)
+  W.Val.quote_h(fuel, env, W.VR.heap(r), W.VR.val(r))
+
 # The two sides as the value evaluator sees them, for a declaration whose
 # answers differ.
 def Cv.sides(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
   +ity : T.Term =
     I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, E.Decl.raw_val(d)))
   "    inferred core " ++
-    Cv.tag(W.Val.is_unk(W.Val.core(fuel, env, ity))) ++
+    Cv.tag(
+      W.Val.is_unk(
+        W.VR.val(W.Val.core_h(fuel, env, W.Hp.new(), ity)))) ++
   "  declared core " ++
-    Cv.tag(W.Val.is_unk(W.Val.core(fuel, env, E.Decl.raw_ty(d)))) ++
+    Cv.tag(
+      W.Val.is_unk(
+        W.VR.val(
+          W.Val.core_h(fuel, env, W.Hp.new(), E.Decl.raw_ty(d))))) ++
   "\n    inferred " ++
-    S.Show.term(24n, W.Val.quote(env, W.Val.core(fuel, env, ity))) ++
+    S.Show.term(24n, Cv.core_term(fuel, env, ity)) ++
   "\n    declared " ++
-    S.Show.term(24n, W.Val.quote(env, W.Val.core(fuel, env, E.Decl.raw_ty(d)))) ++
+    S.Show.term(24n, Cv.core_term(fuel, env, E.Decl.raw_ty(d))) ++
   "\n" ++ Cv.kprobe(fuel, env, E.Decl.raw_ty(d))
 
 def Cv.line(

@@ -678,11 +678,12 @@ def Val.const_fires(
 # used twice costs its value once. A Lean term always terminates, so
 # reducing an argument that the body throws away is work and never a loop.
 def Val.go(
-  +fuel: Nat, +env: E.DTable, +dl: Bool, c: Ctrl, +sp: List<&2, Val>
-) -> Val:
+  +fuel: Nat, +env: E.DTable, +dl: Bool, +hp: Hp, c: Ctrl,
+  +sp: List<&2, Val>
+) -> VR:
   match fuel:
     case 0n:
-      VUnk{}
+      MkVR{VUnk{}, hp}
     case 1n+(+f):
       match c:
         case CVal{v}:
@@ -690,64 +691,85 @@ def Val.go(
             case VLam{ty, bd, en}:
               match sp:
                 case Nil{}:
-                  VLam{ty, bd, en}
+                  MkVR{VLam{ty, bd, en}, hp}
                 case Con{a, rest}:
-                  Val.go(f, env, dl, CTerm{bd, Con{a, en}}, rest)
+                  Val.go(f, env, dl, hp, CTerm{bd, Con{a, en}}, rest)
             case VNe{hd, s}:
               # A neutral stays one. Going back through the constant rule
               # here looks tempting -- a definition could unfold with delta
               # on -- and it does not terminate: the answer is a neutral
               # again and the loop meets it again. Conversion asks for that
-              # one step by name, with `Val.delta`.
-              VNe{hd, List.append(&2, Val, s, sp)}
+              # one step by name, with `Val.delta_h`.
+              MkVR{VNe{hd, List.append(&2, Val, s, sp)}, hp}
             case VPi{ty, bd, en}:
-              VPi{ty, bd, en}
+              MkVR{VPi{ty, bd, en}, hp}
             case VSort{l}:
-              VSort{l}
+              MkVR{VSort{l}, hp}
             case VNat{n, nm, zr, sc}:
-              VNat{n, nm, zr, sc}
-            case VSlot{n}:
-              # Nothing takes a slot yet. The arm that reads one belongs
-              # here, and it needs the heap threaded through this loop.
-              VUnk{}
+              MkVR{VNat{n, nm, zr, sc}, hp}
+            case VSlot{+k}:
+              # Read a slot, which is where call by need happens. A cell
+              # that holds a value gives it. A cell that holds a term
+              # reduces it, and the answer goes back in the cell, so a body
+              # that reads the slot twice pays for it once.
+              #
+              # The branch that is not taken gets a trivial control, not a
+              # term. An argument reduces before a match picks an arm, so a
+              # `pick` over two reductions runs both of them.
+              +cl : HCell = Hp.cell(hp, k)
+              +dn : Bool = HCell.is_done(cl)
+              +r : VR =
+                Val.go(
+                  f, env, dl, hp,
+                  Val.pick_c(
+                    dn, CVal{VUnk{}},
+                    CTerm{HCell.term(cl), HCell.env(cl)}),
+                  Nil{})
+              +fv : Val = Val.pick(dn, HCell.val(cl), VR.val(r))
+              Val.go(
+                f, env, dl, Hp.put(VR.heap(r), k, HDone{fv}), CVal{fv}, sp)
             case VUnk{}:
-              VUnk{}
+              MkVR{VUnk{}, hp}
         case CTerm{+t, +en}:
           match t:
             case T.TVar{+i}:
-              Val.go(f, env, dl, CVal{Val.at(i, en)}, sp)
+              Val.go(f, env, dl, hp, CVal{Val.at(i, en)}, sp)
             case T.TSort{l}:
-              Val.go(f, env, dl, CVal{VSort{l}}, sp)
+              Val.go(f, env, dl, hp, CVal{VSort{l}}, sp)
             case T.TNat{v, nm, zr, sc}:
-              Val.go(f, env, dl, CVal{VNat{v, nm, zr, sc}}, sp)
+              Val.go(f, env, dl, hp, CVal{VNat{v, nm, zr, sc}}, sp)
             case T.TUnk{}:
-              VUnk{}
+              MkVR{VUnk{}, hp}
             case T.TLam{+ty, +bd}:
+              +r : VR = Val.go(f, env, dl, hp, CTerm{ty, en}, Nil{})
               Val.go(
-                f, env, dl,
-                CVal{VLam{Val.go(f, env, dl, CTerm{ty, en}, Nil{}), bd, en}}, sp)
+                f, env, dl, VR.heap(r), CVal{VLam{VR.val(r), bd, en}}, sp)
             case T.TPi{+ty, +bd}:
+              +r : VR = Val.go(f, env, dl, hp, CTerm{ty, en}, Nil{})
               Val.go(
-                f, env, dl,
-                CVal{VPi{Val.go(f, env, dl, CTerm{ty, en}, Nil{}), bd, en}}, sp)
+                f, env, dl, VR.heap(r), CVal{VPi{VR.val(r), bd, en}}, sp)
             case T.TApp{+g, +a}:
+              # The argument does not reduce here. It takes a slot of the
+              # heap, and it reduces where the body first reads it -- or
+              # never, if the body throws it away.
               Val.go(
-                f, env, dl, CTerm{g, en},
-                Con{Val.go(f, env, dl, CTerm{a, en}, Nil{}), sp})
+                f, env, dl, Hp.alloc(hp, a, en), CTerm{g, en},
+                Con{VSlot{Hp.next(hp)}, sp})
             case T.TLet{+ty, +v, +bd}:
               Val.go(
-                f, env, dl,
-                CTerm{bd, Con{Val.go(f, env, dl, CTerm{v, en}, Nil{}), en}}, sp)
+                f, env, dl, Hp.alloc(hp, v, en),
+                CTerm{bd, Con{VSlot{Hp.next(hp)}, en}}, sp)
             case T.TRef{+i, +k, m}:
               # A reference stands for a term of the export's table, whose
               # variables belong to the place it is named from -- which is
               # here, so the environment carries over.
-              Val.go(f, env, dl, CTerm{E.Env.expr_at(env, i, k), en}, sp)
+              Val.go(f, env, dl, hp, CTerm{E.Env.expr_at(env, i, k), en}, sp)
             case T.TProj{+tn, +idx, +st}:
-              +sv : Val = Val.go(f, env, dl, CTerm{st, en}, Nil{})
+              +r : VR = Val.go(f, env, dl, hp, CTerm{st, en}, Nil{})
+              +sv : Val = VR.val(r)
               +cw : Val = Val.lit_ctor(sv)
               Val.go(
-                f, env, dl,
+                f, env, dl, VR.heap(r),
                 Val.pick_c(
                   Bool.and(
                     E.Decl.is_ctor(
@@ -771,55 +793,84 @@ def Val.go(
                 sp)
             case T.TConst{+n, +ls}:
               +d : E.Decl = E.Lookup.get(E.Env.find(env, n))
-              # the major premise of a recursor, or of a quotient, already
-              # reduced: it is an argument, and arguments are values here
-              +mw0 : Val =
+              # A rule reads a value, and a slot is not one. Three arguments
+              # leave their slots here: the two a primitive reads as
+              # numbers, and the major premise of a recursor or of a
+              # quotient. Every other argument stays in its slot, and the
+              # fields an iota step hands the rule stay in theirs.
+              +ip : Bool = Val.prim_at(d, sp)
+              +a0 : VR =
+                Val.go(
+                  f, env, dl, hp,
+                  Val.pick_c(ip, CVal{Val.sp_nth(0n, sp)}, CVal{VUnk{}}),
+                  Nil{})
+              +a1 : VR =
+                Val.go(
+                  f, env, dl, VR.heap(a0),
+                  Val.pick_c(ip, CVal{Val.sp_nth(1n, sp)}, CVal{VUnk{}}),
+                  Nil{})
+              +sp1 : List<&2, Val> =
+                Val.pick_sp(
+                  ip,
+                  Con{VR.val(a0), Con{VR.val(a1), Val.sp_drop(2n, sp)}},
+                  sp)
+              +mi : Val =
                 Val.pick(
-                  Val.rec_ready(d, sp),
-                  Val.sp_nth(V.Eval.major_idx(d), sp),
+                  Val.rec_ready(d, sp1),
+                  Val.sp_nth(V.Eval.major_idx(d), sp1),
                   Val.pick(
-                    Nat.is_lt(V.Eval.quot_pos(d), Val.sp_len(sp, 0n)),
-                    Val.sp_nth(V.Eval.quot_pos(d), sp),
+                    Nat.is_lt(V.Eval.quot_pos(d), Val.sp_len(sp1, 0n)),
+                    Val.sp_nth(V.Eval.quot_pos(d), sp1),
                     VSort{L.LZero{}}))
+              +mr : VR = Val.go(f, env, dl, VR.heap(a1), CVal{mi}, Nil{})
               # a value of a structure type is its own constructor applied
               # to its own fields, so a recursor stuck on one is not stuck
-              +mw : Val = Val.eta_struct(env, d, ls, sp, mw0)
+              +mw : Val = Val.eta_struct(env, d, ls, sp1, VR.val(mr))
               Val.go(
-                f, env, dl,
+                f, env, dl, VR.heap(mr),
                 Val.pick_c(
-                  Val.prim_ready(d, sp),
+                  Val.prim_ready(d, sp1),
                   CVal{
                     Val.prim_val(
-                      d, sp,
-                      Val.nat_name(Val.sp_nth(0n, sp)),
-                      Val.nat_zr(Val.sp_nth(0n, sp)),
-                      Val.nat_sc(Val.sp_nth(0n, sp)))},
+                      d, sp1,
+                      Val.nat_name(Val.sp_nth(0n, sp1)),
+                      Val.nat_zr(Val.sp_nth(0n, sp1)),
+                      Val.nat_sc(Val.sp_nth(0n, sp1)))},
                   Val.pick_c(
-                    Val.const_fires(env, dl, d, sp, mw),
-                    Val.const_next(env, dl, d, ls, sp, mw),
+                    Val.const_fires(env, dl, d, sp1, mw),
+                    Val.const_next(env, dl, d, ls, sp1, mw),
                     CVal{VNe{HConst{n, ls}, Nil{}}})),
                 Val.pick_sp(
-                  Val.prim_ready(d, sp),
-                  Val.sp_drop(2n, sp),
+                  Val.prim_ready(d, sp1),
+                  Val.sp_drop(2n, sp1),
                   Val.pick_sp(
-                    Val.const_fires(env, dl, d, sp, mw),
-                    Val.const_sp(env, dl, d, sp, mw),
-                    sp)))
+                    Val.const_fires(env, dl, d, sp1, mw),
+                    Val.const_sp(env, dl, d, sp1, mw),
+                    sp1)))
 
 def Val.budget() -> Nat:
   30000n
 
-# Reduce with every rule, a definition included.
-def Val.eval(+env: E.DTable, +t: T.Term) -> Val:
-  Val.go(Val.budget(), env, True{}, CTerm{t, Nil{}}, Nil{})
+# Every entry point below hands back a `VR`: the value, and the heap as it
+# stands after it. A value may hold a slot -- in the spine of a neutral, or
+# in the environment of a lambda -- and only the heap it was allocated in
+# can read that slot. So the heap travels with the value, and a caller that
+# keeps the value has to keep the heap.
+#
+# Dropping the heap is what a wrong answer would come from. The numbers
+# start at zero again in a new heap, so a value kept past its heap reads
+# some later slot in its place. That is why no entry point here hands back a
+# bare `Val` any more: the ones that did are gone, and the compiler names
+# every caller that has to carry the heap now.
 
-def Val.eval_in(+fuel: Nat, +env: E.DTable, +t: T.Term) -> Val:
-  Val.go(fuel, env, True{}, CTerm{t, Nil{}}, Nil{})
+# Reduce with every rule, a definition included.
+def Val.eval_h(+fuel: Nat, +env: E.DTable, +hp: Hp, +t: T.Term) -> VR:
+  Val.go(fuel, env, True{}, hp, CTerm{t, Nil{}}, Nil{})
 
 # Reduce everything but a definition, and stop at a constant that could
 # unfold. This is what conversion starts with.
-def Val.core(+fuel: Nat, +env: E.DTable, +t: T.Term) -> Val:
-  Val.go(fuel, env, False{}, CTerm{t, Nil{}}, Nil{})
+def Val.core_h(+fuel: Nat, +env: E.DTable, +hp: Hp, +t: T.Term) -> VR:
+  Val.go(fuel, env, False{}, hp, CTerm{t, Nil{}}, Nil{})
 
 # An environment of rigid binders, innermost first: the environment a term
 # of a context `d` binders deep is read in.
@@ -839,19 +890,21 @@ def Val.rigids(+d: Nat) -> List<&2, Val>:
   Val.rigids_go(d, d, Nil{})
 
 # The same two, in a context.
-def Val.core_in(
-  +fuel: Nat, +env: E.DTable, +d: Nat, +t: T.Term
-) -> Val:
-  Val.go(fuel, env, False{}, CTerm{t, Val.rigids(d)}, Nil{})
+def Val.core_in_h(
+  +fuel: Nat, +env: E.DTable, +hp: Hp, +d: Nat, +t: T.Term
+) -> VR:
+  Val.go(fuel, env, False{}, hp, CTerm{t, Val.rigids(d)}, Nil{})
 
-def Val.eval_at(
-  +fuel: Nat, +env: E.DTable, +d: Nat, +t: T.Term
-) -> Val:
-  Val.go(fuel, env, True{}, CTerm{t, Val.rigids(d)}, Nil{})
+def Val.eval_at_h(
+  +fuel: Nat, +env: E.DTable, +hp: Hp, +d: Nat, +t: T.Term
+) -> VR:
+  Val.go(fuel, env, True{}, hp, CTerm{t, Val.rigids(d)}, Nil{})
 
 # Carry on reducing a value, with or without unfolding.
-def Val.more(+fuel: Nat, +env: E.DTable, +dl: Bool, +v: Val) -> Val:
-  Val.go(fuel, env, dl, CVal{v}, Nil{})
+def Val.more_h(
+  +fuel: Nat, +env: E.DTable, +dl: Bool, +hp: Hp, +v: Val
+) -> VR:
+  Val.go(fuel, env, dl, hp, CVal{v}, Nil{})
 
 # What the unfolding walk is working on: a value, or a spine whose arguments
 # are being unfolded one at a time.
@@ -861,14 +914,14 @@ type DC is Data:
 
 # The head put back together with its arguments, and the constant rule given
 # another chance now that the arguments have unfolded.
-def Val.head_back(
-  +fuel: Nat, +env: E.DTable, hd: Head, +sp: List<&2, Val>
-) -> Val:
+def Val.head_back_h(
+  +fuel: Nat, +env: E.DTable, +hp: Hp, hd: Head, +sp: List<&2, Val>
+) -> VR:
   match hd:
     case HConst{+n, +ls}:
-      Val.go(fuel, env, True{}, CTerm{T.TConst{n, ls}, Nil{}}, sp)
+      Val.go(fuel, env, True{}, hp, CTerm{T.TConst{n, ls}, Nil{}}, sp)
     case o:
-      VNe{o, sp}
+      MkVR{VNe{o, sp}, hp}
 
 # Unfold a neutral with every rule, arguments included.
 #
@@ -877,44 +930,44 @@ def Val.head_back(
 # arrive as `OfNat.ofNat 1000000 (instOfNatNat 1000000)`: a definition that
 # has to unfold before the literal is there to see. Unfolding only the head
 # leaves them neutral and the comparison then answers no.
-def Val.dgo(+fuel: Nat, +env: E.DTable, c: DC) -> Val:
+def Val.dgo(+fuel: Nat, +env: E.DTable, +hp: Hp, c: DC) -> VR:
   match fuel:
     case 0n:
-      VUnk{}
+      MkVR{VUnk{}, hp}
     case 1n+(+f):
       match c:
         case DS{+hd, +done, rest}:
           match rest:
             case Nil{}:
-              Val.head_back(f, env, hd, done)
+              Val.head_back_h(f, env, hp, hd, done)
             case Con{v, more}:
+              +r : VR = Val.dgo(f, env, hp, DV{v})
               Val.dgo(
-                f, env,
-                DS{
-                  hd,
-                  List.append(&2, Val, done, [Val.dgo(f, env, DV{v})]),
-                  more})
+                f, env, VR.heap(r),
+                DS{hd, List.append(&2, Val, done, [VR.val(r)]), more})
         case DV{v}:
           match v:
             case VNe{+hd, +sp}:
-              Val.dgo(f, env, DS{hd, Nil{}, sp})
+              Val.dgo(f, env, hp, DS{hd, Nil{}, sp})
+            case VSlot{+k}:
+              # A slot has to leave it before the walk can see a head.
+              +r : VR = Val.go(f, env, True{}, hp, CVal{VSlot{k}}, Nil{})
+              Val.dgo(f, env, VR.heap(r), DV{VR.val(r)})
             case o:
-              o
+              MkVR{o, hp}
 
 # The step conversion takes when the cheap route -- two spines with the same
 # head, compared argument by argument -- answers no.
-def Val.delta(+fuel: Nat, +env: E.DTable, +v: Val) -> Val:
-  Val.dgo(fuel, env, DV{v})
+def Val.delta_h(+fuel: Nat, +env: E.DTable, +hp: Hp, +v: Val) -> VR:
+  Val.dgo(fuel, env, hp, DV{v})
 
 # Apply a value to arguments.
-def Val.app(
-  +fuel: Nat, +env: E.DTable, +dl: Bool, +v: Val, +sp: List<&2, Val>
-) -> Val:
-  Val.go(fuel, env, dl, CVal{v}, sp)
+def Val.app_h(
+  +fuel: Nat, +env: E.DTable, +dl: Bool, +hp: Hp, +v: Val,
+  +sp: List<&2, Val>
+) -> VR:
+  Val.go(fuel, env, dl, hp, CVal{v}, sp)
 
-# What the read back is working on: a value, or a spine to apply to a term
-# already built. One type again, because the walk over a spine has to quote
-# each argument and Bend has no mutual recursion.
 type QC is Data:
   QVal{v: Val}
   QSp{acc: T.Term, sp: List<&2, Val>}
@@ -927,8 +980,13 @@ def Val.index_of(+d: Nat, +l: Nat) -> Nat:
   Nat.sub(Nat.sub(d, l), 1n)
 
 # Read a value back as a term of a context `d` binders deep.
+#
+# The heap travels in but not out. Reading back a lambda reduces its body,
+# which takes slots of its own, and the answer of that is a term: no value
+# comes back out, so no slot outlives the heap it was taken from. Two
+# readings side by side can therefore both start from the same heap.
 def Val.quote_go(
-  +fuel: Nat, +env: E.DTable, +d: Nat, c: QC
+  +fuel: Nat, +env: E.DTable, +hp: Hp, +d: Nat, c: QC
 ) -> T.Term:
   match fuel:
     case 0n:
@@ -941,79 +999,86 @@ def Val.quote_go(
               acc
             case Con{v, rest}:
               Val.quote_go(
-                f, env, d,
+                f, env, hp, d,
                 QSp{
-                  T.TApp{acc, Val.quote_go(f, env, d, QVal{v})}, rest})
+                  T.TApp{acc, Val.quote_go(f, env, hp, d, QVal{v})}, rest})
         case QVal{v}:
           match v:
             case VSort{l}:
               T.TSort{l}
             case VNat{n, nm, zr, sc}:
               T.TNat{n, nm, zr, sc}
-            case VSlot{n}:
-              T.TUnk{}
+            case VSlot{+k}:
+              # A slot reduces here, and the answer is read back in its
+              # place.
+              +r : VR = Val.go(f, env, True{}, hp, CVal{VSlot{k}}, Nil{})
+              Val.quote_go(f, env, VR.heap(r), d, QVal{VR.val(r)})
             case VUnk{}:
               T.TUnk{}
             case VLam{+ty, +bd, +en}:
+              +r : VR =
+                Val.go(
+                  f, env, True{}, hp, CTerm{bd, Con{Val.rigid(d), en}},
+                  Nil{})
               T.TLam{
-                Val.quote_go(f, env, d, QVal{ty}),
-                Val.quote_go(
-                  f, env, 1n+d,
-                  QVal{
-                    Val.go(
-                      f, env, True{}, CTerm{bd, Con{Val.rigid(d), en}},
-                      Nil{})})}
+                Val.quote_go(f, env, VR.heap(r), d, QVal{ty}),
+                Val.quote_go(f, env, VR.heap(r), 1n+d, QVal{VR.val(r)})}
             case VPi{+ty, +bd, +en}:
+              +r : VR =
+                Val.go(
+                  f, env, True{}, hp, CTerm{bd, Con{Val.rigid(d), en}},
+                  Nil{})
               T.TPi{
-                Val.quote_go(f, env, d, QVal{ty}),
-                Val.quote_go(
-                  f, env, 1n+d,
-                  QVal{
-                    Val.go(
-                      f, env, True{}, CTerm{bd, Con{Val.rigid(d), en}},
-                      Nil{})})}
+                Val.quote_go(f, env, VR.heap(r), d, QVal{ty}),
+                Val.quote_go(f, env, VR.heap(r), 1n+d, QVal{VR.val(r)})}
             case VNe{hd, +sp}:
               match hd:
                 case HVar{+l}:
                   Val.quote_go(
-                    f, env, d, QSp{T.TVar{Val.index_of(d, l)}, sp})
+                    f, env, hp, d, QSp{T.TVar{Val.index_of(d, l)}, sp})
                 case HConst{+n, +ls}:
-                  Val.quote_go(f, env, d, QSp{T.TConst{n, ls}, sp})
+                  Val.quote_go(f, env, hp, d, QSp{T.TConst{n, ls}, sp})
                 case HProj{+tn, +idx}:
                   Val.quote_go(
-                    f, env, d,
+                    f, env, hp, d,
                     QSp{
                       T.TProj{
                         tn, idx,
                         Val.quote_go(
-                          f, env, d, QVal{Val.sp_nth(0n, sp)})},
+                          f, env, hp, d, QVal{Val.sp_nth(0n, sp)})},
                       Val.sp_drop(1n, sp)})
 
-def Val.quote(+env: E.DTable, +v: Val) -> T.Term:
-  Val.quote_go(Val.budget(), env, 0n, QVal{v})
-
-def Val.quote_at(+fuel: Nat, +env: E.DTable, +v: Val) -> T.Term:
-  Val.quote_go(fuel, env, 0n, QVal{v})
+def Val.quote_h(+fuel: Nat, +env: E.DTable, +hp: Hp, +v: Val) -> T.Term:
+  Val.quote_go(fuel, env, hp, 0n, QVal{v})
 
 # Read a value back in a context that is already `d` binders deep. A value
 # taken from inside a comparison lives there, and reading it back at zero
 # gives its rigid variables the wrong indices.
-def Val.quote_d(+fuel: Nat, +env: E.DTable, +d: Nat, +v: Val) -> T.Term:
-  Val.quote_go(fuel, env, d, QVal{v})
+def Val.quote_d_h(
+  +fuel: Nat, +env: E.DTable, +hp: Hp, +d: Nat, +v: Val
+) -> T.Term:
+  Val.quote_go(fuel, env, hp, d, QVal{v})
 
-# The normal form of a term, by evaluation and read back.
-def Val.nf(+env: E.DTable, +t: T.Term) -> T.Term:
-  Val.quote(env, Val.eval(env, t))
-
+# The normal form of a term, by evaluation and read back. A term goes in and
+# a term comes out, so this one makes its own heap and drops it.
 def Val.nf_in(+fuel: Nat, +env: E.DTable, +t: T.Term) -> T.Term:
-  Val.quote_at(fuel, env, Val.eval_in(fuel, env, t))
+  +r : VR = Val.eval_h(fuel, env, Hp.new(), t)
+  Val.quote_h(fuel, env, VR.heap(r), VR.val(r))
+
+def Val.nf(+env: E.DTable, +t: T.Term) -> T.Term:
+  Val.nf_in(Val.budget(), env, t)
+
+# The normal form in a context `d` binders deep.
+def Val.nf_at(+fuel: Nat, +env: E.DTable, +d: Nat, +t: T.Term) -> T.Term:
+  +r : VR = Val.eval_at_h(fuel, env, Hp.new(), d, t)
+  Val.quote_d_h(fuel, env, VR.heap(r), d, VR.val(r))
 
 # A binder's body, with a value given to the binder.
-def Val.under(
-  +fuel: Nat, +env: E.DTable, +dl: Bool, +bd: T.Term,
+def Val.under_h(
+  +fuel: Nat, +env: E.DTable, +dl: Bool, +hp: Hp, +bd: T.Term,
   +en: List<&2, Val>, +v: Val
-) -> Val:
-  Val.go(fuel, env, dl, CTerm{bd, Con{v, en}}, Nil{})
+) -> VR:
+  Val.go(fuel, env, dl, hp, CTerm{bd, Con{v, en}}, Nil{})
 
 def Val.is_lam(v: Val) -> Bool:
   match v:

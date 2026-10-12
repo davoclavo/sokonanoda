@@ -27,7 +27,9 @@ def Vp.bit(b: Bool) -> Nat:
       0n
 
 def Vp.one(+env: E.DTable, +t: T.Term) -> Nat:
-  Vp.bit(W.Val.is_unk(W.Val.eval(env, t)))
+  Vp.bit(
+    W.Val.is_unk(
+      W.VR.val(W.Val.eval_h(W.Val.budget(), env, W.Hp.new(), t))))
 
 def Vp.walk(
   fuel: Nat, ds: List<&2, E.Decl>, +env: E.DTable, +bad: Nat, +n: Nat

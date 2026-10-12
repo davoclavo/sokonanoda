@@ -48,6 +48,26 @@ type VStep is Data:
 type VAlt is Data:
   MkVA{acc: A.Ans, work: List<&2, VPair>}
 
+# A step, and the heap as it stands after the work that found it.
+#
+# A value of a pair may hold a slot of the heap, so the heap travels with
+# the queue. It only grows: a cell is written once and a number is never
+# given out twice, so a pair that waited in an alternative reads the same
+# slot it did when it went in. That is what makes an alternative safe to
+# take up again against a later heap.
+type VSH is Data:
+  MkSH{s: VStep, h: W.Hp}
+
+def Vconv.sh_step(r: VSH) -> VStep:
+  match r:
+    case MkSH{s, h}:
+      s
+
+def Vconv.sh_heap(r: VSH) -> W.Hp:
+  match r:
+    case MkSH{s, h}:
+      h
+
 def Vconv.of(b: Bool) -> VStep:
   match b:
     case True{}:
@@ -119,6 +139,16 @@ def Vconv.pick_step(b: Bool, x: VStep, y: VStep) -> VStep:
     case False{}:
       y
 
+# Both branches of a pick run, here as everywhere. The one that is not
+# taken is thrown away whole, slots and all, so the slots it took are never
+# read and the heap of the branch that wins is the one that goes on.
+def Vconv.pick_sh(b: Bool, x: VSH, y: VSH) -> VSH:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
 # Offer the cheap route when the two sides are the same head applied to the
 # same number of arguments, and keep the dear one for a no.
 #
@@ -162,75 +192,110 @@ def Vconv.maybe_proof(v: W.Val) -> Bool:
 
 # Two values whose heads cannot reduce further, compared as they stand.
 def Vconv.rigid(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, a: W.Val, b: W.Val
-) -> VStep:
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, a: W.Val,
+  b: W.Val
+) -> VSH:
   match a b:
     case W.VSort{x} W.VSort{y}:
-      Vconv.of(L.Level.eq(x, y))
+      MkSH{Vconv.of(L.Level.eq(x, y)), hp}
     case W.VNat{v1, m1, z1, s1} W.VNat{v2, m2, z2, s2}:
-      Vconv.of(Nat.is_eq(v1, v2))
+      MkSH{Vconv.of(Nat.is_eq(v1, v2)), hp}
     case W.VUnk{} y:
-      SUnk{}
+      MkSH{SUnk{}, hp}
     case x W.VUnk{}:
-      SUnk{}
+      MkSH{SUnk{}, hp}
     case W.VLam{+t1, b1, e1} W.VLam{t2, b2, e2}:
-      SMore{
-        [VP{
-          Con{W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), t1), cx},
-          W.Val.under(
-            fuel, env, False{}, b1, e1,
-            W.Val.rigid(Vconv.depth(cx, 0n))),
-          W.Val.under(
-            fuel, env, False{}, b2, e2,
-            W.Val.rigid(Vconv.depth(cx, 0n)))}]}
+      +r1 : W.VR =
+        W.Val.under_h(
+          fuel, env, False{}, hp, b1, e1,
+          W.Val.rigid(Vconv.depth(cx, 0n)))
+      +r2 : W.VR =
+        W.Val.under_h(
+          fuel, env, False{}, W.VR.heap(r1), b2, e2,
+          W.Val.rigid(Vconv.depth(cx, 0n)))
+      MkSH{
+        SMore{
+          [VP{
+            Con{
+              W.Val.quote_d_h(
+                fuel, env, W.VR.heap(r2), Vconv.depth(cx, 0n), t1),
+              cx},
+            W.VR.val(r1), W.VR.val(r2)}]},
+        W.VR.heap(r2)}
     case W.VPi{+t1, b1, e1} W.VPi{t2, b2, e2}:
-      SMore{
-        [VP{cx, t1, t2},
-         VP{
-           Con{W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), t1), cx},
-           W.Val.under(
-             fuel, env, False{}, b1, e1,
-             W.Val.rigid(Vconv.depth(cx, 0n))),
-           W.Val.under(
-             fuel, env, False{}, b2, e2,
-             W.Val.rigid(Vconv.depth(cx, 0n)))}]}
+      +r1 : W.VR =
+        W.Val.under_h(
+          fuel, env, False{}, hp, b1, e1,
+          W.Val.rigid(Vconv.depth(cx, 0n)))
+      +r2 : W.VR =
+        W.Val.under_h(
+          fuel, env, False{}, W.VR.heap(r1), b2, e2,
+          W.Val.rigid(Vconv.depth(cx, 0n)))
+      MkSH{
+        SMore{
+          [VP{cx, t1, t2},
+           VP{
+             Con{
+               W.Val.quote_d_h(
+                 fuel, env, W.VR.heap(r2), Vconv.depth(cx, 0n), t1),
+               cx},
+             W.VR.val(r1), W.VR.val(r2)}]},
+        W.VR.heap(r2)}
     # eta: a lambda against anything else is the body against that thing
     # applied to the binder
     case W.VLam{+t1, b1, e1} y:
-      SMore{
-        [VP{
-          Con{W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), t1), cx},
-          W.Val.under(
-            fuel, env, False{}, b1, e1,
-            W.Val.rigid(Vconv.depth(cx, 0n))),
-          W.Val.app(
-            fuel, env, False{}, y,
-            [W.Val.rigid(Vconv.depth(cx, 0n))])}]}
+      +r1 : W.VR =
+        W.Val.under_h(
+          fuel, env, False{}, hp, b1, e1,
+          W.Val.rigid(Vconv.depth(cx, 0n)))
+      +r2 : W.VR =
+        W.Val.app_h(
+          fuel, env, False{}, W.VR.heap(r1), y,
+          [W.Val.rigid(Vconv.depth(cx, 0n))])
+      MkSH{
+        SMore{
+          [VP{
+            Con{
+              W.Val.quote_d_h(
+                fuel, env, W.VR.heap(r2), Vconv.depth(cx, 0n), t1),
+              cx},
+            W.VR.val(r1), W.VR.val(r2)}]},
+        W.VR.heap(r2)}
     case x W.VLam{+t2, b2, e2}:
-      SMore{
-        [VP{
-          Con{W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), t2), cx},
-          W.Val.app(
-            fuel, env, False{}, x,
-            [W.Val.rigid(Vconv.depth(cx, 0n))]),
-          W.Val.under(
-            fuel, env, False{}, b2, e2,
-            W.Val.rigid(Vconv.depth(cx, 0n)))}]}
+      +r1 : W.VR =
+        W.Val.app_h(
+          fuel, env, False{}, hp, x,
+          [W.Val.rigid(Vconv.depth(cx, 0n))])
+      +r2 : W.VR =
+        W.Val.under_h(
+          fuel, env, False{}, W.VR.heap(r1), b2, e2,
+          W.Val.rigid(Vconv.depth(cx, 0n)))
+      MkSH{
+        SMore{
+          [VP{
+            Con{
+              W.Val.quote_d_h(
+                fuel, env, W.VR.heap(r2), Vconv.depth(cx, 0n), t2),
+              cx},
+            W.VR.val(r1), W.VR.val(r2)}]},
+        W.VR.heap(r2)}
     # a literal against a constructor application
     case W.VNat{v1, m1, z1, s1} y:
-      SMore{[VDeep{cx, W.Val.lit_ctor(W.VNat{v1, m1, z1, s1}), y}]}
+      MkSH{SMore{[VDeep{cx, W.Val.lit_ctor(W.VNat{v1, m1, z1, s1}), y}]}, hp}
     case x W.VNat{v2, m2, z2, s2}:
-      SMore{[VDeep{cx, x, W.Val.lit_ctor(W.VNat{v2, m2, z2, s2})}]}
+      MkSH{SMore{[VDeep{cx, x, W.Val.lit_ctor(W.VNat{v2, m2, z2, s2})}]}, hp}
     case W.VNe{h1, +s1} W.VNe{h2, +s2}:
-      Vconv.ne_step(
-        fuel, cx,
-        Bool.and(
-          W.Val.same_hd(fuel, h1, h2),
-          Nat.is_eq(
-            W.Val.sp_len(s1, 0n), W.Val.sp_len(s2, 0n))),
-        s1, s2)
+      MkSH{
+        Vconv.ne_step(
+          fuel, cx,
+          Bool.and(
+            W.Val.same_hd(fuel, h1, h2),
+            Nat.is_eq(
+              W.Val.sp_len(s1, 0n), W.Val.sp_len(s2, 0n))),
+          s1, s2),
+        hp}
     case x y:
-      SNo{}
+      MkSH{SNo{}, hp}
 
 def Vconv.ctor_of_struct(+env: E.DTable, +d: E.Decl) -> Bool:
   Bool.and(
@@ -283,14 +348,14 @@ def Vconv.eta_struct(
 #
 
 def Vconv.eta_or(
-  st: VStep, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
-  +a: W.Val, +b: W.Val
-) -> VStep:
+  st: VStep, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
   match st:
     case SNo{}:
-      Vconv.eta_struct(fuel, env, cx, a, b)
+      MkSH{Vconv.eta_struct(fuel, env, cx, a, b), hp}
     case o:
-      o
+      MkSH{o, hp}
 
 # The rule needs the type of each side, inference reads a term, and reading
 # a value back costs the size of the value. Asking it of every pair spent
@@ -309,10 +374,12 @@ def Vconv.eta_or(
 
 # Structure, and structure eta on a no.
 def Vconv.struct_then(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
-) -> VStep:
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
+  +b: W.Val
+) -> VSH:
+  +r : VSH = Vconv.rigid(fuel, env, hp, cx, a, b)
   Vconv.eta_or(
-    Vconv.rigid(fuel, env, cx, a, b), fuel, env, cx, a, b)
+    Vconv.sh_step(r), fuel, env, Vconv.sh_heap(r), cx, a, b)
 
 # The test is the kernel's own, `Conv.irrel`, and it needs the type of each
 # side. That is where a value is read back -- here and in the K-like rule,
@@ -342,39 +409,44 @@ def Vconv.ty_of(
 # behind as a pair. Answering yes without that is a wrong accept, and
 # `bad/tutorial/105_proofIrrelevanceBad` is the file that says so.
 def Vconv.irrel_step(
-  ok: Bool, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
-  +a: W.Val, +b: W.Val, +ta: T.Term, +tb: T.Term
-) -> VStep:
+  ok: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val, +ta: T.Term, +tb: T.Term
+) -> VSH:
   match ok:
     case True{}:
-      SMore{
-        [VP{
-          cx,
-          W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), ta),
-          W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), tb)}]}
+      +r1 : W.VR =
+        W.Val.core_in_h(fuel, env, hp, Vconv.depth(cx, 0n), ta)
+      +r2 : W.VR =
+        W.Val.core_in_h(
+          fuel, env, W.VR.heap(r1), Vconv.depth(cx, 0n), tb)
+      MkSH{
+        SMore{[VP{cx, W.VR.val(r1), W.VR.val(r2)}]}, W.VR.heap(r2)}
     case False{}:
-      Vconv.struct_then(fuel, env, cx, a, b)
+      Vconv.struct_then(fuel, env, hp, cx, a, b)
 
 def Vconv.irrel_go(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
-) -> VStep:
-  +qa : T.Term = W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), a)
-  +qb : T.Term = W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), b)
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
+  +b: W.Val
+) -> VSH:
+  # Reading a value back hands back a term, not a value, so no slot leaves
+  # the heap here and the two readings can start from the same one.
+  +qa : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), a)
+  +qb : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), b)
   Vconv.irrel_step(
     Vconv.irrel_ok(fuel, env, cx, qa, qb),
-    fuel, env, cx, a, b,
+    fuel, env, hp, cx, a, b,
     Vconv.ty_of(fuel, env, cx, qa),
     Vconv.ty_of(fuel, env, cx, qb))
 
 def Vconv.irrel_pick(
-  maybe: Bool, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
-  +a: W.Val, +b: W.Val
-) -> VStep:
+  maybe: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
   match maybe:
     case True{}:
-      Vconv.irrel_go(fuel, env, cx, a, b)
+      Vconv.irrel_go(fuel, env, hp, cx, a, b)
     case False{}:
-      Vconv.struct_then(fuel, env, cx, a, b)
+      Vconv.struct_then(fuel, env, hp, cx, a, b)
 
 # Where neither route is the cheap one and a head could still unfold, the
 # answer is not "no": it is "unfold and look again". Saying no there is what
@@ -388,11 +460,12 @@ def Vconv.irrel_pick(
 # files answer "do not know" at the kernel's own budget. Inference on values
 # is what makes this order affordable, and it is the next piece of work.
 def Vconv.irrel(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
-) -> VStep:
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
+  +b: W.Val
+) -> VSH:
   Vconv.irrel_pick(
     Bool.and(Vconv.maybe_proof(a), Vconv.maybe_proof(b)),
-    fuel, env, cx, a, b)
+    fuel, env, hp, cx, a, b)
 
 # A recursor whose inductive is a proposition with one constructor and no
 # fields -- `Eq` is the one that matters -- may take any proof of its major
@@ -426,35 +499,38 @@ def Vconv.k_near(+env: E.DTable, +v: W.Val) -> Bool:
 
 # Put the constructor in the major premise's place and reduce again.
 def Vconv.k_use(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val,
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +v: W.Val,
   +d: E.Decl, +ty: T.Term
-) -> W.Val:
+) -> W.VR:
   # `Val.head_back` and not `Val.app`: applying a neutral only lengthens its
   # spine, and the point of the rule is that the constant rule runs again
   # with the constructor in the major premise's place. Without that the
   # recursor comes back unreduced, which is what
   # `good/tutorial/099_ruleK` answered `reject` on.
-  W.Val.head_back(
-    fuel, env,
+  +r : W.VR =
+    W.Val.core_in_h(
+      fuel, env, hp, Vconv.depth(cx, 0n), C.Conv.k_ctor(env, d, ty))
+  W.Val.head_back_h(
+    fuel, env, W.VR.heap(r),
     W.HConst{W.Val.head_name(v), W.Val.head_levels(v)},
-    Vconv.k_sp(
-      W.Val.args(v), V.Eval.major_idx(d),
-      W.Val.core_in(
-        fuel, env, Vconv.depth(cx, 0n), C.Conv.k_ctor(env, d, ty))))
+    Vconv.k_sp(W.Val.args(v), V.Eval.major_idx(d), W.VR.val(r)))
 
 def Vconv.k_pick(
-  ok: Bool, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
-  +v: W.Val, +d: E.Decl, +ty: T.Term
-) -> W.Val:
+  ok: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +v: W.Val, +d: E.Decl, +ty: T.Term
+) -> W.VR:
   match ok:
     case True{}:
-      Vconv.k_use(fuel, env, cx, v, d, ty)
+      Vconv.k_use(fuel, env, hp, cx, v, d, ty)
     case False{}:
-      v
+      W.MkVR{v, hp}
 
 def Vconv.k_go(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val, +d: E.Decl
-) -> W.Val:
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +v: W.Val,
+  +d: E.Decl
+) -> W.VR:
+  # The major premise is an argument, so it may still be in a slot. Reading
+  # it back reduces it and hands back a term.
   +sj : W.Val = W.Val.sp_nth(V.Eval.major_idx(d), W.Val.args(v))
   +ty : T.Term =
     V.Eval.whnf(
@@ -462,29 +538,30 @@ def Vconv.k_go(
       H.Shape.ty(
         H.Shape.infer(
           fuel, env, cx,
-          W.Val.quote_d(fuel, env, Vconv.depth(cx, 0n), sj))),
+          W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), sj))),
       Nil{})
   Vconv.k_pick(
     Bool.and(
       C.Conv.k_type_ok(d, ty),
       C.Conv.k_fits(fuel, env, cx, d, ty)),
-    fuel, env, cx, v, d, ty)
+    fuel, env, hp, cx, v, d, ty)
 
 def Vconv.k_try(
-  near: Bool, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val
-) -> W.Val:
+  near: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +v: W.Val
+) -> W.VR:
   match near:
     case True{}:
       Vconv.k_go(
-        fuel, env, cx, v,
+        fuel, env, hp, cx, v,
         E.Lookup.get(E.Env.find(env, W.Val.head_name(v))))
     case False{}:
-      v
+      W.MkVR{v, hp}
 
 def Vconv.k_fix(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val
-) -> W.Val:
-  Vconv.k_try(Vconv.k_near(env, v), fuel, env, cx, v)
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +v: W.Val
+) -> W.VR:
+  Vconv.k_try(Vconv.k_near(env, v), fuel, env, hp, cx, v)
 
 # The irrelevance test, and the structural comparison when it does not fit.
 # Structure eta in a comparison, which Lean calls `isDefEqEtaStruct`.
@@ -492,51 +569,69 @@ def Vconv.k_fix(
 
 # The dear route: unfold both heads and look again.
 def Vconv.deep(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
-) -> VStep:
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
+  +b: W.Val
+) -> VSH:
+  +d1 : W.VR = W.Val.delta_h(fuel, env, hp, a)
+  +k1 : W.VR =
+    Vconv.k_fix(fuel, env, W.VR.heap(d1), cx, W.VR.val(d1))
+  +d2 : W.VR = W.Val.delta_h(fuel, env, W.VR.heap(k1), b)
+  +k2 : W.VR =
+    Vconv.k_fix(fuel, env, W.VR.heap(d2), cx, W.VR.val(d2))
   Vconv.irrel(
-    fuel, env, cx,
-    Vconv.k_fix(fuel, env, cx, W.Val.delta(fuel, env, a)),
-    Vconv.k_fix(fuel, env, cx, W.Val.delta(fuel, env, b)))
+    fuel, env, W.VR.heap(k2), cx, W.VR.val(k1), W.VR.val(k2))
 
 def Vconv.offer(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
-) -> VStep:
-  Vconv.pick_step(
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
+  +b: W.Val
+) -> VSH:
+  Vconv.pick_sh(
     Bool.and(
       Vconv.spine_match(fuel, a, b),
       Bool.or(W.Val.head_const(a), W.Val.head_const(b))),
-    SEither{
-      Vconv.zip(cx, W.Val.args(a), W.Val.args(b)),
-      [VDeep{cx, a, b}]},
+    MkSH{
+      SEither{
+        Vconv.zip(cx, W.Val.args(a), W.Val.args(b)),
+        [VDeep{cx, a, b}]},
+      hp},
     # Any constant head earns the dear route, not only a definition. A
     # recursor stands with its rule unfired until its major premise reduces,
     # and that may need a definition unfolded **inside an argument**:
     # `Val.delta` does that, and asking only whether the head itself unfolds
     # leaves `perf/magma-list-pair-n7` answering no.
-    Vconv.pick_step(
+    Vconv.pick_sh(
       Bool.or(W.Val.head_const(a), W.Val.head_const(b)),
-      SMore{[VDeep{cx, a, b}]},
-      Vconv.irrel(fuel, env, cx, a, b)))
+      MkSH{SMore{[VDeep{cx, a, b}]}, hp},
+      Vconv.irrel(fuel, env, hp, cx, a, b)))
 
 # What to do with one pair.
-def Vconv.classify(+fuel: Nat, +env: E.DTable, p: VPair) -> VStep:
+def Vconv.classify(
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, p: VPair
+) -> VSH:
   match p:
     case VDeep{+cx, +a, +b}:
-      Vconv.deep(fuel, env, cx, a, b)
+      Vconv.deep(fuel, env, hp, cx, a, b)
     case VP{+cx, +a, +b}:
       # the K-like rule first, as `Conv.classify_work` does it: a recursor
       # on a proposition with one constructor and no fields may take any
       # proof of its major premise as that constructor, and the cheap route
       # has to see the result
+      # Both sides leave their slots here, and this is the one place that
+      # has to make them. Every rule below reads a value, and a slot is
+      # not one.
+      +m1 : W.VR = W.Val.more_h(fuel, env, False{}, hp, a)
+      +k1 : W.VR =
+        Vconv.k_fix(fuel, env, W.VR.heap(m1), cx, W.VR.val(m1))
+      +m2 : W.VR =
+        W.Val.more_h(fuel, env, False{}, W.VR.heap(k1), b)
+      +k2 : W.VR =
+        Vconv.k_fix(fuel, env, W.VR.heap(m2), cx, W.VR.val(m2))
       Vconv.offer(
-        fuel, env, cx,
-        Vconv.k_fix(fuel, env, cx, W.Val.more(fuel, env, False{}, a)),
-        Vconv.k_fix(fuel, env, cx, W.Val.more(fuel, env, False{}, b)))
+        fuel, env, W.VR.heap(k2), cx, W.VR.val(k1), W.VR.val(k2))
 
 # Work the queue. It empties exactly when every pair in it is equal.
 def Vconv.all(
-  +fuel: Nat, +env: E.DTable, acc: A.Ans, alts: List<&2, VAlt>,
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, acc: A.Ans, alts: List<&2, VAlt>,
   work: List<&2, VPair>
 ) -> A.Ans:
   match fuel:
@@ -547,13 +642,14 @@ def Vconv.all(
         case A.ANo{} Nil{} w:
           A.ANo{}
         case A.ANo{} Con{MkVA{a2, w2}, r2} w:
-          Vconv.all(f, env, a2, r2, w2)
+          Vconv.all(f, env, hp, a2, r2, w2)
         case a as Nil{}:
           a
         case +a as Con{p, +rest}:
-          +st : VStep = Vconv.classify(f, env, p)
+          +r : VSH = Vconv.classify(f, env, hp, p)
+          +st : VStep = Vconv.sh_step(r)
           Vconv.all(
-            f, env,
+            f, env, Vconv.sh_heap(r),
             A.Ans.and(a, Vconv.step_ans(st)),
             Vconv.step_alts(st, a, rest, as),
             List.append(&2, VPair, Vconv.step_more(st), rest))
@@ -568,12 +664,16 @@ def Vconv.eq_in(
   # environment of its rigid binders. Reading them in an empty one makes
   # every free variable unknown, and the kernel -- which asks this with a
   # context, unlike the gate -- then answers "do not know" at once.
+  # One heap for the two sides and for everything the queue does with
+  # them. It starts here and it is dropped when the answer comes out, and
+  # no value outlives it.
+  +r1 : W.VR =
+    W.Val.core_in_h(fuel, env, W.Hp.new(), Vconv.depth(cx, 0n), a)
+  +r2 : W.VR =
+    W.Val.core_in_h(fuel, env, W.VR.heap(r1), Vconv.depth(cx, 0n), b)
   Vconv.all(
-    fuel, env, A.AYes{}, Nil{},
-    [VP{
-      cx,
-      W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), a),
-      W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), b)}])
+    fuel, env, W.VR.heap(r2), A.AYes{}, Nil{},
+    [VP{cx, W.VR.val(r1), W.VR.val(r2)}])
 
 # Conversion, unless the question is already settled. The left answer
 # arrives as a parameter so a definite no returns without the work, which is
