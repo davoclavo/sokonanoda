@@ -879,12 +879,29 @@ def Val.can_delta(+env: E.DTable, v: Val) -> Bool:
     case o:
       False{}
 
+# Two level lists, compared as levels and not as syntax.
+#
+# `max p0 p1` and `max p1 p0` are one level written two ways, and a head
+# comparison that reads them as syntax answers no. That is a wrong answer:
+# `perf/fueled-chain` is 869 kB and its declaration 557 turns on exactly
+# this. The term conversion has always compared them with `Level.eq`.
+def Val.levels_eq(
+  +fuel: Nat, xs: List<&2, L.Level>, ys: List<&2, L.Level>
+) -> Bool:
+  match xs ys:
+    case Nil{} Nil{}:
+      True{}
+    case Con{x, xr} Con{y, yr}:
+      Bool.and(L.Level.eq(x, y), Val.levels_eq(fuel, xr, yr))
+    case x y:
+      False{}
+
 def Val.same_hd(+fuel: Nat, a: Head, b: Head) -> Bool:
   match a b:
     case HVar{i} HVar{j}:
       Nat.is_eq(i, j)
     case HConst{n1, l1} HConst{n2, l2}:
-      Bool.and(Nat.is_eq(n1, n2), T.Term.same_levels(l1, l2))
+      Bool.and(Nat.is_eq(n1, n2), Val.levels_eq(fuel, l1, l2))
     case HProj{t1, i1} HProj{t2, i2}:
       Bool.and(Nat.is_eq(t1, t2), Nat.is_eq(i1, i2))
     case x y:

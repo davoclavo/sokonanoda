@@ -260,7 +260,7 @@ def Vconv.irrel_step(
           W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), ta),
           W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), tb)}]}
     case False{}:
-      Vconv.rigid(fuel, env, cx, a, b)
+      SNo{}
 
 def Vconv.irrel_go(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
@@ -281,7 +281,7 @@ def Vconv.irrel_pick(
     case True{}:
       Vconv.irrel_go(fuel, env, cx, a, b)
     case False{}:
-      Vconv.rigid(fuel, env, cx, a, b)
+      SNo{}
 
 # Where neither route is the cheap one and a head could still unfold, the
 # answer is not "no": it is "unfold and look again". Saying no there is what
@@ -289,6 +289,31 @@ def Vconv.irrel_pick(
 # same type and only a delta step shows it.
 # The K-like rule, on a value.
 #
+
+def Vconv.irrel_or(
+  st: VStep, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
+  +a: W.Val, +b: W.Val
+) -> VStep:
+  match st:
+    case SNo{}:
+      Vconv.irrel_pick(
+        Bool.and(Vconv.maybe_proof(a), Vconv.maybe_proof(b)),
+        fuel, env, cx, a, b)
+    case o:
+      o
+
+# The rule needs the type of each side, inference reads a term, and reading
+# a value back costs the size of the value. Asking it of every pair spent
+# the budget: at the kernel's own fuel of 30000, nine files answered "do not
+# know" that used to answer. Asking it only where the structural comparison
+# has already failed costs nothing on the pairs that agree, which is nearly
+# all of them.
+def Vconv.irrel(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VStep:
+  Vconv.irrel_or(
+    Vconv.rigid(fuel, env, cx, a, b), fuel, env, cx, a, b)
+
 # A recursor whose inductive is a proposition with one constructor and no
 # fields -- `Eq` is the one that matters -- may take any proof of its major
 # premise as that constructor, because proof irrelevance makes every proof
@@ -377,12 +402,8 @@ def Vconv.k_fix(
   Vconv.k_try(Vconv.k_near(env, v), fuel, env, cx, v)
 
 # The irrelevance test, and the structural comparison when it does not fit.
-def Vconv.irrel(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
-) -> VStep:
-  Vconv.irrel_pick(
-    Bool.and(Vconv.maybe_proof(a), Vconv.maybe_proof(b)),
-    fuel, env, cx, a, b)
+# Structure first, proof irrelevance only on a no.
+#
 
 # The dear route: unfold both heads and look again.
 def Vconv.deep(
@@ -464,9 +485,16 @@ def Vconv.all(
 def Vconv.eq_in(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: T.Term, +b: T.Term
 ) -> A.Ans:
+  # The two terms are written in the context, so they are read in an
+  # environment of its rigid binders. Reading them in an empty one makes
+  # every free variable unknown, and the kernel -- which asks this with a
+  # context, unlike the gate -- then answers "do not know" at once.
   Vconv.all(
     fuel, env, A.AYes{}, Nil{},
-    [VP{cx, W.Val.core(fuel, env, a), W.Val.core(fuel, env, b)}])
+    [VP{
+      cx,
+      W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), a),
+      W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), b)}])
 
 # Conversion, unless the question is already settled. The left answer
 # arrives as a parameter so a definite no returns without the work, which is

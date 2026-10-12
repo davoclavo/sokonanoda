@@ -463,3 +463,59 @@ things between here and a merge, in the order the evidence puts them:
    and the subject's type is read in the right context now, so what is left
    is to print the type the two sides compute for the subject and compare
    them.
+
+## Stage 6: the whole kernel on values, scored
+
+Two more bugs, both found by running it rather than by reading it:
+
+**A head comparison must compare levels as levels.** `max p0 p1` and
+`max p1 p0` are one level written two ways, and reading them as syntax
+answers no. That was the wrong answer on `perf/fueled-chain`, whose
+declaration 557 turns on exactly it. The term conversion has always used
+`Level.eq`.
+
+**The two terms are written in the context.** `Vconv.eq_in` read them in an
+empty environment, so every free variable came back unknown and the kernel
+-- which asks with a context, unlike the gate -- answered "do not know" at
+once, in a hundredth of a second. That one line was the difference between
+nine files declining and the same nine accepting. The gate did not catch it
+because the gate asks at the top level, where the context is empty: a gate
+that only asks the easy question passes the broken code.
+
+### The score, with the whole kernel asking the value conversion
+
+| | terms (`main`) | values |
+|---|---|---|
+| correct | **186** | 179 |
+| wrong | **0** | **5** |
+| declined | 0 | 1 |
+| out of time | 9 | 10 |
+
+The five wrong answers name three rules that conversion on values does not
+have yet:
+
+| file | what is missing |
+|---|---|
+| `tutorial/112_structEta` | **structure eta in conversion.** Lean's `isDefEqEtaStruct`: a constructor application of a structure against something that is not one expands the other side into `mk x.1 ... x.n`. The value evaluator has structure eta for a recursor; conversion needs it for a comparison |
+| `tutorial/099_ruleK` | the K-like rule answers no where the term conversion answers yes, with every condition of `Conv.k_ok` mirrored |
+| `tutorial/107_proofIrrelevanceUnderBinder` | proof irrelevance under a binder. Structure is tried first now and irrelevance only on a no, which is what the budget needs; this file says the order is not yet right under a binder |
+| `perf/magma-list-pair-n7`, `-n21` | the same three, met in a corpus |
+
+And the timings moved both ways: `perf/shift-cascade`,
+`perf/discarded-argument-match`, `perf/proj-lazy-struct` and
+`perf/fueled-chain` now run out of time, which is what call by value costs on
+an argument the body throws away. `good/perf/church-numerals`,
+`good/other/nat-lit-*`, `perf/identical-nesting` and `perf/let-ladder`
+answer, and `perf/magma-list-pair-*` get far enough to answer wrongly rather
+than not at all.
+
+So the wiring is reverted again and `main` stands at 186 with nothing wrong.
+What is left is three rules and one representation decision:
+
+1. structure eta in conversion,
+2. the K-like rule's remaining difference,
+3. proof irrelevance under a binder,
+4. and the call-by-value question: an argument the body discards is reduced
+   anyway, which is what the four new timeouts are. Lean is call by need;
+   the way to it here is a slot in the environment that holds either a value
+   or a term, and the branch `closure` is the record of how not to build one.
