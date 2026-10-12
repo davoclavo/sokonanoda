@@ -1073,8 +1073,28 @@ def Vconv.or_terms(
 # Are these two terms definitionally equal? The context tells the walk how
 # many binders it starts inside, which is where a rigid variable's level
 # counts from.
-def Vconv.eq_in(
-  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+# What a first attempt by the comparison that substitutes may cost.
+#
+# The two comparisons are good at different questions. This one walks
+# values and is good where the answer is a computation:
+# `perf/beta-ladder`, `perf/shared-subterm`, `perf/church-numerals`. The
+# one that substitutes is good where the two sides are nearly the same
+# syntax, which is what a telescope comparison is -- and those are the
+# files this one cannot finish. `perf/fueled-chain`'s `chain6_datF` cuts to
+# 97 declarations that the term kernel accepts in 4.4 s and this one does
+# not answer in sixty.
+#
+# So the term comparison goes first with a budget of its own. A yes or a no
+# from it is an answer, because it decides the same relation; "do not know"
+# costs that budget and the value comparison carries on. The budget is
+# small enough that a file whose answer is a computation loses little, and
+# large enough to settle a telescope.
+def Vconv.try_cap() -> Nat:
+  3000n
+
+def Vconv.eq_values(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: T.Term,
+  +b: T.Term
 ) -> A.Ans:
   # The two terms are written in the context, so they are read in an
   # environment of its rigid binders. Reading them in an empty one makes
@@ -1092,6 +1112,22 @@ def Vconv.eq_in(
       fuel, env, W.VR.heap(r2), A.AYes{}, Nil{},
       [VP{cx, W.VR.val(r1), W.VR.val(r2)}]),
     fuel, env, cx, a, b)
+
+def Vconv.after_try(
+  t: A.Ans, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
+  +a: T.Term, +b: T.Term
+) -> A.Ans:
+  match t:
+    case A.AUnk{}:
+      Vconv.eq_values(fuel, env, cx, a, b)
+    case o:
+      o
+
+def Vconv.eq_in(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: T.Term, +b: T.Term
+) -> A.Ans:
+  Vconv.after_try(
+    C.Conv.eq_in(Vconv.try_cap(), env, cx, a, b), fuel, env, cx, a, b)
 
 # Conversion, unless the question is already settled. The left answer
 # arrives as a parameter so a definite no returns without the work, which is
