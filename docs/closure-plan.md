@@ -571,3 +571,46 @@ That buys the three timeouts and the two declines, which is 186 with nothing
 wrong, and it is the first point at which the sharing can be asked to earn
 more: `perf/shared-subterm` and the `magma-*` family are what it was built
 for.
+
+## Stage 8: laziness the cheap way, and why it is not cheap
+
+The gap is five files and the cause is call by value, so the obvious cheap
+fix is to reduce an argument only where the body uses it: push the argument
+on the spine unreduced, ask `Term.has_bvar(bd, 0n)` at the binder, and give
+the binder the unknown term where the answer is no.
+
+It was built and measured, and it is a net loss:
+
+| file | call by value | with the cheap laziness |
+|---|---|---|
+| `perf/church-numerals` | 0.04 s accept | **38 s** accept |
+| `perf/discarded-argument-match` | out of time | out of time |
+| `perf/proj-lazy-struct` | out of time | out of time |
+| `perf/shift-cascade` | out of time | out of time |
+
+Two reasons, and both are worth keeping.
+
+**The test costs more than the argument.** `Term.has_bvar` walks the body,
+and the body is walked at every beta step, so the hot path pays for a walk
+to save a reduction that is usually cheap. A thousandfold slowdown on
+`church-numerals` is that walk.
+
+**It also has to be skippable, not picked.** `Val.pick` evaluates both of
+its branches, so choosing between a reduced argument and nothing reduces it
+either way; the choice has to be made on the **term** -- give the forcing
+step the unknown term instead of the argument -- which is the same trick the
+memo needed for a slot that was already reduced. Getting that wrong made the
+laziness cost without saving, and the first version of this measured exactly
+that.
+
+**And the rules need forced values.** An argument waiting on the spine has no
+head to match on, so a recursor's major premise, a primitive's two arguments
+and a projection's subject each have to be forced before the rule looks, and
+the primitive's two only where there is a primitive to take them. Missing
+that gave five wrong answers, each a rule that silently did not fire.
+
+So the cheap way is out, and the real one stands: a slot that holds either a
+term with its environment or a value, **and an update when it is first
+read**. The update is what makes the saving stick, and the update is what
+needs the heap threaded. A heap of values is sound, which is the one thing
+the branch `closure` could not say about a heap of terms.
