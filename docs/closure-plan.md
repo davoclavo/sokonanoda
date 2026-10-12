@@ -654,3 +654,71 @@ each.
 The value kernel stands where stage 7 left it: 181 correct, nothing wrong,
 two declines and twelve files out of time, with `main` at 186 and nothing
 wrong.
+
+## Stage 10: the heap, and why it had to reach the queue
+
+An argument now takes a slot of a heap instead of reducing where it is
+given. `Val.go` reads the slot where the body first asks for it, reduces the
+term in the cell, and writes the value back. A body that throws the
+argument away never pays for it. A body that reads it twice pays once.
+
+### The slot, the cell and the number
+
+```
+type HCell is Data:
+  HRaw{t: T.Term, en: List<&2, Val>}
+  HDone{v: Val}
+```
+
+`Hp` is a trie of cells under a number, beside the next free number.
+`VSlot{n}` is a value that stands for cell `n`. `VR` is the record
+reduction hands back: the value, and the heap as it stands after it. A Bend
+pair is a `Type` and may be used once, so the record has to be `Data`.
+
+### The rule that decides the whole shape
+
+**A value may not outlive its heap.** A value holds slots in the spine of a
+neutral and in the environment of a lambda. Only the heap those slots came
+from can read them, and a new heap gives out the same numbers again, so a
+value kept past its heap reads some later slot in place of its own. The
+answer is then wrong, not unknown.
+
+Three arrangements were considered and two of them break this rule.
+
+| arrangement | what it costs | sound |
+|---|---|---|
+| the heap travels with the value, through conversion as well | ~30 signatures of `Vconv.bend` | **yes** |
+| conversion takes the heap read only | one parameter per function | no: a slot it allocates and drops collides with a live one |
+| conversion never sees a slot, the boundary resolves them | nothing | yes, and it wins nothing: resolving is the eager work again |
+
+The second is the trap. Reading a slot is safe to drop, because a cell is
+written once and the write only replaces a term by the value it reduces to.
+**Taking** a slot is not: a dropped heap forgets the number it gave out, and
+the value that holds it is still in the queue.
+
+The third is why the first is necessary rather than merely tidy. The heavy
+reduction of a `decide` certificate does not happen in the first whnf of
+either side. It happens in the `delta` steps that the queue takes, one
+after another, and a boundary that resolves every slot before the queue
+sees it has reduced every argument eagerly -- which is the machine this
+stage replaced.
+
+So the heap threads through the queue. `VSH` is a step with the heap beside
+it, and `Vconv.all` carries the heap from one pair to the next. The heap
+only grows, which is what makes an alternative safe: a pair that waited
+reads the same cell it would have read when it went in.
+
+### Where a slot has to go
+
+A rule reads a value, and a slot is not one. Three arguments leave their
+slots at once: the two a primitive reads as numbers, and the major premise
+of a recursor or of a quotient. `Vconv.classify` forces both sides of every
+pair, so no rule below it ever meets a slot -- that is one place to get
+right, not thirty.
+
+The read back resolves a slot as well, and it hands back a term, so no
+value leaves it. That is why two readings side by side can start from the
+same heap and why `Val.nf_in` can make a heap and drop it.
+
+The branch that a `pick` does not take is thrown away whole. Its slots are
+never read, so the numbers it took cost nothing but the taking.
