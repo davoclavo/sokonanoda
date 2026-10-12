@@ -1261,3 +1261,52 @@ reverted. The measurement that made it look promising was wrong: replacing
 the read back by the unknown term also stops the rule from firing, so what
 it measured was a comparison that fails early, not the same comparison
 without the cost.
+
+### `good/init-prelude` does not only need to be faster
+
+With the recursor check on the term conversion, the file's phases are:
+
+| phase | time |
+|---|---|
+| the parse | 1.75 s |
+| the four tests on every declaration, all 1,824 | 12.2 s |
+| the walk that asks whether a block was taken on trust | 1.74 s |
+
+Sixteen seconds against a limit of fifty, and the file still does not answer
+in seventy. Two things are in the way, and only one of them is speed.
+
+**The answer is already a decline.** The four tests over all 1,824
+declarations answer `declined`, and a prefix bisect puts it at declaration
+309: `Nat.modCoreGo_lt`, a theorem. Its closure is 152 declarations and
+reproduces the decline in 7.26 s, which is the thing to look at next. No
+amount of speed turns that file into an accept.
+
+**The kernel's own walk is ten times slower than the same tests.** A walk
+written by hand in `bend/phase.bend`, with the same four tests in the same
+order against the same environment, costs 12.2 s where
+`Kernel.check_all` costs more than seventy. Three differences were tried and
+none of them is the cause: whether the match reads the answer so far,
+whether the four tests sit in a helper or in the body, and where the answer
+sits in the argument list. All three are reverted; the cause is not yet
+found, and it is worth finding, because `perf/grind-ring-5` is 10 MB of the
+same walk.
+
+### A measurement that was not measuring anything
+
+The first version of that probe kept the answer of each declaration in an
+accumulator it then **replaced**:
+
+```
+Peek.last(t, j, E.Env.add(env, h), Peek.inf(env, h))
+```
+
+Nothing reads a replaced accumulator, and nothing that nothing reads is
+evaluated, so the walk checked the last declaration and skipped the other
+1,823. Every number it produced was the parse plus one declaration. The
+numbers that came out of it -- "every declaration checked in 11.6 s", "the
+trust walk is the wall", "a third reader of the environment costs ten times"
+-- were artefacts, and the last of them sent this stage off for an hour.
+
+The fix is one line: combine the answers with `Ans.and` instead of replacing
+them. The lesson is older than that: a probe whose result is discarded
+measures nothing, and in a lazy runtime that is silent.
