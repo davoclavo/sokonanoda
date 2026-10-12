@@ -425,11 +425,11 @@ def Val.nat_sc(v: Val) -> Nat:
 # iota, then a quotient, and a constant that none of them fit is stuck. Each
 # of these is cheap to build, and only one of them is used.
 def Val.const_next(
-  +env: E.DTable, +d: E.Decl, +ls: List<&2, L.Level>,
+  +env: E.DTable, +dl: Bool, +d: E.Decl, +ls: List<&2, L.Level>,
   +sp: List<&2, Val>, +mw: Val
 ) -> Ctrl:
   Val.pick_c(
-    E.Decl.is_def(d),
+    Bool.and(dl, E.Decl.is_def(d)),
     CTerm{Val.unfold(d, ls), Nil{}},
     Val.pick_c(
       Val.can_iota(d, sp, mw),
@@ -441,10 +441,10 @@ def Val.const_next(
         CVal{VUnk{}})))
 
 def Val.const_sp(
-  +env: E.DTable, +d: E.Decl, +sp: List<&2, Val>, +mw: Val
+  +env: E.DTable, +dl: Bool, +d: E.Decl, +sp: List<&2, Val>, +mw: Val
 ) -> List<&2, Val>:
   Val.pick_sp(
-    E.Decl.is_def(d),
+    Bool.and(dl, E.Decl.is_def(d)),
     sp,
     Val.pick_sp(
       Val.can_iota(d, sp, mw),
@@ -455,11 +455,17 @@ def Val.const_sp(
         Nil{})))
 
 # Does any rule fit this constant?
+#
+# `dl` says whether a definition may be unfolded. Conversion wants it off at
+# first: two spines with the same head are compared argument by argument,
+# and unfolding before that is what makes `perf/identical-nesting` build
+# twelve nested structures twice. Lean draws the same line between `whnfCore`
+# and `whnf`.
 def Val.const_fires(
-  +env: E.DTable, +d: E.Decl, +sp: List<&2, Val>, +mw: Val
+  +env: E.DTable, +dl: Bool, +d: E.Decl, +sp: List<&2, Val>, +mw: Val
 ) -> Bool:
   Bool.or(
-    E.Decl.is_def(d),
+    Bool.and(dl, E.Decl.is_def(d)),
     Bool.or(
       Val.can_iota(d, sp, mw),
       Val.quot_ready(env, d, sp, mw)))
@@ -475,7 +481,7 @@ def Val.const_fires(
 # used twice costs its value once. A Lean term always terminates, so
 # reducing an argument that the body throws away is work and never a loop.
 def Val.go(
-  +fuel: Nat, +env: E.DTable, c: Ctrl, +sp: List<&2, Val>
+  +fuel: Nat, +env: E.DTable, +dl: Bool, c: Ctrl, +sp: List<&2, Val>
 ) -> Val:
   match fuel:
     case 0n:
@@ -489,8 +495,13 @@ def Val.go(
                 case Nil{}:
                   VLam{ty, bd, en}
                 case Con{a, rest}:
-                  Val.go(f, env, CTerm{bd, Con{a, en}}, rest)
+                  Val.go(f, env, dl, CTerm{bd, Con{a, en}}, rest)
             case VNe{hd, s}:
+              # A neutral stays one. Going back through the constant rule
+              # here looks tempting -- a definition could unfold with delta
+              # on -- and it does not terminate: the answer is a neutral
+              # again and the loop meets it again. Conversion asks for that
+              # one step by name, with `Val.delta`.
               VNe{hd, List.append(&2, Val, s, sp)}
             case VPi{ty, bd, en}:
               VPi{ty, bd, en}
@@ -503,39 +514,39 @@ def Val.go(
         case CTerm{+t, +en}:
           match t:
             case T.TVar{+i}:
-              Val.go(f, env, CVal{Val.at(i, en)}, sp)
+              Val.go(f, env, dl, CVal{Val.at(i, en)}, sp)
             case T.TSort{l}:
-              Val.go(f, env, CVal{VSort{l}}, sp)
+              Val.go(f, env, dl, CVal{VSort{l}}, sp)
             case T.TNat{v, nm, zr, sc}:
-              Val.go(f, env, CVal{VNat{v, nm, zr, sc}}, sp)
+              Val.go(f, env, dl, CVal{VNat{v, nm, zr, sc}}, sp)
             case T.TUnk{}:
               VUnk{}
             case T.TLam{+ty, +bd}:
               Val.go(
-                f, env,
-                CVal{VLam{Val.go(f, env, CTerm{ty, en}, Nil{}), bd, en}}, sp)
+                f, env, dl,
+                CVal{VLam{Val.go(f, env, dl, CTerm{ty, en}, Nil{}), bd, en}}, sp)
             case T.TPi{+ty, +bd}:
               Val.go(
-                f, env,
-                CVal{VPi{Val.go(f, env, CTerm{ty, en}, Nil{}), bd, en}}, sp)
+                f, env, dl,
+                CVal{VPi{Val.go(f, env, dl, CTerm{ty, en}, Nil{}), bd, en}}, sp)
             case T.TApp{+g, +a}:
               Val.go(
-                f, env, CTerm{g, en},
-                Con{Val.go(f, env, CTerm{a, en}, Nil{}), sp})
+                f, env, dl, CTerm{g, en},
+                Con{Val.go(f, env, dl, CTerm{a, en}, Nil{}), sp})
             case T.TLet{+ty, +v, +bd}:
               Val.go(
-                f, env,
-                CTerm{bd, Con{Val.go(f, env, CTerm{v, en}, Nil{}), en}}, sp)
+                f, env, dl,
+                CTerm{bd, Con{Val.go(f, env, dl, CTerm{v, en}, Nil{}), en}}, sp)
             case T.TRef{+i, +k, m}:
               # A reference stands for a term of the export's table, whose
               # variables belong to the place it is named from -- which is
               # here, so the environment carries over.
-              Val.go(f, env, CTerm{E.Env.expr_at(env, i, k), en}, sp)
+              Val.go(f, env, dl, CTerm{E.Env.expr_at(env, i, k), en}, sp)
             case T.TProj{+tn, +idx, +st}:
-              +sv : Val = Val.go(f, env, CTerm{st, en}, Nil{})
+              +sv : Val = Val.go(f, env, dl, CTerm{st, en}, Nil{})
               +cw : Val = Val.lit_ctor(sv)
               Val.go(
-                f, env,
+                f, env, dl,
                 Val.pick_c(
                   Bool.and(
                     E.Decl.is_ctor(
@@ -573,7 +584,7 @@ def Val.go(
               # to its own fields, so a recursor stuck on one is not stuck
               +mw : Val = Val.eta_struct(env, d, ls, sp, mw0)
               Val.go(
-                f, env,
+                f, env, dl,
                 Val.pick_c(
                   Val.prim_ready(d, sp),
                   CVal{
@@ -583,25 +594,94 @@ def Val.go(
                       Val.nat_zr(Val.sp_nth(0n, sp)),
                       Val.nat_sc(Val.sp_nth(0n, sp)))},
                   Val.pick_c(
-                    Val.const_fires(env, d, sp, mw),
-                    Val.const_next(env, d, ls, sp, mw),
+                    Val.const_fires(env, dl, d, sp, mw),
+                    Val.const_next(env, dl, d, ls, sp, mw),
                     CVal{VNe{HConst{n, ls}, Nil{}}})),
                 Val.pick_sp(
                   Val.prim_ready(d, sp),
                   Val.sp_drop(2n, sp),
                   Val.pick_sp(
-                    Val.const_fires(env, d, sp, mw),
-                    Val.const_sp(env, d, sp, mw),
+                    Val.const_fires(env, dl, d, sp, mw),
+                    Val.const_sp(env, dl, d, sp, mw),
                     sp)))
 
 def Val.budget() -> Nat:
   30000n
 
+# Reduce with every rule, a definition included.
 def Val.eval(+env: E.DTable, +t: T.Term) -> Val:
-  Val.go(Val.budget(), env, CTerm{t, Nil{}}, Nil{})
+  Val.go(Val.budget(), env, True{}, CTerm{t, Nil{}}, Nil{})
 
 def Val.eval_in(+fuel: Nat, +env: E.DTable, +t: T.Term) -> Val:
-  Val.go(fuel, env, CTerm{t, Nil{}}, Nil{})
+  Val.go(fuel, env, True{}, CTerm{t, Nil{}}, Nil{})
+
+# Reduce everything but a definition, and stop at a constant that could
+# unfold. This is what conversion starts with.
+def Val.core(+fuel: Nat, +env: E.DTable, +t: T.Term) -> Val:
+  Val.go(fuel, env, False{}, CTerm{t, Nil{}}, Nil{})
+
+# Carry on reducing a value, with or without unfolding.
+def Val.more(+fuel: Nat, +env: E.DTable, +dl: Bool, +v: Val) -> Val:
+  Val.go(fuel, env, dl, CVal{v}, Nil{})
+
+# What the unfolding walk is working on: a value, or a spine whose arguments
+# are being unfolded one at a time.
+type DC is Data:
+  DV{v: Val}
+  DS{hd: Head, done: List<&2, Val>, rest: List<&2, Val>}
+
+# The head put back together with its arguments, and the constant rule given
+# another chance now that the arguments have unfolded.
+def Val.head_back(
+  +fuel: Nat, +env: E.DTable, hd: Head, +sp: List<&2, Val>
+) -> Val:
+  match hd:
+    case HConst{+n, +ls}:
+      Val.go(fuel, env, True{}, CTerm{T.TConst{n, ls}, Nil{}}, sp)
+    case o:
+      VNe{o, sp}
+
+# Unfold a neutral with every rule, arguments included.
+#
+# The arguments matter and that is not obvious. A primitive fires only when
+# both of its arguments are literals, and in `good/other/nat-lit-ble` they
+# arrive as `OfNat.ofNat 1000000 (instOfNatNat 1000000)`: a definition that
+# has to unfold before the literal is there to see. Unfolding only the head
+# leaves them neutral and the comparison then answers no.
+def Val.dgo(+fuel: Nat, +env: E.DTable, c: DC) -> Val:
+  match fuel:
+    case 0n:
+      VUnk{}
+    case 1n+(+f):
+      match c:
+        case DS{+hd, +done, rest}:
+          match rest:
+            case Nil{}:
+              Val.head_back(f, env, hd, done)
+            case Con{v, more}:
+              Val.dgo(
+                f, env,
+                DS{
+                  hd,
+                  List.append(&2, Val, done, [Val.dgo(f, env, DV{v})]),
+                  more})
+        case DV{v}:
+          match v:
+            case VNe{+hd, +sp}:
+              Val.dgo(f, env, DS{hd, Nil{}, sp})
+            case o:
+              o
+
+# The step conversion takes when the cheap route -- two spines with the same
+# head, compared argument by argument -- answers no.
+def Val.delta(+fuel: Nat, +env: E.DTable, +v: Val) -> Val:
+  Val.dgo(fuel, env, DV{v})
+
+# Apply a value to arguments.
+def Val.app(
+  +fuel: Nat, +env: E.DTable, +dl: Bool, +v: Val, +sp: List<&2, Val>
+) -> Val:
+  Val.go(fuel, env, dl, CVal{v}, sp)
 
 # What the read back is working on: a value, or a spine to apply to a term
 # already built. One type again, because the walk over a spine has to quote
@@ -650,7 +730,8 @@ def Val.quote_go(
                   f, env, 1n+d,
                   QVal{
                     Val.go(
-                      f, env, CTerm{bd, Con{Val.rigid(d), en}}, Nil{})})}
+                      f, env, True{}, CTerm{bd, Con{Val.rigid(d), en}},
+                      Nil{})})}
             case VPi{+ty, +bd, +en}:
               T.TPi{
                 Val.quote_go(f, env, d, QVal{ty}),
@@ -658,7 +739,8 @@ def Val.quote_go(
                   f, env, 1n+d,
                   QVal{
                     Val.go(
-                      f, env, CTerm{bd, Con{Val.rigid(d), en}}, Nil{})})}
+                      f, env, True{}, CTerm{bd, Con{Val.rigid(d), en}},
+                      Nil{})})}
             case VNe{hd, +sp}:
               match hd:
                 case HVar{+l}:
@@ -682,9 +764,118 @@ def Val.quote(+env: E.DTable, +v: Val) -> T.Term:
 def Val.quote_at(+fuel: Nat, +env: E.DTable, +v: Val) -> T.Term:
   Val.quote_go(fuel, env, 0n, QVal{v})
 
+# Read a value back in a context that is already `d` binders deep. A value
+# taken from inside a comparison lives there, and reading it back at zero
+# gives its rigid variables the wrong indices.
+def Val.quote_d(+fuel: Nat, +env: E.DTable, +d: Nat, +v: Val) -> T.Term:
+  Val.quote_go(fuel, env, d, QVal{v})
+
 # The normal form of a term, by evaluation and read back.
 def Val.nf(+env: E.DTable, +t: T.Term) -> T.Term:
   Val.quote(env, Val.eval(env, t))
 
 def Val.nf_in(+fuel: Nat, +env: E.DTable, +t: T.Term) -> T.Term:
   Val.quote_at(fuel, env, Val.eval_in(fuel, env, t))
+
+# A binder's body, with a value given to the binder.
+def Val.under(
+  +fuel: Nat, +env: E.DTable, +dl: Bool, +bd: T.Term,
+  +en: List<&2, Val>, +v: Val
+) -> Val:
+  Val.go(fuel, env, dl, CTerm{bd, Con{v, en}}, Nil{})
+
+def Val.is_lam(v: Val) -> Bool:
+  match v:
+    case VLam{ty, bd, en}:
+      True{}
+    case o:
+      False{}
+
+def Val.is_pi(v: Val) -> Bool:
+  match v:
+    case VPi{ty, bd, en}:
+      True{}
+    case o:
+      False{}
+
+def Val.is_sort(v: Val) -> Bool:
+  match v:
+    case VSort{l}:
+      True{}
+    case o:
+      False{}
+
+def Val.sort_of(v: Val) -> L.Level:
+  match v:
+    case VSort{+l}:
+      l
+    case o:
+      L.LZero{}
+
+def Val.bind_ty(v: Val) -> Val:
+  match v:
+    case VLam{+ty, bd, en}:
+      ty
+    case VPi{+ty, bd, en}:
+      ty
+    case o:
+      VUnk{}
+
+def Val.bind_bd(v: Val) -> T.Term:
+  match v:
+    case VLam{ty, +bd, en}:
+      bd
+    case VPi{ty, +bd, en}:
+      bd
+    case o:
+      T.TUnk{}
+
+def Val.bind_en(v: Val) -> List<&2, Val>:
+  match v:
+    case VLam{ty, bd, +en}:
+      en
+    case VPi{ty, bd, +en}:
+      en
+    case o:
+      Nil{}
+
+# Is this value a head that a definition could still unfold?
+def Val.can_delta(+env: E.DTable, v: Val) -> Bool:
+  match v:
+    case VNe{hd, sp}:
+      match hd:
+        case HConst{+n, ls}:
+          E.Decl.is_def(E.Lookup.get(E.Env.find(env, n)))
+        case o:
+          False{}
+    case o:
+      False{}
+
+def Val.same_hd(+fuel: Nat, a: Head, b: Head) -> Bool:
+  match a b:
+    case HVar{i} HVar{j}:
+      Nat.is_eq(i, j)
+    case HConst{n1, l1} HConst{n2, l2}:
+      Bool.and(Nat.is_eq(n1, n2), T.Term.same_levels(l1, l2))
+    case HProj{t1, i1} HProj{t2, i2}:
+      Bool.and(Nat.is_eq(t1, t2), Nat.is_eq(i1, i2))
+    case x y:
+      False{}
+
+# Two heads that are the same constant with the same universes.
+def Val.same_head(+fuel: Nat, a: Val, b: Val) -> Bool:
+  match a b:
+    case VNe{h1, s1} VNe{h2, s2}:
+      Val.same_hd(fuel, h1, h2)
+    case x y:
+      False{}
+
+def Val.is_ne(v: Val) -> Bool:
+  match v:
+    case VNe{hd, sp}:
+      True{}
+    case o:
+      False{}
+
+def Val.is_nat_v(v: Val) -> Bool:
+  Val.is_nat(v)
