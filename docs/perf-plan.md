@@ -1553,3 +1553,36 @@ Both score 190 correct with nothing wrong. The committed kernel keeps both,
 because a hundred seconds over the corpus is the larger effect and neither
 configuration answers one more file. The two numbers are here so the choice
 can be made again when the next wall moves.
+
+### The six that are left, each measured at its own limit
+
+| file | its limit | the kernel | what is in the way |
+|---|---|---|---|
+| `good/init-prelude` | 50 s | no answer | declaration 901, `isValidChar_UInt32` |
+| `perf/fueled-chain` | 50 s | no answer | `chain9_datF` costs the term kernel 67 s alone |
+| `perf/grind-ring-5` | 60 s | no answer | not yet measured inside |
+| `perf/magma-list-deep-n21` | 80 s | no answer | computation |
+| `perf/magma-list-pair-n21` | 260 s | no answer | computation |
+| `perf/magma-list-deep-n36` | **390 s** | no answer | computation |
+
+Each of the three that had never been timed at its own limit was timed here,
+and none of them is close: `deep-n36` spends the whole of its three hundred
+and ninety seconds.
+
+`isValidChar_UInt32` is the interesting one. Its closure is 54 declarations
+and 1,189 expressions, and **neither** comparison settles it: inference of
+its value takes 0.29 s with the comparisons removed and does not finish in
+sixty with them, the term kernel declines at its own budget of 30,000 pairs,
+and the fallback that gives the term comparison 400,000 does not finish
+either. So the file needs one pair answered that no part of this kernel can
+answer yet.
+
+One guess about that pair was tested and is wrong. The theorem compares
+numbers near `UInt32.size`, and a literal met by a successor application is
+peeled one successor at a time -- a million steps for `1114112`. Turning
+that arm into an outright no left the cut taking the same sixty seconds, so
+the peel is not the path the comparison takes.
+
+What is left to try for the magma family is the cost of one reduction step,
+which is where three of the six are. That is the next measurement: where the
+inner loop of a `decide` over tuples spends its time.
