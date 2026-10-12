@@ -1148,3 +1148,25 @@ every level, where both positions hold the same slot, so the pairs double at
 each level and the comparison met `2^n` of them where `n` were distinct.
 Dropping a pair already in the list answers it in 7.7 s. Call by need is
 what makes this cheap: without the heap there is no name to compare.
+
+### What `perf/app-lam` does not want
+
+Its own description names two things: an **infer cache**, because each level
+applies a constant to two copies of one shared expression, and cheap
+substitution into a lambda body. Both were tried and neither moved it.
+
+| what was tried | `perf/app-lam` at 110 s |
+|---|---|
+| the conversion check removed from inference altogether | no answer |
+| the type of a repeated argument inferred once, per spine | no answer |
+| the same, with the spine collected through references | no answer |
+
+The first of those is the useful one: with **no conversion at all**, which is
+not a kernel, the file still does not answer. So the cost is inference
+itself, and it is not the duplicated argument that the description points
+at. The two copies do arrive as one reference each, with the same entry and
+the same shift, so the cache does hit -- it is just not where the time is.
+
+The spine walk and its cache are reverted. The next step is to find out
+where inference spends its time on one declaration of that file, and
+`tools/declsweep.py` cuts them out one at a time.
