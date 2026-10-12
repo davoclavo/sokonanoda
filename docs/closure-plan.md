@@ -722,3 +722,40 @@ same heap and why `Val.nf_in` can make a heap and drop it.
 
 The branch that a `pick` does not take is thrown away whole. Its slots are
 never read, so the numbers it took cost nothing but the taking.
+
+## Stage 11: the value kernel passes the kernel that substitutes
+
+| | the term kernel | the value kernel |
+|---|---|---|
+| correct | 186 | **188** |
+| declined | 0 | **0** |
+| wrong | 0 | **0** |
+| past its arena limit | 10 | **8** |
+
+Against the 196 files of the arena's tarball, each at its own limit. The two
+it gains are `perf/beta-ladder`, which answers in 2.7 s, and
+`perf/shared-subterm`, which answers in 17.3 s; the kernel that substitutes
+answers neither in fifty seconds. `perf/repeated-subproblem`,
+`perf/shift-cascade` and the three `perf/proj-*-struct` tests answer as
+well, and five of those six are what the heap was built for.
+
+What it took, after the heap itself:
+
+1. **Five strict picks.** Each was a `pick` whose branches all did their
+   work. The dearest was the type of every binder, which the reduction that
+   substitutes never looks at.
+2. **A budget for proof irrelevance.** Its test costs the size of the side
+   and it is asked of every pair. Eighty steps of read back answer nearly
+   all of them; a pair that is cut off is asked again in earnest, but only
+   where everything cheaper has already said no.
+3. **A pair asked once.** Two arguments in one slot are one argument, and
+   `2^n` pairs become `n`.
+4. **A route that cannot answer gives up its turn.** The queue took the
+   alternative on a no and not on a "do not know".
+
+What is left is eight files, and none of them is close. Four are `decide`
+certificates that want the cost of one reduction step to fall.
+`perf/app-lam` wants an infer cache, and so do `init-prelude` and
+`perf/grind-ring-5`. A cache is the next piece of work, and the thing that
+makes it hard is in the README: a de Bruijn term's type depends on the
+context it is read in, so the key cannot be the term alone.
