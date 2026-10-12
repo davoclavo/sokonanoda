@@ -31,7 +31,7 @@ import ./Ans.bend as A
 import ./Show.bend as S
 
 def Why.fuel() -> Nat:
-  300n
+  30000n
 
 def Why.depth() -> Nat:
   40n
@@ -152,5 +152,8 @@ def main() -> IO(Unit):
     path : String <- IO.try(String, IO.get_env("SOKO_EXPORT"))
     f : File <- IO.try(File, File.open(path, "r"))
     r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 64000000)
-    +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Why.bytes(r)))
-    IO.print(Why.walk(ds, False{}, Why.fuel(), E.Env.empty()))
+    # The environment has to carry the expression table: a term may hold a
+    # reference into it, and only a walk that sees the table resolves one.
+    +st : P.PState = P.Parse.run(Why.bytes(r))
+    +ds : List<&2, E.Decl> = P.Parse.decls_of(st)
+    IO.print(Why.walk(ds, False{}, Why.fuel(), E.Env.over(P.Parse.exps_of(st))))

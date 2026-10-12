@@ -27,7 +27,7 @@ import ./Ans.bend as A
 import ./Show.bend as S
 
 def Blame.fuel() -> Nat:
-  3000n
+  30000n
 
 def Blame.depth() -> Nat:
   60n
@@ -85,6 +85,8 @@ def Blame.next(
     case T.TProj{+tn, +idx, +st}:
       T.Term.pick(
         Blame.bad(fuel, env, ctx, st), st, T.TProj{tn, idx, st})
+    case T.TRef{+i, +k, m}:
+      E.Env.expr_at(env, i, k)
     case o:
       o
 
@@ -202,5 +204,8 @@ def main() -> IO(Unit):
     path : String <- IO.try(String, IO.get_env("SOKO_EXPORT"))
     f : File <- IO.try(File, File.open(path, "r"))
     r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 64000000)
-    +ds : List<&2, E.Decl> = P.Parse.decls_of(P.Parse.run(Blame.bytes(r)))
-    IO.print(Blame.walk(ds, False{}, Blame.fuel(), E.Env.empty()))
+    # The environment has to carry the expression table: a term may hold a
+    # reference into it, and only a walk that sees the table resolves one.
+    +st : P.PState = P.Parse.run(Blame.bytes(r))
+    +ds : List<&2, E.Decl> = P.Parse.decls_of(st)
+    IO.print(Blame.walk(ds, False{}, Blame.fuel(), E.Env.over(P.Parse.exps_of(st))))

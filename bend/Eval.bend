@@ -281,6 +281,123 @@ def Eval.major_or_sort(+d: E.Decl, +sp: List<&2, T.Term>) -> T.Term:
 # Can iota fire here? The declaration must be a recursor, the spine must reach
 # the major premise, and the reduced major premise must be a constructor this
 # recursor has a rule for.
+# Structure eta, which Lean calls `toCtorWhenStruct`.
+#
+# A structure is an inductive with one constructor and no indices. A term of
+# that type is its own constructor applied to its own fields, whatever else
+# the term is, so a recursor whose major premise is stuck on a variable is not
+# stuck at all: the variable `p` of a pair is `Prod.mk p.1 p.2`, and iota
+# fires on that.
+#
+# This is what `Nat.Internal.Linear.Poly.denote` needs. Its recursion matches
+# on a pair that is a parameter of the theorem, so without this rule
+# `denote ctx [p]` does not reduce, `grind`'s linear arithmetic does not
+# check, and the kernel rejects a theorem Lean accepts.
+#
+# A proposition is left alone. Lean leaves it to proof irrelevance and to the
+# K-like rule, which this kernel has in `Conv.k_pick`.
+#
+# The levels are the recursor's own, less the first: a recursor declares the
+# universe of its motive and then the universes of its inductive, so the
+# constructor takes the tail. The parameters are the first `np` arguments of
+# the recursor, which is where its own layout puts them.
+def Eval.one_name(xs: List<&2, Nat>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case Con{h, t}:
+      match t:
+        case Nil{}:
+          True{}
+        case o:
+          False{}
+
+def Eval.first_name(xs: List<&2, Nat>) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case Con{+h, t}:
+      h
+
+def Eval.tail_lv(ls: List<&2, L.Level>) -> List<&2, L.Level>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case Con{h, t}:
+      t
+
+def Eval.sort_is_zero(t: T.Term) -> Bool:
+  match t:
+    case T.TSort{+l}:
+      L.Level.is_zero(l)
+    case o:
+      False{}
+
+# Does this inductive live in `Prop`?
+def Eval.ind_is_prop(+d: E.Decl) -> Bool:
+  Eval.sort_is_zero(
+    T.Term.pi_skip(
+      T.Term.pi_count(E.Decl.ind_ty(d), 0n), E.Decl.ind_ty(d)))
+
+# Is this inductive one whose terms are their own constructor applied to
+# their own fields?
+def Eval.is_struct(+d: E.Decl) -> Bool:
+  Bool.and(
+    E.Decl.is_ind(d),
+    Bool.and(
+      Eval.one_name(E.Decl.ind_ctors(d)),
+      Bool.and(
+        Nat.is_eq(E.Decl.ind_ni(d), 0n),
+        Bool.not(Eval.ind_is_prop(d)))))
+
+# The fields of `m`, as projections out of it.
+# The shrinking argument comes first, because Bend reads them left to right
+# and each must be passed unchanged until one shrinks.
+def Eval.proj_list(+n: Nat, +tn: Nat, +i: Nat, +m: T.Term) -> List<&2, T.Term>:
+  match n:
+    case 0n:
+      Nil{}
+    case 1n+k:
+      Con{T.TProj{tn, i, m}, Eval.proj_list(k, tn, 1n+i, m)}
+
+def Eval.eta_ctor(
+  +env: E.DTable, +ind: Nat, +di: E.Decl, +ls: List<&2, L.Level>,
+  +sp: List<&2, T.Term>, +m: T.Term
+) -> T.Term:
+  +ctor : Nat = Eval.first_name(E.Decl.ind_ctors(di))
+  Eval.rebuild(
+    List.append(&2, T.Term,
+      Eval.take(sp, E.Decl.ind_np(di)),
+      Eval.proj_list(
+        E.Decl.ctor_nf(E.Lookup.get(E.Env.find(env, ctor))),
+        ind, 0n, m)),
+    T.TConst{ctor, Eval.tail_lv(ls)})
+
+def Eval.eta_pick(
+  ok: Bool, +env: E.DTable, +ind: Nat, +di: E.Decl,
+  +ls: List<&2, L.Level>, +sp: List<&2, T.Term>, +m: T.Term
+) -> T.Term:
+  match ok:
+    case True{}:
+      Eval.eta_ctor(env, ind, di, ls, sp, m)
+    case False{}:
+      m
+
+# The major premise, with a stuck structure made into its constructor.
+def Eval.eta_struct(
+  +env: E.DTable, +d: E.Decl, +ls: List<&2, L.Level>,
+  +sp: List<&2, T.Term>, +m: T.Term
+) -> T.Term:
+  +ind : Nat = Eval.first_name(E.Decl.rec_inds(d))
+  +di : E.Decl = E.Lookup.get(E.Env.find(env, ind))
+  Eval.eta_pick(
+    Bool.and(
+      Eval.rec_ready(d, sp),
+      Bool.and(
+        Bool.not(Eval.head_is_const(Eval.head(m))),
+        Eval.is_struct(di))),
+    env, ind, di, ls, sp, m)
+
 def Eval.can_iota(+d: E.Decl, +sp: List<&2, T.Term>, +mw: T.Term) -> Bool:
   Bool.and(
     Eval.rec_ready(d, sp),
@@ -651,7 +768,10 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
           Eval.rebuild(sp, T.TSort{l})
         case T.TConst{+n, +ls}:
           +d = E.Lookup.get(E.Env.find(env, n))
-          +mw = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, Eval.major_or_sort(d, sp)), Nil{}))
+          # The major premise, reduced, with a literal read as a
+          # constructor and a stuck structure made into its own.
+          +mw0 = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, Eval.major_or_sort(d, sp)), Nil{}))
+          +mw = Eval.eta_struct(env, d, ls, sp, mw0)
           +px = Eval.whnf(f, env, Eval.dr(env, Eval.prim_arg(d, sp, 0n)), Nil{})
           +py = Eval.whnf(f, env, Eval.dr(env, Eval.prim_arg(d, sp, 1n)), Nil{})
           Eval.pick_t(

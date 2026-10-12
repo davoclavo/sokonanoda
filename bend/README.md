@@ -877,6 +877,60 @@ for the size of a `UInt64`. Reading it crashed the kernel, and a crash is the
 one answer worse than not knowing. The reader now saturates at a cap and a
 literal that reaches it is read as unknown.
 
+## Structure eta, and the theorem it was hiding
+
+`perf/grind-ring-5` is 9.8 MB and the kernel answered `reject` on it, which is
+the worst answer a kernel can give. The declaration was
+`Nat.Internal.Linear.Poly.denote_reverse`, from the part of Lean that `grind`
+uses for linear arithmetic over `Nat`.
+
+`tools/minimise.py` cut it down. It walks the expression graph from one
+declaration's own type and value, takes the closure of the expressions,
+levels and names it reaches, and then the declarations those name, to a fixed
+point. The result was 214 kB and instant, and `bend/blame.bend` then named the
+pair conversion refused:
+
+```
+expected   Eq (Poly.denote ctx [p])  (p.fst * Var.denote ctx p.snd)
+given      Eq (p.fst * Var.denote ctx p.snd + 0) (p.fst * Var.denote ctx p.snd)
+```
+
+`Poly.denote ctx [p]` does reduce to `p.fst * Var.denote ctx p.snd + 0`, and
+this kernel could not do it. `p` is a **parameter** of the theorem, of type
+`Prod Nat Var`, so the recursion that `denote` performs over the pair meets a
+variable where it wants a constructor, and reduction stops.
+
+Lean calls the missing rule `toCtorWhenStruct`. A structure is an inductive
+with one constructor and no indices, and a term of that type **is** its own
+constructor applied to its own fields: `p` is `Prod.mk p.1 p.2`. So the
+recursor is not stuck at all. `Eval.eta_struct` rewrites the major premise to
+that form when it is stuck, and iota fires.
+
+Three conditions, each of which is Lean's:
+
+- one constructor and no indices, which is what makes the rewrite an identity,
+- not a proposition, which Lean leaves to proof irrelevance and to the K-like
+  rule that `Conv.k_pick` already has,
+- the recursor is applied as far as its major premise, so the parameters are
+  the first `np` arguments of the spine and the constructor's universes are
+  the recursor's own less the first. A recursor declares the universe of its
+  motive and then those of its inductive.
+
+The arena score does not move: `perf/grind-ring-5` is 9.8 MB and this kernel
+cannot read it in the 60 seconds the arena gives it. The wrong answer is gone
+all the same, and the rule is one that every real export needs, because a
+structure field reached through a parameter is ordinary Lean.
+
+### The tools had to be fixed first
+
+`blame.bend`, `why.bend` and `derive.bend` each built their environment with
+`E.Env.empty()`, which holds an empty expression table. A term may now hold a
+reference into the export's table, and an empty table resolves one to the
+unknown term, so inference answered "do not know" everywhere, nothing was a
+definite no, and the tools printed nothing at all. They take
+`E.Env.over(P.Parse.exps_of(st))` now, and `blame.bend` resolves a reference
+as it walks, because a reference is otherwise a leaf and the walk stops on it.
+
 ## The expression graph, and the nine that are left
 
 An export's expression table is a **graph**: one expression is named by many
