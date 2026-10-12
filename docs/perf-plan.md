@@ -781,6 +781,26 @@ needs `Term.occurs`, `Term.pars_ok`, `Term.has_bvar`, `Term.pi_count` and
 half-built version is a point worse than none.
 
 
+### B23: a lower fuel does not convert a file that runs out of time
+
+| hypothesis | status | result |
+|---|---|---|
+| B23 the fuel table was measured before the reference work and structure eta, so a lower fuel may now answer where a higher one runs out of time | **rejected** | at every fuel below 30000 the nine answer `declined`, which the arena scores exactly as a timeout |
+
+| file | fuel 300 | 1000 | 3000 | 10000 |
+|---|---|---|---|---|
+| `good/init-prelude` | 2 s declined | over 50 s | over 50 s | over 50 s |
+| `perf/shared-subterm` | declined | declined | declined | declined |
+| `perf/beta-ladder` | declined | declined | declined | over 50 s |
+| `perf/magma-list-pair-n7` | declined | declined | declined | over 60 s |
+
+`good/init-prelude` answers in two seconds at a fuel of 300, which is what
+made this worth testing, and the answer is `declined`: most of its 1,824
+declarations need little and a few burn whatever budget they are given, and
+one unknown makes the file unknown. So 30000 stands, and the only way these
+nine become correct answers is to make the work smaller rather than the
+budget different.
+
 ### B22: a memo for reduction, and the identity Bend does not have
 
 | hypothesis | status | result |
