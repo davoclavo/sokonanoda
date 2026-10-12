@@ -1262,51 +1262,52 @@ the read back by the unknown term also stops the rule from firing, so what
 it measured was a comparison that fails early, not the same comparison
 without the cost.
 
-### `good/init-prelude` does not only need to be faster
+### What `good/init-prelude` is waiting for
 
 With the recursor check on the term conversion, the file's phases are:
 
 | phase | time |
 |---|---|
 | the parse | 1.75 s |
-| the four tests on every declaration, all 1,824 | 12.2 s |
 | the walk that asks whether a block was taken on trust | 1.74 s |
+| the four tests on every declaration, all **2,106** | no answer in 120 s |
 
-Sixteen seconds against a limit of fifty, and the file still does not answer
-in seventy. Two things are in the way, and only one of them is speed.
+A prefix bisect with `bend/phase.bend` puts the cost at declaration 2,044,
+**`ByteArray.IsValidUTF8.recOn`**, and `tools/minimise.py` cuts it to 528 kB
+and 343 declarations. On that cut:
 
-**The answer is already a decline.** The four tests over all 1,824
-declarations answer `declined`, and a prefix bisect puts it at declaration
-309: `Nat.modCoreGo_lt`, a theorem. Its closure is 152 declarations and
-reproduces the decline in 7.26 s, which is the thing to look at next. No
-amount of speed turns that file into an accept.
+| | the cut |
+|---|---|
+| the term kernel | **accept in 0.31 s** |
+| the value kernel | no answer in 90 s |
 
-**The kernel's own walk is ten times slower than the same tests.** A walk
-written by hand in `bend/phase.bend`, with the same four tests in the same
-order against the same environment, costs 12.2 s where
-`Kernel.check_all` costs more than seventy. Three differences were tried and
-none of them is the cause: whether the match reads the answer so far,
-whether the four tests sit in a helper or in the body, and where the answer
-sits in the argument list. All three are reverted; the cause is not yet
-found, and it is worth finding, because `perf/grind-ring-5` is 10 MB of the
-same walk.
+That is the same shape that made the trust walk slow, and for the same
+reason: the inductive's constructor states a type that mentions
+`List.utf8Encode`, and the value conversion sends a pair with a constant
+head to the dear route, which computes that function over a real list. The
+term conversion unfolds and compares, and never computes.
 
-### A measurement that was not measuring anything
+So `good/init-prelude` has one wall and it is a narrow one. The next
+question is how to make the value conversion compare where the term one
+does, rather than compute.
 
-The first version of that probe kept the answer of each declaration in an
-accumulator it then **replaced**:
+A second obstacle is behind it: at declaration 309 the file answers
+`declined` on the theorem `Nat.modCoreGo_lt`, whose closure declines in 7.3 s
+and accepts in 0.2 s by the term conversion. `Vconv.eq_in` asks the term
+conversion where it does not know, which turns that decline into an accept,
+and the cut then costs 53 s rather than 7 -- the value conversion gives up
+often inside that proof, and each pair pays twice.
 
-```
-Peek.last(t, j, E.Env.add(env, h), Peek.inf(env, h))
-```
+### A probe's limit is not the file's length
 
-Nothing reads a replaced accumulator, and nothing that nothing reads is
-evaluated, so the walk checked the last declaration and skipped the other
-1,823. Every number it produced was the parse plus one declaration. The
-numbers that came out of it -- "every declaration checked in 11.6 s", "the
-trust walk is the wall", "a third reader of the environment costs ten times"
--- were artefacts, and the last of them sent this stage off for an hour.
+An earlier version of this section claimed the kernel's own declaration walk
+was ten times slower than the same tests written by hand. It was not. The
+hand-written walk ran under `SOKO_LIMIT`, and the limit I compared against
+was 1,824 -- the number of declaration **lines** in the export -- while the
+kernel checks 2,106, because an inductive line carries its types, its
+constructors and its recursors. The missing 282 hold the expensive one.
 
-The fix is one line: combine the answers with `Ans.and` instead of replacing
-them. The lesson is older than that: a probe whose result is discarded
-measures nothing, and in a lazy runtime that is silent.
+Three shapes of that walk were tried against the phantom and reverted: the
+tests in a helper, the answer travelling last, and the walk not reading the
+answer. None of them was ever worth anything, and the record of them is
+gone from the kernel.
