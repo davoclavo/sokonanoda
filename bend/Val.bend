@@ -620,6 +620,34 @@ def Val.eval_in(+fuel: Nat, +env: E.DTable, +t: T.Term) -> Val:
 def Val.core(+fuel: Nat, +env: E.DTable, +t: T.Term) -> Val:
   Val.go(fuel, env, False{}, CTerm{t, Nil{}}, Nil{})
 
+# An environment of rigid binders, innermost first: the environment a term
+# of a context `d` binders deep is read in.
+#
+# A term that comes back out of inference or out of a rule is written in that
+# context, and reading it in an empty environment makes every one of its
+# variables unknown. That is what made the K-like rule answer no and what
+# made thirty-one files answer "do not know".
+def Val.rigids_go(+n: Nat, +d: Nat, +acc: List<&2, Val>) -> List<&2, Val>:
+  match n:
+    case 0n:
+      acc
+    case 1n+k:
+      Val.rigids_go(k, d, List.append(&2, Val, acc, [Val.rigid(k)]))
+
+def Val.rigids(+d: Nat) -> List<&2, Val>:
+  Val.rigids_go(d, d, Nil{})
+
+# The same two, in a context.
+def Val.core_in(
+  +fuel: Nat, +env: E.DTable, +d: Nat, +t: T.Term
+) -> Val:
+  Val.go(fuel, env, False{}, CTerm{t, Val.rigids(d)}, Nil{})
+
+def Val.eval_at(
+  +fuel: Nat, +env: E.DTable, +d: Nat, +t: T.Term
+) -> Val:
+  Val.go(fuel, env, True{}, CTerm{t, Val.rigids(d)}, Nil{})
+
 # Carry on reducing a value, with or without unfolding.
 def Val.more(+fuel: Nat, +env: E.DTable, +dl: Bool, +v: Val) -> Val:
   Val.go(fuel, env, dl, CVal{v}, Nil{})

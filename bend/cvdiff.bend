@@ -18,6 +18,7 @@ import ./Val.bend as W
 import ./Infer.bend as I
 import ./Conv.bend as C
 import ./Vconv.bend as X
+import ./Shape.bend as H
 import ./Ans.bend as A
 import ./Show.bend as S
 
@@ -63,6 +64,21 @@ def Cv.one(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> A.Ans & A.Ans:
   +dty : T.Term = E.Decl.raw_ty(d)
   (C.Conv.eq(fuel, env, ity, dty), X.Vconv.eq_in(fuel, env, Nil{}, ity, dty))
 
+def Cv.yn(b: Bool) -> String:
+  match b:
+    case True{}:
+      "yes"
+    case False{}:
+      "no"
+
+# The K-like rule, probed on the declared type's own subterms: is the rule
+# near, and what does the subject's type come out as?
+def Cv.kprobe(+fuel: Nat, +env: E.DTable, +t: T.Term) -> String:
+  +v : W.Val = W.Val.core(fuel, env, t)
+  "    k near " ++ Cv.yn(X.Vconv.k_near(env, v)) ++
+  "  head " ++ Nat.show(W.Val.head_name(v)) ++
+  "  args " ++ Nat.show(W.Val.sp_len(W.Val.args(v), 0n)) ++ "\n"
+
 # The two sides as the value evaluator sees them, for a declaration whose
 # answers differ.
 def Cv.sides(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
@@ -76,7 +92,7 @@ def Cv.sides(+fuel: Nat, +env: E.DTable, +d: E.Decl) -> String:
     S.Show.term(24n, W.Val.quote(env, W.Val.core(fuel, env, ity))) ++
   "\n    declared " ++
     S.Show.term(24n, W.Val.quote(env, W.Val.core(fuel, env, E.Decl.raw_ty(d)))) ++
-  "\n"
+  "\n" ++ Cv.kprobe(fuel, env, E.Decl.raw_ty(d))
 
 def Cv.line(
   bad: Bool, soft: Bool, +id: Nat, +x: String, +y: String

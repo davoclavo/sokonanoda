@@ -256,7 +256,9 @@ def Vconv.irrel_step(
     case True{}:
       SMore{
         [VP{
-          cx, W.Val.core(fuel, env, ta), W.Val.core(fuel, env, tb)}]}
+          cx,
+          W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), ta),
+          W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), tb)}]}
     case False{}:
       Vconv.rigid(fuel, env, cx, a, b)
 
@@ -319,21 +321,24 @@ def Vconv.k_near(+env: E.DTable, +v: W.Val) -> Bool:
 
 # Put the constructor in the major premise's place and reduce again.
 def Vconv.k_use(
-  +fuel: Nat, +env: E.DTable, +v: W.Val, +d: E.Decl, +ty: T.Term
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val,
+  +d: E.Decl, +ty: T.Term
 ) -> W.Val:
   W.Val.app(
     fuel, env, True{},
     W.VNe{W.HConst{W.Val.head_name(v), W.Val.head_levels(v)}, Nil{}},
     Vconv.k_sp(
       W.Val.args(v), V.Eval.major_idx(d),
-      W.Val.core(fuel, env, C.Conv.k_ctor(env, d, ty))))
+      W.Val.core_in(
+        fuel, env, Vconv.depth(cx, 0n), C.Conv.k_ctor(env, d, ty))))
 
 def Vconv.k_pick(
-  ok: Bool, +fuel: Nat, +env: E.DTable, +v: W.Val, +d: E.Decl, +ty: T.Term
+  ok: Bool, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
+  +v: W.Val, +d: E.Decl, +ty: T.Term
 ) -> W.Val:
   match ok:
     case True{}:
-      Vconv.k_use(fuel, env, v, d, ty)
+      Vconv.k_use(fuel, env, cx, v, d, ty)
     case False{}:
       v
 
@@ -353,7 +358,7 @@ def Vconv.k_go(
     Bool.and(
       C.Conv.k_type_ok(d, ty),
       C.Conv.k_fits(fuel, env, cx, d, ty)),
-    fuel, env, v, d, ty)
+    fuel, env, cx, v, d, ty)
 
 def Vconv.k_try(
   near: Bool, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val
@@ -377,9 +382,7 @@ def Vconv.irrel(
 ) -> VStep:
   Vconv.irrel_pick(
     Bool.and(Vconv.maybe_proof(a), Vconv.maybe_proof(b)),
-    fuel, env, cx,
-    Vconv.k_fix(fuel, env, cx, a),
-    Vconv.k_fix(fuel, env, cx, b))
+    fuel, env, cx, a, b)
 
 # The dear route: unfold both heads and look again.
 def Vconv.deep(
@@ -387,8 +390,8 @@ def Vconv.deep(
 ) -> VStep:
   Vconv.irrel(
     fuel, env, cx,
-    W.Val.delta(fuel, env, a),
-    W.Val.delta(fuel, env, b))
+    Vconv.k_fix(fuel, env, cx, W.Val.delta(fuel, env, a)),
+    Vconv.k_fix(fuel, env, cx, W.Val.delta(fuel, env, b)))
 
 def Vconv.pick_step(b: Bool, x: VStep, y: VStep) -> VStep:
   match b:
@@ -422,10 +425,14 @@ def Vconv.classify(+fuel: Nat, +env: E.DTable, p: VPair) -> VStep:
     case VDeep{+cx, +a, +b}:
       Vconv.deep(fuel, env, cx, a, b)
     case VP{+cx, +a, +b}:
+      # the K-like rule first, as `Conv.classify_work` does it: a recursor
+      # on a proposition with one constructor and no fields may take any
+      # proof of its major premise as that constructor, and the cheap route
+      # has to see the result
       Vconv.offer(
         fuel, env, cx,
-        W.Val.more(fuel, env, False{}, a),
-        W.Val.more(fuel, env, False{}, b))
+        Vconv.k_fix(fuel, env, cx, W.Val.more(fuel, env, False{}, a)),
+        Vconv.k_fix(fuel, env, cx, W.Val.more(fuel, env, False{}, b)))
 
 # Work the queue. It empties exactly when every pair in it is equal.
 def Vconv.all(
@@ -460,3 +467,22 @@ def Vconv.eq_in(
   Vconv.all(
     fuel, env, A.AYes{}, Nil{},
     [VP{cx, W.Val.core(fuel, env, a), W.Val.core(fuel, env, b)}])
+
+# Conversion, unless the question is already settled. The left answer
+# arrives as a parameter so a definite no returns without the work, which is
+# why `Conv.eq_unless_no` exists and the same reason holds here.
+def Vconv.eq_unless_no(
+  a: A.Ans, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
+  +x: T.Term, +y: T.Term
+) -> A.Ans:
+  match a:
+    case A.ANo{}:
+      A.ANo{}
+    case o:
+      A.Ans.and(o, Vconv.eq_in(fuel, env, cx, x, y))
+
+# Are these two closed terms definitionally equal?
+def Vconv.eq(
+  +fuel: Nat, +env: E.DTable, +a: T.Term, +b: T.Term
+) -> A.Ans:
+  Vconv.eq_in(fuel, env, Nil{}, a, b)
