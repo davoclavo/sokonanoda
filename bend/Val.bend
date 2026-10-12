@@ -465,20 +465,32 @@ def Val.eta_ctor(
         E.Decl.ctor_nf(E.Lookup.get(E.Env.find(env, ctor))),
         ind, 0n, m))}
 
+# The rule asks two questions of the environment and builds a constructor
+# application. A constant that is not a recursor with its major premise in
+# place answers none of them, so nothing is looked up until that is known:
+# a `pick` here paid for a lookup and a list on every constant of the file.
+def Val.eta_go(
+  ok: Bool, +env: E.DTable, +d: E.Decl, +ls: List<&2, L.Level>,
+  +sp: List<&2, Val>, +m: Val
+) -> Val:
+  match ok:
+    case False{}:
+      m
+    case True{}:
+      +ind : Nat = V.Eval.first_name(E.Decl.rec_inds(d))
+      +di : E.Decl = E.Lookup.get(E.Env.find(env, ind))
+      Val.pick(
+        Bool.and(
+          Bool.not(Val.head_const(Val.lit_ctor(m))),
+          V.Eval.is_struct(di)),
+        Val.eta_ctor(env, ind, di, ls, sp, m),
+        m)
+
 def Val.eta_struct(
   +env: E.DTable, +d: E.Decl, +ls: List<&2, L.Level>,
   +sp: List<&2, Val>, +m: Val
 ) -> Val:
-  +ind : Nat = V.Eval.first_name(E.Decl.rec_inds(d))
-  +di : E.Decl = E.Lookup.get(E.Env.find(env, ind))
-  Val.pick(
-    Bool.and(
-      Val.rec_ready(d, sp),
-      Bool.and(
-        Bool.not(Val.head_const(Val.lit_ctor(m))),
-        V.Eval.is_struct(di))),
-    Val.eta_ctor(env, ind, di, ls, sp, m),
-    m)
+  Val.eta_go(Val.rec_ready(d, sp), env, d, ls, sp, m)
 
 def Val.can_iota(+d: E.Decl, +sp: List<&2, Val>, +mw: Val) -> Bool:
   Bool.and(
@@ -621,51 +633,110 @@ def Val.nat_sc(v: Val) -> Nat:
 # The order is the one `Eval.whnf` uses: a primitive, then a definition, then
 # iota, then a quotient, and a constant that none of them fit is stuck. Each
 # of these is cheap to build, and only one of them is used.
-def Val.const_next(
-  +env: E.DTable, +dl: Bool, +d: E.Decl, +ls: List<&2, L.Level>,
-  +sp: List<&2, Val>, +mw: Val
-) -> Ctrl:
-  Val.pick_c(
-    Bool.and(dl, E.Decl.is_def(d)),
-    CTerm{Val.unfold(d, ls), Nil{}},
-    Val.pick_c(
-      Val.can_iota(d, sp, mw),
-      CTerm{
-        T.Term.subst_levels(E.RecRule.rhs(Val.rule_of(d, mw)), ls), Nil{}},
-      Val.pick_c(
-        Val.quot_ready(env, d, sp, mw),
-        CVal{Val.quot_fn(d, sp)},
-        CVal{VUnk{}})))
-
-def Val.const_sp(
-  +env: E.DTable, +dl: Bool, +d: E.Decl, +sp: List<&2, Val>, +mw: Val
-) -> List<&2, Val>:
-  Val.pick_sp(
-    Bool.and(dl, E.Decl.is_def(d)),
-    sp,
-    Val.pick_sp(
-      Val.can_iota(d, sp, mw),
-      Val.iota_args(env, d, sp, mw),
-      Val.pick_sp(
-        Val.quot_ready(env, d, sp, mw),
-        Val.quot_args(d, sp, mw),
-        Nil{})))
-
-# Does any rule fit this constant?
+# Which rule fits a constant.
 #
 # `dl` says whether a definition may be unfolded. Conversion wants it off at
 # first: two spines with the same head are compared argument by argument,
 # and unfolding before that is what makes `perf/identical-nesting` build
 # twelve nested structures twice. Lean draws the same line between `whnfCore`
 # and `whnf`.
-def Val.const_fires(
+type RuleK is Data:
+  RPrim{}
+  RDef{}
+  RIota{}
+  RQuot{}
+  RNone{}
+
+def Val.pick_k(b: Bool, x: RuleK, y: RuleK) -> RuleK:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The four tests, in the order the rules are tried. A constructor costs
+# nothing to build, so these may all be picked over; what the rules
+# themselves build may not be.
+def Val.rule_kind(
   +env: E.DTable, +dl: Bool, +d: E.Decl, +sp: List<&2, Val>, +mw: Val
-) -> Bool:
-  Bool.or(
-    Bool.and(dl, E.Decl.is_def(d)),
-    Bool.or(
-      Val.can_iota(d, sp, mw),
-      Val.quot_ready(env, d, sp, mw)))
+) -> RuleK:
+  Val.pick_k(
+    Val.prim_ready(d, sp), RPrim{},
+    Val.pick_k(
+      Bool.and(dl, E.Decl.is_def(d)), RDef{},
+      Val.pick_k(
+        Val.can_iota(d, sp, mw), RIota{},
+        Val.pick_k(Val.quot_ready(env, d, sp, mw), RQuot{}, RNone{}))))
+
+# What reduction does next, and the spine it does it to.
+type Next is Data:
+  MkNx{c: Ctrl, sp: List<&2, Val>}
+
+# One rule's work, and nobody else's.
+#
+# This was a `pick` over the four, and a `pick` runs every branch. So every
+# constant of the file substituted its levels into the body of its own
+# definition, built the arguments of an iota step and read a quotient's
+# function -- and then three of the four were thrown away. A constant that
+# stays neutral now builds nothing at all.
+def Val.next_of(
+  k: RuleK, +env: E.DTable, +d: E.Decl, +n: Nat, +ls: List<&2, L.Level>,
+  +sp: List<&2, Val>, +mw: Val
+) -> Next:
+  match k:
+    case RPrim{}:
+      MkNx{
+        CVal{
+          Val.prim_val(
+            d, sp,
+            Val.nat_name(Val.sp_nth(0n, sp)),
+            Val.nat_zr(Val.sp_nth(0n, sp)),
+            Val.nat_sc(Val.sp_nth(0n, sp)))},
+        Val.sp_drop(2n, sp)}
+    case RDef{}:
+      MkNx{CTerm{Val.unfold(d, ls), Nil{}}, sp}
+    case RIota{}:
+      MkNx{
+        CTerm{
+          T.Term.subst_levels(E.RecRule.rhs(Val.rule_of(d, mw)), ls),
+          Nil{}},
+        Val.iota_args(env, d, sp, mw)}
+    case RQuot{}:
+      MkNx{CVal{Val.quot_fn(d, sp)}, Val.quot_args(d, sp, mw)}
+    case RNone{}:
+      MkNx{CVal{VNe{HConst{n, ls}, Nil{}}}, sp}
+
+def Val.nx_c(x: Next) -> Ctrl:
+  match x:
+    case MkNx{c, sp}:
+      c
+
+def Val.nx_sp(x: Next) -> List<&2, Val>:
+  match x:
+    case MkNx{c, sp}:
+      sp
+
+# The argument of an application, and of a let.
+#
+# A variable, a sort or a literal is read where it stands. There is nothing
+# to reduce in one, and a slot for it would cost a path down the trie to
+# write and another to read, on every application of the file. Anything
+# else takes a slot.
+#
+# A variable that already holds a slot keeps that slot, so the two readers
+# share one cell and one reduction.
+def Val.arg_cell(+hp: Hp, t: T.Term, +en: List<&2, Val>) -> VR:
+  match t:
+    case T.TVar{+i}:
+      MkVR{Val.at(i, en), hp}
+    case T.TSort{l}:
+      MkVR{VSort{l}, hp}
+    case T.TNat{v, nm, zr, sc}:
+      MkVR{VNat{v, nm, zr, sc}, hp}
+    case T.TUnk{}:
+      MkVR{VUnk{}, hp}
+    case o:
+      MkVR{VSlot{Hp.next(hp)}, Hp.alloc(hp, o, en)}
 
 # Reduce to a value.
 #
@@ -741,24 +812,29 @@ def Val.go(
             case T.TUnk{}:
               MkVR{VUnk{}, hp}
             case T.TLam{+ty, +bd}:
-              +r : VR = Val.go(f, env, dl, hp, CTerm{ty, en}, Nil{})
+              # The type of a binder takes a slot like an argument does.
+              # Reduction never reads one: only a comparison of two binders
+              # does, and a read back. The reduction that substitutes does
+              # not look at a binder type at all, and every one this
+              # reduced was work the answer did not need.
+              +r : VR = Val.arg_cell(hp, ty, en)
               Val.go(
                 f, env, dl, VR.heap(r), CVal{VLam{VR.val(r), bd, en}}, sp)
             case T.TPi{+ty, +bd}:
-              +r : VR = Val.go(f, env, dl, hp, CTerm{ty, en}, Nil{})
+              +r : VR = Val.arg_cell(hp, ty, en)
               Val.go(
                 f, env, dl, VR.heap(r), CVal{VPi{VR.val(r), bd, en}}, sp)
             case T.TApp{+g, +a}:
               # The argument does not reduce here. It takes a slot of the
               # heap, and it reduces where the body first reads it -- or
               # never, if the body throws it away.
+              +r : VR = Val.arg_cell(hp, a, en)
               Val.go(
-                f, env, dl, Hp.alloc(hp, a, en), CTerm{g, en},
-                Con{VSlot{Hp.next(hp)}, sp})
+                f, env, dl, VR.heap(r), CTerm{g, en}, Con{VR.val(r), sp})
             case T.TLet{+ty, +v, +bd}:
+              +r : VR = Val.arg_cell(hp, v, en)
               Val.go(
-                f, env, dl, Hp.alloc(hp, v, en),
-                CTerm{bd, Con{VSlot{Hp.next(hp)}, en}}, sp)
+                f, env, dl, VR.heap(r), CTerm{bd, Con{VR.val(r), en}}, sp)
             case T.TRef{+i, +k, m}:
               # A reference stands for a term of the export's table, whose
               # variables belong to the place it is named from -- which is
@@ -826,27 +902,12 @@ def Val.go(
               # a value of a structure type is its own constructor applied
               # to its own fields, so a recursor stuck on one is not stuck
               +mw : Val = Val.eta_struct(env, d, ls, sp1, VR.val(mr))
+              +nx : Next =
+                Val.next_of(
+                  Val.rule_kind(env, dl, d, sp1, mw), env, d, n, ls, sp1,
+                  mw)
               Val.go(
-                f, env, dl, VR.heap(mr),
-                Val.pick_c(
-                  Val.prim_ready(d, sp1),
-                  CVal{
-                    Val.prim_val(
-                      d, sp1,
-                      Val.nat_name(Val.sp_nth(0n, sp1)),
-                      Val.nat_zr(Val.sp_nth(0n, sp1)),
-                      Val.nat_sc(Val.sp_nth(0n, sp1)))},
-                  Val.pick_c(
-                    Val.const_fires(env, dl, d, sp1, mw),
-                    Val.const_next(env, dl, d, ls, sp1, mw),
-                    CVal{VNe{HConst{n, ls}, Nil{}}})),
-                Val.pick_sp(
-                  Val.prim_ready(d, sp1),
-                  Val.sp_drop(2n, sp1),
-                  Val.pick_sp(
-                    Val.const_fires(env, dl, d, sp1, mw),
-                    Val.const_sp(env, dl, d, sp1, mw),
-                    sp1)))
+                f, env, dl, VR.heap(mr), Val.nx_c(nx), Val.nx_sp(nx))
 
 def Val.budget() -> Nat:
   30000n

@@ -408,17 +408,24 @@ def Vconv.ty_of(
 # when they prove **the same** proposition, so the rule leaves the two types
 # behind as a pair. Answering yes without that is a wrong accept, and
 # `bad/tutorial/105_proofIrrelevanceBad` is the file that says so.
+# The two terms arrive read back, and their types are inferred here and not
+# before. The rule fires on few pairs, and inference is the dearest thing a
+# comparison does: asking for both types where the test says no paid for
+# two inferences that nothing read.
 def Vconv.irrel_step(
   ok: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
-  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val, +ta: T.Term, +tb: T.Term
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val, +qa: T.Term, +qb: T.Term
 ) -> VSH:
   match ok:
     case True{}:
       +r1 : W.VR =
-        W.Val.core_in_h(fuel, env, hp, Vconv.depth(cx, 0n), ta)
+        W.Val.core_in_h(
+          fuel, env, hp, Vconv.depth(cx, 0n),
+          Vconv.ty_of(fuel, env, cx, qa))
       +r2 : W.VR =
         W.Val.core_in_h(
-          fuel, env, W.VR.heap(r1), Vconv.depth(cx, 0n), tb)
+          fuel, env, W.VR.heap(r1), Vconv.depth(cx, 0n),
+          Vconv.ty_of(fuel, env, cx, qb))
       MkSH{
         SMore{[VP{cx, W.VR.val(r1), W.VR.val(r2)}]}, W.VR.heap(r2)}
     case False{}:
@@ -434,9 +441,7 @@ def Vconv.irrel_go(
   +qb : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), b)
   Vconv.irrel_step(
     Vconv.irrel_ok(fuel, env, cx, qa, qb),
-    fuel, env, hp, cx, a, b,
-    Vconv.ty_of(fuel, env, cx, qa),
-    Vconv.ty_of(fuel, env, cx, qb))
+    fuel, env, hp, cx, a, b, qa, qb)
 
 def Vconv.irrel_pick(
   maybe: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
@@ -581,28 +586,53 @@ def Vconv.deep(
   Vconv.irrel(
     fuel, env, W.VR.heap(k2), cx, W.VR.val(k1), W.VR.val(k2))
 
+# Any constant head earns the dear route, not only a definition. A recursor
+# stands with its rule unfired until its major premise reduces, and that may
+# need a definition unfolded **inside an argument**: `Val.delta_h` does
+# that, and asking only whether the head itself unfolds leaves
+# `perf/magma-list-pair-n7` answering no.
+#
+# These three arms are three definitions and not one `pick`, and that is
+# not a matter of taste. An argument reduces before a match picks an arm,
+# so a `pick` over the three runs all three -- and the last one is proof
+# irrelevance, which reads both values back and infers a type for each. A
+# `pick` here asked that of every pair of the file, where the rule wants it
+# asked of the pairs that nothing cheaper settles.
+def Vconv.offer_last(
+  near: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
+  match near:
+    case True{}:
+      MkSH{SMore{[VDeep{cx, a, b}]}, hp}
+    case False{}:
+      Vconv.irrel(fuel, env, hp, cx, a, b)
+
+def Vconv.offer_go(
+  cheap: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
+  match cheap:
+    case True{}:
+      MkSH{
+        SEither{
+          Vconv.zip(cx, W.Val.args(a), W.Val.args(b)),
+          [VDeep{cx, a, b}]},
+        hp}
+    case False{}:
+      Vconv.offer_last(
+        Bool.or(W.Val.head_const(a), W.Val.head_const(b)),
+        fuel, env, hp, cx, a, b)
+
 def Vconv.offer(
   +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
   +b: W.Val
 ) -> VSH:
-  Vconv.pick_sh(
+  Vconv.offer_go(
     Bool.and(
       Vconv.spine_match(fuel, a, b),
       Bool.or(W.Val.head_const(a), W.Val.head_const(b))),
-    MkSH{
-      SEither{
-        Vconv.zip(cx, W.Val.args(a), W.Val.args(b)),
-        [VDeep{cx, a, b}]},
-      hp},
-    # Any constant head earns the dear route, not only a definition. A
-    # recursor stands with its rule unfired until its major premise reduces,
-    # and that may need a definition unfolded **inside an argument**:
-    # `Val.delta` does that, and asking only whether the head itself unfolds
-    # leaves `perf/magma-list-pair-n7` answering no.
-    Vconv.pick_sh(
-      Bool.or(W.Val.head_const(a), W.Val.head_const(b)),
-      MkSH{SMore{[VDeep{cx, a, b}]}, hp},
-      Vconv.irrel(fuel, env, hp, cx, a, b)))
+    fuel, env, hp, cx, a, b)
 
 # What to do with one pair.
 def Vconv.classify(
