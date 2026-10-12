@@ -892,12 +892,22 @@ def Kernel.rules_match(
       A.AYes{}
     case 1n+k:
       A.Ans.and(
-        X.Vconv.eq(
+        C.Conv.eq(
           fuel, env,
           R.Rec.rhs_at(fuel, env, r, j),
           R.Rec.stated_rhs(env, r, j)),
         Kernel.rules_match(fuel, env, r, k, 1n+j))
 
+# The comparison of a derived telescope with the stated one is the term
+# conversion and not the value one, and that is measured. The two telescopes
+# are nearly the same syntax, which is what the term conversion is good at;
+# the value conversion sends a pair with a constant head to the dear route,
+# and for `ByteArray.IsValidUTF8.rec` and `String.rec` of
+# `good/init-prelude` that route computes `List.utf8Encode` of a real list.
+# The whole of `good/init-prelude` verifies in 0.26 s by the term
+# conversion, where two of its recursors did not finish in a hundred
+# seconds by the value one.
+#
 # Is this recursor the one its inductive implies?
 #
 # The type and every rule are derived from the specification and compared by
@@ -908,7 +918,7 @@ def Kernel.rules_match(
 def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
   A.Ans.and(
     A.Ans.and(
-      X.Vconv.eq(
+      C.Conv.eq(
         fuel, env,
         R.Rec.derive(fuel, env, r),
         E.Decl.type_at(
@@ -953,7 +963,7 @@ def Kernel.quot_one(
     case False{}:
       A.AYes{}
     case True{}:
-      X.Vconv.eq(
+      C.Conv.eq(
         fuel, env,
         Q.Quo.want(
           E.Decl.quot_kind(d),
