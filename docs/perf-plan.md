@@ -1204,3 +1204,60 @@ fault was the one that asked each part of the kernel separately how it grew.
 
 The first of those still says something: with **no conversion at all**, which
 is not a kernel, the file did not answer. The cost was never conversion.
+
+## Where `good/init-prelude` spends its time
+
+The file holds 1,824 declarations in 3.7 MB and its limit is fifty seconds.
+Asking each phase separately, with `bend/phase.bend`:
+
+| phase | time |
+|---|---|
+| the parse | 1.75 s |
+| every declaration checked, all 1,824 | 11.6 s |
+| the walk that asks whether a block was taken on trust | no answer in 200 s |
+
+So the wall is the second walk, and not the checks. What it does per recursor
+is derive the recursor from its inductive's specification and compare it with
+the one the file states. A prefix bisect puts the cost between declarations
+350 and 355, which is `String.rec`, and `tools/minimise.py` cuts that to 526
+kB and keeps the wall.
+
+Inside that, the derivation is cheap and the comparison was not:
+
+| | `String.rec`'s closure, 526 kB |
+|---|---|
+| the derivation of all 342 declarations | 7.9 s |
+| the comparison, by the value conversion | no answer in 100 s |
+| the comparison, by the value conversion at a budget of 300 pairs | 30 s |
+| the comparison, by the term conversion | 0.26 s |
+
+`bend/vderive.bend` -- `bend/derive.bend` with the value conversion in place
+of the term one -- names the two recursors that do not finish:
+`ByteArray.IsValidUTF8.rec` and `String.rec`. Both state a constructor whose
+type mentions `List.utf8Encode`, and the value conversion sends a pair with a
+constant head to the dear route, which computes that function over a real
+list. The two telescopes are nearly the same syntax, which is what the term
+conversion is good at, so that is what the recursor check uses now. The
+closure answers in 7.6 s.
+
+The budget of three hundred pairs is the number worth keeping in mind. It
+spent thirty seconds, so the fuel bounds the **depth** of a reduction and not
+its width: three hundred pairs, each reducing real data, is minutes.
+
+`good/init-prelude` still does not answer, and the trust walk is still its
+wall. What is left there is about two hundred recursors, each derived and
+compared, and the next question for it is the same one: which of them carry
+the time now.
+
+### What did not pay
+
+The context of the comparison held a term per binder, read back from the
+value at the binder. Keeping the value and reading it back only where a rule
+asks for terms -- proof irrelevance and the K-like rule, which are the only
+two that infer -- made nothing faster: those rules are asked of nearly every
+pair, so the read back moved rather than went away, and capping it the way
+the rest of the test is capped left `good/init-prelude` where it was. It is
+reverted. The measurement that made it look promising was wrong: replacing
+the read back by the unknown term also stops the rule from firing, so what
+it measured was a comparison that fails early, not the same comparison
+without the cost.
