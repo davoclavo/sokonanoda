@@ -1322,13 +1322,14 @@ one head, asks again, and lets the comparison reach the arguments one pair
 at a time. Three ways of doing the same here were measured and all three
 answer **reject** on a file the arena expects to accept.
 
-| what was tried | the 528 kB cut | `perf/magma-list-pair-n7` |
-|---|---|---|
-| each argument unfolded one step, not to a normal form | reject in 0.27 s | reject |
-| one step on the head, then ask again | reject in 0.27 s | reject |
-| the same, with a stack of frames so every alternative is kept | reject in 0.27 s | reject |
-| the same, one step everywhere and ask again | reject in 0.27 s | reject |
-| **what is committed: both sides normalised** | no answer in 90 s | no answer |
+| what was tried | the 528 kB cut | `perf/magma-list-pair-n7` | `good/other/nat-lit-ble` |
+|---|---|---|---|
+| each argument unfolded one step, not to a normal form | reject | reject | accept |
+| one step on the head, then ask again | reject | reject | accept |
+| the same, with a stack of frames so every alternative is kept | reject | reject | accept |
+| the same, one step everywhere and ask again | reject | reject | accept |
+| any constant head steps, and the head says whether it moved | reject | reject | **reject** |
+| **what is committed: both sides normalised** | no answer in 90 s | no answer | accept |
 
 The frame stack is worth a line of its own. The queue keeps one alternative
 and drops the rest, and a dropped alternative turns a yes into a no, so a
@@ -1344,8 +1345,20 @@ recursor is not one. So the loop decides nothing has moved, falls through to
 the structural comparison, and that compares a stuck recursor against a
 constructor application and answers no.
 
-A lazy route therefore needs a test for "this side is a constant
-application whose rule could still fire if an argument reduced", and it
-needs that test to say no eventually, or the loop does not stop. That is the
-next piece of work on this, and it is the same question the `offer` comment
-has carried since `perf/magma-list-pair-n7` was first answered.
+So a lazy route needs a test for "this side is a constant application whose
+rule could still fire if an argument reduced", and that test has to say no
+eventually or the loop does not stop. The fifth row above is that test:
+**any** constant head takes a step, and the head of the answer says whether
+it moved -- a definition lands on another head, a recursor whose rule fires
+lands on whatever the rule gives, and a side that comes back with the same
+head did not move. It stops, and it is still wrong: it answers `reject` on
+the cut and on the magma file, and it loses `good/other/nat-lit-ble` as
+well, because a primitive fires only when both of its arguments are
+literals and one step does not reach them.
+
+The eager normalisation is therefore load-bearing in at least three
+distinct ways: a primitive needs its arguments as literals, a recursor needs
+its major premise as a constructor application, and the cut needs something
+that none of the five variants gives. This line is closed until that third
+thing is named -- the way to name it is the smallest disagreeing pair, and
+`bend/cvdiff.bend` finds one of those between the two conversions.
