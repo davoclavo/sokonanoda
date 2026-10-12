@@ -212,6 +212,16 @@ def Vconv.pair_up(
     case x y:
       acc
 
+# A cell that holds a value is read for nothing. A cell that still holds a
+# term is reduced, with the budget the comparison itself has.
+#
+# The budget is not a small one, and that is the point. A reduction that
+# runs out leaves a value with the unknown value **inside** it -- a neutral
+# whose spine holds one -- and the answer goes back into the cell, where
+# every later reader takes it for the whole truth. A budget of eight steps
+# made `good/init-prelude` answer `reject` in 1.8 s for exactly that
+# reason. With the comparison's own budget a reduction that does not finish
+# means the comparison has not finished either.
 def Vconv.force_if(
   slot: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp, +v: W.Val
 ) -> W.VR:
@@ -220,6 +230,13 @@ def Vconv.force_if(
       W.Val.more_h(fuel, env, False{}, hp, v)
     case False{}:
       W.MkVR{v, hp}
+
+def Vconv.read_slot(
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +v: W.Val
+) -> W.VR:
+  Vconv.force_if(
+    W.Val.is_slot(W.Hp.read_done(hp, v)), fuel, env, hp,
+    W.Hp.read_done(hp, v))
 
 # The next pair, or the empty pair that answers yes.
 def Vconv.same_next(work: List<&2, VPr>) -> SC:
@@ -249,16 +266,8 @@ def Vconv.same_go(
         case SDone{}:
           MkVS{True{}, hp}
         case SForce{+a, +b, +rest}:
-          # A slot is read only against a side that is not one. Two slots
-          # are compared by their number, which is free and is what keeps
-          # the laziness: reading both would do the work the cheap route
-          # was built to avoid, and `perf/beta-ladder` stopped answering
-          # when this test read them.
-          +ra : W.VR =
-            Vconv.force_if(W.Val.is_slot(a), f, env, hp, a)
-          +rb : W.VR =
-            Vconv.force_if(
-              W.Val.is_slot(b), f, env, W.VR.heap(ra), b)
+          +ra : W.VR = Vconv.read_slot(fuel, env, hp, a)
+          +rb : W.VR = Vconv.read_slot(fuel, env, W.VR.heap(ra), b)
           Vconv.same_go(
             f, env, W.VR.heap(rb),
             SCmp{W.VR.val(ra), W.VR.val(rb), rest})

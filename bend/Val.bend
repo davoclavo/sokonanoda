@@ -441,6 +441,17 @@ def Val.pick(b: Bool, x: Val, y: Val) -> Val:
     case False{}:
       y
 
+# The value a slot stands for, if its cell holds one already. A cell that
+# still holds a term is not reduced: this is for a test that must be cheap,
+# and a reduction it cannot finish is work thrown away.
+def Hp.read_done(+h: Hp, v: Val) -> Val:
+  match v:
+    case VSlot{+k}:
+      +cl : HCell = Hp.cell(h, k)
+      Val.pick(HCell.is_done(cl), HCell.val(cl), VSlot{k})
+    case o:
+      o
+
 def Val.pick_sp(
   b: Bool, x: List<&2, Val>, y: List<&2, Val>
 ) -> List<&2, Val>:
