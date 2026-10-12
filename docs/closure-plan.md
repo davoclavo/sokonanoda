@@ -400,3 +400,66 @@ there is sound and rare, and it is the cheaper way to start.
 | `nbe` | `Val.bend` and `nfdiff.bend`: the verified value evaluator, called by nothing yet |
 | `closure` | the closure-in-a-term attempt, and the four bugs it paid for |
 | `memo` | the memo, and the 64.8 GB that closed it |
+
+## Stage 5: conversion on values, and what the wiring measured
+
+`bend/Vconv.bend` asks whether two values are definitionally equal, with the
+shape of `Conv.eq_all`'s walk and reduction that starts without unfolding a
+definition. `bend/cvdiff.bend` is its gate: for every declaration both
+conversions are asked whether the type inference gives is the type the
+declaration states.
+
+| | |
+|---|---|
+| agree | **158** |
+| differ by budget only | 19, all in the `bad` corpus |
+| a yes against a no | **1**, `good/tutorial/099_ruleK` |
+| too slow to compare | 3 |
+
+Six bugs the gate found, two of them wrong accepts:
+
+1. saying no where a head could still unfold -- two constants may be the
+   same type and only a delta step shows it;
+2. unfolding a neutral from the value side, which does not terminate;
+3. unfolding the head and not the arguments -- `good/other/nat-lit-ble`
+   needs it, because its literals arrive as `OfNat.ofNat` of a definition;
+4. **proof irrelevance answering yes on its own.** Two proofs are equal when
+   they prove the same proposition, so the rule leaves the two types behind
+   as a pair. This was a wrong accept on
+   `bad/tutorial/105_proofIrrelevanceBad`;
+5. **reading a value back at depth zero** when it lives inside the
+   comparison's own binders. A wrong accept on `bad/bugs/k-rec-conv`;
+6. reading a term that came back out of inference, or out of the K rule, in
+   an **empty** environment. Such a term is written in the comparison's
+   context, so every one of its variables came back unknown. Fixing it took
+   the budget differences from 31 to 19 and the proof irrelevance files from
+   declined to agreed.
+
+### What the wiring measured
+
+With `Infer` and `Kernel` asking `Vconv` instead of `Conv`, all 17 regression
+tests still pass, and the sweep says the work is not finished:
+
+- `perf/fueled-chain` answers **reject**, which is a wrong answer and on its
+  own reason enough not to merge;
+- `good/other/nat-lit-*`, `perf/args-before-unfold`, `perf/beta-ladder`,
+  `perf/identical-nesting`, `perf/irrelevance-before-evaluation` and
+  `corner-cases/proof-param-ok` answer `declined` where they used to answer.
+
+So the wiring is reverted and `Vconv` stands unused next to `Conv`. The three
+things between here and a merge, in the order the evidence puts them:
+
+1. **`perf/fueled-chain`'s wrong answer.** Reduce it with
+   `tools/minimise.py --thm-axioms` and read it with `bend/cvdiff.bend`,
+   which names the declaration and prints both sides as the value evaluator
+   sees them.
+2. **The declines.** Every one is a budget difference, and the budget goes on
+   reading values back: proof irrelevance and the K-like rule need the type
+   of each side, and inference reads a term. **Inference on values** removes
+   every quote, and it is the next piece of work -- the type of a neutral is
+   its head's type applied to its spine, the type of a lambda is a pi, and
+   the two rules then need no read back at all.
+3. **`good/tutorial/099_ruleK`.** Every condition of `Conv.k_ok` is mirrored
+   and the subject's type is read in the right context now, so what is left
+   is to print the type the two sides compute for the subject and compare
+   them.
