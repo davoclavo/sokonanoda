@@ -493,14 +493,54 @@ def Vconv.ty_of(
 def Vconv.quote_cap() -> Nat:
   80n
 
-# A no that rests on a side which was cut off is not a no. The pair is left
-# as "do not know", because the rule might have fired on the whole side.
-def Vconv.soften(st: VStep) -> VStep:
+# The rule in earnest, with the kernel's own budget and no structural route
+# to fall back on.
+#
+# This is what a no is worth asking. The small budget above answers most
+# pairs for almost nothing, and the pairs it cuts off are answered here --
+# but only the ones where everything else has already said no, and a no
+# ends the comparison. `bad/perf/rec-missing-ih` is the file that needs it:
+# its sides do not fit the small budget, and leaving the pair as "do not
+# know" turned a correct rejection into a decline.
+def Vconv.irrel_full_step(
+  ok: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +qa: T.Term, +qb: T.Term
+) -> VSH:
+  match ok:
+    case False{}:
+      MkSH{SNo{}, hp}
+    case True{}:
+      +r1 : W.VR =
+        W.Val.core_in_h(
+          fuel, env, hp, Vconv.depth(cx, 0n),
+          Vconv.ty_of(fuel, env, cx, qa))
+      +r2 : W.VR =
+        W.Val.core_in_h(
+          fuel, env, W.VR.heap(r1), Vconv.depth(cx, 0n),
+          Vconv.ty_of(fuel, env, cx, qb))
+      MkSH{
+        SMore{[VP{cx, W.VR.val(r1), W.VR.val(r2)}]}, W.VR.heap(r2)}
+
+def Vconv.irrel_full(
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
+  +b: W.Val
+) -> VSH:
+  +qa : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), a)
+  +qb : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), b)
+  Vconv.irrel_full_step(
+    Vconv.irrel_ok(fuel, env, cx, qa, qb), fuel, env, hp, cx, qa, qb)
+
+# A no that rests on a side which was cut off is not a no yet. The rule gets
+# its full budget before the pair is given up on.
+def Vconv.cut_no(
+  st: VStep, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
   match st:
     case SNo{}:
-      SUnk{}
+      Vconv.irrel_full(fuel, env, hp, cx, a, b)
     case o:
-      o
+      MkSH{o, hp}
 
 def Vconv.struct_maybe(
   cut: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
@@ -511,7 +551,8 @@ def Vconv.struct_maybe(
       Vconv.struct_then(fuel, env, hp, cx, a, b)
     case True{}:
       +r : VSH = Vconv.struct_then(fuel, env, hp, cx, a, b)
-      MkSH{Vconv.soften(Vconv.sh_step(r)), Vconv.sh_heap(r)}
+      Vconv.cut_no(
+        Vconv.sh_step(r), fuel, env, Vconv.sh_heap(r), cx, a, b)
 
 def Vconv.irrel_step(
   ok: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
@@ -681,15 +722,33 @@ def Vconv.k_fix(
 # Structure eta in a comparison, which Lean calls `isDefEqEtaStruct`.
 #
 
+# One step on one side of the dear route.
+#
+# A stuck projection takes its own step: the head of its subject unfolds and
+# the projection is tried again, and nothing else of the subject is touched.
+# The general walk unfolds the subject's arguments as well, which is what
+# `perf/proj-lazy-struct` is about.
+def Vconv.one_delta(
+  proj: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp, +v: W.Val
+) -> W.VR:
+  match proj:
+    case True{}:
+      W.Val.proj_step_h(fuel, env, hp, v)
+    case False{}:
+      W.Val.delta_h(fuel, env, hp, v)
+
 # The dear route: unfold both heads and look again.
 def Vconv.deep(
   +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
   +b: W.Val
 ) -> VSH:
-  +d1 : W.VR = W.Val.delta_h(fuel, env, hp, a)
+  +d1 : W.VR =
+    Vconv.one_delta(W.Val.is_stuck_proj(a), fuel, env, hp, a)
   +k1 : W.VR =
     Vconv.k_fix(fuel, env, W.VR.heap(d1), cx, W.VR.val(d1))
-  +d2 : W.VR = W.Val.delta_h(fuel, env, W.VR.heap(k1), b)
+  +d2 : W.VR =
+    Vconv.one_delta(
+      W.Val.is_stuck_proj(b), fuel, env, W.VR.heap(k1), b)
   +k2 : W.VR =
     Vconv.k_fix(fuel, env, W.VR.heap(d2), cx, W.VR.val(d2))
   Vconv.irrel(

@@ -1080,6 +1080,59 @@ def Val.dgo(+fuel: Nat, +env: E.DTable, +hp: Hp, c: DC) -> VR:
             case o:
               MkVR{o, hp}
 
+# Is this value a projection whose subject could unfold?
+def Val.is_proj_hd(hd: Head, +sp: List<&2, Val>) -> Bool:
+  match hd:
+    case HProj{tn, idx}:
+      Val.head_const(Val.sp_nth(0n, sp))
+    case o:
+      False{}
+
+def Val.is_stuck_proj(v: Val) -> Bool:
+  match v:
+    case VNe{hd, +sp}:
+      Val.is_proj_hd(hd, sp)
+    case o:
+      False{}
+
+# One step on a stuck projection: unfold the head of its subject, and try
+# the projection again.
+#
+# This is not `Val.delta_h`. That walk unfolds the arguments of the subject
+# as well, and `perf/proj-lazy-struct` is the file that says what that
+# costs: the two sides are `(P (slow 100000)).1` and `(Q (slow 100001)).1`,
+# where `P` and `Q` both unfold to `(0, a)`. The field the question is
+# about is zero on both sides and the argument the walk unfolds holds a
+# hundred thousand steps of work.
+def Val.proj_sub(
+  +fuel: Nat, +env: E.DTable, +hp: Hp, +tn: Nat, +idx: Nat, +sv: Val,
+  +rest: List<&2, Val>
+) -> VR:
+  +r : VR =
+    Val.head_back_h(
+      fuel, env, hp,
+      HConst{Val.head_name(sv), Val.head_levels(sv)}, Val.args(sv))
+  Val.go(
+    fuel, env, True{}, VR.heap(r),
+    Val.proj_ctrl(env, tn, idx, VR.val(r)), rest)
+
+def Val.proj_hd_step(
+  +fuel: Nat, +env: E.DTable, +hp: Hp, hd: Head, +sp: List<&2, Val>
+) -> VR:
+  match hd:
+    case HProj{+tn, +idx}:
+      Val.proj_sub(
+        fuel, env, hp, tn, idx, Val.sp_nth(0n, sp), Val.sp_drop(1n, sp))
+    case o:
+      MkVR{VNe{o, sp}, hp}
+
+def Val.proj_step_h(+fuel: Nat, +env: E.DTable, +hp: Hp, v: Val) -> VR:
+  match v:
+    case VNe{hd, +sp}:
+      Val.proj_hd_step(fuel, env, hp, hd, sp)
+    case o:
+      MkVR{o, hp}
+
 # The step conversion takes when the cheap route -- two spines with the same
 # head, compared argument by argument -- answers no.
 def Val.delta_h(+fuel: Nat, +env: E.DTable, +hp: Hp, +v: Val) -> VR:
