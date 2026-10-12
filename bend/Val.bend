@@ -25,6 +25,7 @@ import ./Level.bend as L
 import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
+import ./Idx.bend as Ix
 
 # What a head that cannot reduce is.
 type Head is Data:
@@ -45,6 +46,8 @@ type Val is Data:
   VPi{ty: Val, bd: T.Term, en: List<&2, Val>}
   VSort{l: L.Level}
   VNat{v: Nat, nm: Nat, zr: Nat, sc: Nat}
+  # An argument waiting in a heap slot, not yet reduced.
+  VSlot{n: Nat}
   # Reduction gave up. Every verdict reads this as "do not know".
   VUnk{}
 
@@ -140,6 +143,200 @@ def Val.sp_take(n: Nat, sp: List<&2, Val>) -> List<&2, Val>:
 # the spine then applies, and Bend has no mutual recursion: an `apply` that
 # called `eval` and an `eval` that called `apply` is two defs that call each
 # other. One control type and one loop is the way around it.
+# A slot of the heap: an argument not yet reduced, or its value.
+#
+# This is call by need. An argument goes on the spine as a slot and is
+# reduced where the body first reads it; the answer is written back, so a
+# body that reads it twice pays once. Call by value pays for an argument the
+# body throws away -- `perf/discarded-argument-match` is the file that says
+# so -- and call by name pays twice for one it reads twice, which is the
+# sharing this whole evaluator exists for.
+type HCell is Data:
+  HRaw{t: T.Term, en: List<&2, Val>}
+  HDone{v: Val}
+
+type HTab is Data:
+  HTip{}
+  HNode{v: Maybe<&2, HCell>, lo: HTab, hi: HTab}
+
+type Hp is Data:
+  MkHp{cells: HTab, nx: Nat}
+
+# What reduction hands back: the value, and the heap as it stands after it.
+# A Bend pair is a `Type` and may be used once; a `Data` record may be used
+# twice, which both halves are.
+type VR is Data:
+  MkVR{v: Val, h: Hp}
+
+def Hp.new() -> Hp:
+  MkHp{HTip{}, 0n}
+
+def HTab.or_none(m: Maybe<&2, HCell>) -> HCell:
+  match m:
+    case None{}:
+      HDone{VUnk{}}
+    case Some{v}:
+      v
+
+def HTab.at(t: HTab) -> HCell:
+  match t:
+    case HTip{}:
+      HDone{VUnk{}}
+    case HNode{v, lo, hi}:
+      HTab.or_none(v)
+
+def HTab.get(n: Nat, stop: Bool, b: Bool, t: HTab, +i: Nat) -> HCell:
+  match n:
+    case 0n:
+      HDone{VUnk{}}
+    case 1n+m:
+      match stop:
+        case True{}:
+          HTab.at(t)
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case HTip{}:
+                  HDone{VUnk{}}
+                case HNode{v, lo, hi}:
+                  HTab.get(
+                    m, Ix.Idx.here(Ix.Idx.rest(i)),
+                    Ix.Idx.low(Ix.Idx.rest(i)), lo, Ix.Idx.rest(i))
+            case False{}:
+              match t:
+                case HTip{}:
+                  HDone{VUnk{}}
+                case HNode{v, lo, hi}:
+                  HTab.get(
+                    m, Ix.Idx.here(Ix.Idx.rest(i)),
+                    Ix.Idx.low(Ix.Idx.rest(i)), hi, Ix.Idx.rest(i))
+
+def HTab.set(
+  n: Nat, stop: Bool, b: Bool, t: HTab, +i: Nat, +v: HCell
+) -> HTab:
+  match n:
+    case 0n:
+      t
+    case 1n+m:
+      match stop:
+        case True{}:
+          match t:
+            case HTip{}:
+              HNode{Some{v}, HTip{}, HTip{}}
+            case HNode{o, lo, hi}:
+              HNode{Some{v}, lo, hi}
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case HTip{}:
+                  HNode{
+                    None{},
+                    HTab.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)),
+                      Ix.Idx.low(Ix.Idx.rest(i)), HTip{}, Ix.Idx.rest(i), v),
+                    HTip{}}
+                case HNode{o, lo, hi}:
+                  HNode{
+                    o,
+                    HTab.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)),
+                      Ix.Idx.low(Ix.Idx.rest(i)), lo, Ix.Idx.rest(i), v),
+                    hi}
+            case False{}:
+              match t:
+                case HTip{}:
+                  HNode{
+                    None{},
+                    HTip{},
+                    HTab.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)),
+                      Ix.Idx.low(Ix.Idx.rest(i)), HTip{}, Ix.Idx.rest(i), v)}
+                case HNode{o, lo, hi}:
+                  HNode{
+                    o,
+                    lo,
+                    HTab.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)),
+                      Ix.Idx.low(Ix.Idx.rest(i)), hi, Ix.Idx.rest(i), v)}
+
+def Hp.cell(+h: Hp, +i: Nat) -> HCell:
+  match h:
+    case MkHp{+cs, nx}:
+      HTab.get(
+        Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)),
+        Ix.Idx.low(Ix.Idx.path(i)), cs, Ix.Idx.path(i))
+
+def Hp.put(+h: Hp, +i: Nat, +v: HCell) -> Hp:
+  match h:
+    case MkHp{+cs, +nx}:
+      MkHp{
+        HTab.set(
+          Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)),
+          Ix.Idx.low(Ix.Idx.path(i)), cs, Ix.Idx.path(i), v),
+        nx}
+
+def Hp.next(+h: Hp) -> Nat:
+  match h:
+    case MkHp{cs, +nx}:
+      nx
+
+# Take the next slot for an argument that has not been reduced.
+def Hp.alloc(+h: Hp, +t: T.Term, +en: List<&2, Val>) -> Hp:
+  match h:
+    case MkHp{+cs, +nx}:
+      MkHp{
+        HTab.set(
+          Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(nx)),
+          Ix.Idx.low(Ix.Idx.path(nx)), cs, Ix.Idx.path(nx), HRaw{t, en}),
+        1n+nx}
+
+def HCell.is_done(c: HCell) -> Bool:
+  match c:
+    case HRaw{t, en}:
+      False{}
+    case HDone{v}:
+      True{}
+
+def HCell.val(c: HCell) -> Val:
+  match c:
+    case HRaw{t, en}:
+      VUnk{}
+    case HDone{+v}:
+      v
+
+def HCell.term(c: HCell) -> T.Term:
+  match c:
+    case HRaw{+t, en}:
+      t
+    case HDone{v}:
+      T.TUnk{}
+
+def HCell.env(c: HCell) -> List<&2, Val>:
+  match c:
+    case HRaw{t, +en}:
+      en
+    case HDone{v}:
+      Nil{}
+
+def VR.val(r: VR) -> Val:
+  match r:
+    case MkVR{v, h}:
+      v
+
+def VR.heap(r: VR) -> Hp:
+  match r:
+    case MkVR{v, h}:
+      h
+
+def Hp.pick(b: Bool, x: Hp, y: Hp) -> Hp:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
 type Ctrl is Data:
   CTerm{t: T.Term, en: List<&2, Val>}
   CVal{v: Val}
@@ -509,6 +706,10 @@ def Val.go(
               VSort{l}
             case VNat{n, nm, zr, sc}:
               VNat{n, nm, zr, sc}
+            case VSlot{n}:
+              # Nothing takes a slot yet. The arm that reads one belongs
+              # here, and it needs the heap threaded through this loop.
+              VUnk{}
             case VUnk{}:
               VUnk{}
         case CTerm{+t, +en}:
@@ -749,6 +950,8 @@ def Val.quote_go(
               T.TSort{l}
             case VNat{n, nm, zr, sc}:
               T.TNat{n, nm, zr, sc}
+            case VSlot{n}:
+              T.TUnk{}
             case VUnk{}:
               T.TUnk{}
             case VLam{+ty, +bd, +en}:
