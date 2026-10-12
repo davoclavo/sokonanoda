@@ -1514,3 +1514,42 @@ that budget and the value comparison carries on.
 A first attempt that is allowed to go on too long is paid for by every file
 whose answer is a computation. Three thousand is where the two sides of the
 trade cross.
+
+### Where the remaining six stand, measured with the kernel as it is
+
+`perf/fueled-chain` is out of reach of both kernels. Its wall is
+`chain6_datF`, the smallest member of its own family, and the family grows
+steeply:
+
+| | the term kernel | the value kernel |
+|---|---|---|
+| the `chain6_datF` cut, 97 declarations | accept in 4.4 s | accept in 7.3 s |
+| the `chain9_datF` cut, 97 declarations | accept in 67 s | no answer in 90 s |
+
+The file holds `chain6_datF`, `chain9_datF` and `chain12_datF`, and its limit
+is fifty seconds. One declaration of it costs the better of the two kernels
+sixty-seven, so the file needs an algorithm and not a budget.
+
+`good/init-prelude` has a new wall and it is much earlier than the old one.
+A prefix bisect puts it at declaration **901**, the theorem
+`_private.Init.Prelude.0.isValidChar_UInt32`: the first 901 declarations
+check in 1.9 s and the first 902 do not finish in forty. The declaration the
+last two ticks were about, `ByteArray.IsValidUTF8.recOn` at 2,044, is
+answered now.
+
+### The same-value test and the term-first attempt overlap
+
+The term comparison asked first settles the pairs the same-value test was
+written for, and settles them better: the 528 kB closure of
+`ByteArray.IsValidUTF8.recOn` answers in **0.32 s** with the test taken out
+and in 40 s with it in. But over the whole corpus the test still pays:
+
+| | the corpus, 196 files at a 50 s cap | the `recOn` closure |
+|---|---|---|
+| both | **357.4 s** | 40 s |
+| the term-first attempt alone | 461.6 s | **0.32 s** |
+
+Both score 190 correct with nothing wrong. The committed kernel keeps both,
+because a hundred seconds over the corpus is the larger effect and neither
+configuration answers one more file. The two numbers are here so the choice
+can be made again when the next wall moves.
