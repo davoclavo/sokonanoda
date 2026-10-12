@@ -1362,3 +1362,49 @@ its major premise as a constructor application, and the cut needs something
 that none of the five variants gives. This line is closed until that third
 thing is named -- the way to name it is the smallest disagreeing pair, and
 `bend/cvdiff.bend` finds one of those between the two conversions.
+
+### What the UTF-8 recursor's wall actually is
+
+`ByteArray.IsValidUTF8.recOn` is four lines:
+
+```
+def ByteArray.IsValidUTF8.recOn b motive t intro :=
+  ByteArray.IsValidUTF8.rec motive intro t
+```
+
+Its minor premise mentions `Eq ByteArray b (List.utf8Encode m)` under two
+binders, and `m` is a bound variable, so nothing in that type can compute.
+The value kernel still spends more than ninety seconds on it, and the phases
+say where:
+
+| what was measured | the 168-declaration cut |
+|---|---|
+| inference of the value, with its comparisons | no answer in 90 s |
+| inference of the value, comparisons removed | 0.38 s |
+| the same, comparisons capped at 300 pairs | no answer in 90 s |
+| `List.utf8Encode` made an axiom | **accept in 0.18 s** |
+| `String.utf8EncodeChar` made an axiom | **accept in 0.20 s** |
+| `Nat.div` and `Nat.mod` made axioms | **accept in 0.93 s** |
+
+So it is one pair, not many -- a cap of three hundred pairs does not help --
+and the pair's cost is a chain of unfoldings: `List.utf8Encode` opens
+`String.utf8EncodeChar`, which opens the `Nat.div` and `Nat.mod` of the
+code points. Cutting the chain anywhere answers the file in under a second.
+The eager walk in `Val.delta_h` is what opens it, and that walk is
+load-baring for three other things (see above), so it cannot simply go.
+
+### A shortcut that does not fire, and why
+
+Lean asks first whether the two sides are the **same** expression, and
+answers by the address. Here the question was asked structurally -- same
+slot number, same literal, same head and spine, same binder body by
+`Conv.same_in` -- and put in front of every rule in `Vconv.classify`. It
+changed nothing, and the reason is call by need: one side carries a slot
+where the other carries the value that slot stands for, so the structures
+differ even though the values do not.
+
+To fire, the shortcut has to read a slot, and reading one needs the heap
+threaded through the test so the answer is sound. Comparing two slots by
+number across two **dropped** heaps would be unsound: the numbers start
+again in a new heap, so two different thunks can wear the same number. That
+is the next piece of work on this file.
