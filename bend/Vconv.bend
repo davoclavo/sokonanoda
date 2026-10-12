@@ -841,6 +841,19 @@ def Vconv.all(
           A.ANo{}
         case A.ANo{} Con{MkVA{a2, w2}, r2} w:
           Vconv.all(f, env, hp, a2, r2, w2)
+        case A.AUnk{} Con{MkVA{a3, w3}, r3} w:
+          # The cheap route could not answer, which is as good a reason to
+          # take the alternative as a no. `perf/proj-lazy-struct` is the
+          # file that needs it: comparing the two structures of
+          # `(P (slow 100000)).1` and `(Q (slow 100001)).1` runs reduction
+          # out of its depth inside the field the question is not about,
+          # and unfolding the projection instead answers in one step.
+          #
+          # The alternative proves the pair that was asked, so nothing the
+          # cheap route left behind is lost: its own pairs are derived from
+          # that pair, and the pairs that were waiting beside it travel in
+          # the alternative as well.
+          Vconv.all(f, env, hp, a3, r3, w3)
         case a as Nil{}:
           a
         case +a as Con{p, +rest}:
