@@ -16,6 +16,7 @@ import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
 import ./Conv.bend as C
+import ./Vconv.bend as X
 import ./Infer.bend as I
 import ./Ans.bend as A
 import ./Rec.bend as R
@@ -37,7 +38,7 @@ def Kernel.is_type(+fuel: Nat, +env: E.DTable, ty: T.Term) -> A.Ans:
 # on a 10 MB export spent its whole walk on that artefact before this.
 def Kernel.has_type(+fuel: Nat, +env: E.DTable, v: T.Term, ty: T.Term) -> A.Ans:
   +r = I.Infer.infer(fuel, env, Nil{}, v)
-  C.Conv.eq_unless_no(
+  X.Vconv.eq_unless_no(
     I.Infer.res_ans(r), fuel, env, Nil{}, I.Infer.res_ty(r), ty)
 
 # Is this term a Prop, that is, does its own type reduce to `Sort 0`?
@@ -750,7 +751,7 @@ def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty)) ++
       Kernel.flag("infer", I.Infer.res_ans(I.Infer.infer(fuel, env, Nil{}, val))) ++
-      Kernel.flag("conv", C.Conv.eq(fuel, env,
+      Kernel.flag("conv", X.Vconv.eq(fuel, env,
         I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty)) ++
       Kernel.flag("same", A.Ans.of(C.Conv.same(env, 
         I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty)))
@@ -762,7 +763,7 @@ def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
         "infer", I.Infer.res_ans(I.Infer.infer(fuel, env, Nil{}, val))) ++
       Kernel.flag(
         "conv",
-        C.Conv.eq(
+        X.Vconv.eq(
           fuel, env,
           I.Infer.res_ty(I.Infer.infer(fuel, env, Nil{}, val)), ty))
     case E.DCtor{+id, +ps, +ty, +ind, +cidx, +np, +nf}:
@@ -845,7 +846,7 @@ def Kernel.rules_match(
       A.AYes{}
     case 1n+k:
       A.Ans.and(
-        C.Conv.eq(
+        X.Vconv.eq(
           fuel, env,
           R.Rec.rhs_at(fuel, env, r, j),
           R.Rec.stated_rhs(env, r, j)),
@@ -861,7 +862,7 @@ def Kernel.rules_match(
 def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
   A.Ans.and(
     A.Ans.and(
-      C.Conv.eq(
+      X.Vconv.eq(
         fuel, env,
         R.Rec.derive(fuel, env, r),
         E.Decl.type_at(
@@ -906,7 +907,7 @@ def Kernel.quot_one(
     case False{}:
       A.AYes{}
     case True{}:
-      C.Conv.eq(
+      X.Vconv.eq(
         fuel, env,
         Q.Quo.want(
           E.Decl.quot_kind(d),

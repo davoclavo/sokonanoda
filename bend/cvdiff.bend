@@ -71,13 +71,84 @@ def Cv.yn(b: Bool) -> String:
     case False{}:
       "no"
 
-# The K-like rule, probed on the declared type's own subterms: is the rule
-# near, and what does the subject's type come out as?
+
+
+
+
+
+def Cv.kparts(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val
+) -> String:
+  +d : E.Decl = E.Lookup.get(E.Env.find(env, W.Val.head_name(v)))
+  +sj : W.Val = W.Val.sp_nth(V.Eval.major_idx(d), W.Val.args(v))
+  +qs : T.Term = W.Val.quote_d(fuel, env, X.Vconv.depth(cx, 0n), sj)
+  +ty : T.Term =
+    V.Eval.whnf(
+      fuel, env, H.Shape.ty(H.Shape.infer(fuel, env, cx, qs)), Nil{})
+  "    k near yes  ctx " ++ Nat.show(X.Vconv.depth(cx, 0n)) ++
+  "\n      subject " ++ S.Show.term(14n, qs) ++
+  "\n      its type " ++ S.Show.term(14n, ty) ++
+  "\n      type ok " ++ Cv.yn(C.Conv.k_type_ok(d, ty)) ++
+  "  fits " ++ Cv.yn(C.Conv.k_fits(fuel, env, cx, d, ty)) ++
+  "\n      the constructor " ++
+    S.Show.term(14n, C.Conv.k_ctor(env, d, ty)) ++
+  "\n      K gives " ++
+    S.Show.term(
+      14n,
+      W.Val.quote_d(
+        fuel, env, X.Vconv.depth(cx, 0n),
+        X.Vconv.k_fix(fuel, env, cx, v))) ++
+  "\n      terms give " ++
+    S.Show.term(
+      14n,
+      C.Conv.k_fix(
+        fuel, env, cx,
+        W.Val.quote_d(fuel, env, X.Vconv.depth(cx, 0n), v))) ++ "\n"
+
+def Cv.kshow(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +t: T.Term, near: Bool
+) -> String:
+  match near:
+    case False{}:
+      ""
+    case True{}:
+      Cv.kparts(
+        fuel, env, cx,
+        W.Val.core_in(fuel, env, X.Vconv.depth(cx, 0n), t))
+
+def Cv.kpick(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +t: T.Term
+) -> String:
+  Cv.kshow(
+    fuel, env, cx, t,
+    X.Vconv.k_near(
+      env,
+      W.Val.core_in(fuel, env, X.Vconv.depth(cx, 0n), t)))
+
+# Walk a term to the first application whose head is a recursor the K-like
+# rule would look at, and print what the rule sees there: the subject, the
+# type inference gives it, and each of the two conditions.
+def Cv.kfind(
+  +steps: Nat, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, t: T.Term
+) -> String:
+  match steps:
+    case 0n:
+      ""
+    case 1n+(+k):
+      match t:
+        case T.TPi{+ty, +bd}:
+          Cv.kfind(k, fuel, env, Con{ty, cx}, bd)
+        case T.TLam{+ty, +bd}:
+          Cv.kfind(k, fuel, env, Con{ty, cx}, bd)
+        case T.TApp{+g, +a}:
+          Cv.kpick(fuel, env, cx, T.TApp{g, a}) ++
+            Cv.kfind(k, fuel, env, cx, g) ++
+            Cv.kfind(k, fuel, env, cx, a)
+        case o:
+          ""
+
 def Cv.kprobe(+fuel: Nat, +env: E.DTable, +t: T.Term) -> String:
-  +v : W.Val = W.Val.core(fuel, env, t)
-  "    k near " ++ Cv.yn(X.Vconv.k_near(env, v)) ++
-  "  head " ++ Nat.show(W.Val.head_name(v)) ++
-  "  args " ++ Nat.show(W.Val.sp_len(W.Val.args(v), 0n)) ++ "\n"
+  Cv.kfind(200n, fuel, env, Nil{}, t)
 
 # The two sides as the value evaluator sees them, for a declaration whose
 # answers differ.

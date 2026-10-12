@@ -112,6 +112,17 @@ def Vconv.depth(cx: List<&2, T.Term>, +acc: Nat) -> Nat:
     case Con{h, t}:
       Vconv.depth(t, 1n+acc)
 
+def Vconv.pick_step(b: Bool, x: VStep, y: VStep) -> VStep:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# Offer the cheap route when the two sides are the same head applied to the
+# same number of arguments, and keep the dear one for a no.
+#
+
 # Do these two spines have the same head and the same length, with at least
 # one argument? That is the cheap route.
 def Vconv.spine_match(+fuel: Nat, +a: W.Val, +b: W.Val) -> Bool:
@@ -221,6 +232,88 @@ def Vconv.rigid(
     case x y:
       SNo{}
 
+def Vconv.ctor_of_struct(+env: E.DTable, +d: E.Decl) -> Bool:
+  Bool.and(
+    E.Decl.is_ctor(d),
+    V.Eval.is_struct(
+      E.Lookup.get(E.Env.find(env, E.Decl.ctor_ind(d)))))
+
+# A constructor application of a structure against something that is not one
+# is still a question worth asking: the other side **is** its own
+# constructor applied to its own fields. `tutorial/112_structEta` is the file
+# that says so. The evaluator has this rule for a recursor whose major
+# premise is stuck; a comparison needs it too, and the two are not the same
+# place.
+def Vconv.ctor_struct(+env: E.DTable, +v: W.Val) -> Bool:
+  Bool.and(
+    W.Val.head_const(v),
+    Vconv.ctor_of_struct(
+      env, E.Lookup.get(E.Env.find(env, W.Val.head_name(v)))))
+
+# The other side, as that constructor applied to its own fields.
+def Vconv.eta_as(
+  +env: E.DTable, +ctor: W.Val, +other: W.Val
+) -> W.Val:
+  +d : E.Decl = E.Lookup.get(E.Env.find(env, W.Val.head_name(ctor)))
+  W.VNe{
+    W.HConst{W.Val.head_name(ctor), W.Val.head_levels(ctor)},
+    List.append(&2, W.Val,
+      W.Val.sp_take(E.Decl.ctor_np(d), W.Val.args(ctor)),
+      W.Val.proj_vals(
+        E.Decl.ctor_nf(d), E.Decl.ctor_ind(d), 0n, other))}
+
+# Is the other side one this rule may expand? A lambda, a sort or a pi is
+# not a structure value, and a constructor application needs no expanding.
+def Vconv.eta_target(+env: E.DTable, +v: W.Val) -> Bool:
+  Bool.and(
+    W.Val.is_ne(v), Bool.not(Vconv.ctor_struct(env, v)))
+
+def Vconv.eta_struct(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VStep:
+  Vconv.pick_step(
+    Bool.and(Vconv.ctor_struct(env, a), Vconv.eta_target(env, b)),
+    SMore{[VP{cx, a, Vconv.eta_as(env, a, b)}]},
+    Vconv.pick_step(
+      Bool.and(Vconv.ctor_struct(env, b), Vconv.eta_target(env, a)),
+      SMore{[VP{cx, Vconv.eta_as(env, b, a), b}]},
+      SNo{}))
+
+# Structure first, proof irrelevance only on a no.
+#
+
+def Vconv.eta_or(
+  st: VStep, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
+  +a: W.Val, +b: W.Val
+) -> VStep:
+  match st:
+    case SNo{}:
+      Vconv.eta_struct(fuel, env, cx, a, b)
+    case o:
+      o
+
+# The rule needs the type of each side, inference reads a term, and reading
+# a value back costs the size of the value. Asking it of every pair spent
+# the budget: at the kernel's own fuel of 30000, nine files answered "do not
+# know" that used to answer. Asking it only where the structural comparison
+# has already failed costs nothing on the pairs that agree, which is nearly
+# all of them.
+# Proof irrelevance first, then structure, then structure eta.
+#
+# The order is the kernel's own and it is not only about cost. Two proofs of
+# one proposition are equal **whatever their arguments are**, so a
+# comparison that comes first and compares the arguments answers no where
+# irrelevance would have answered yes: that is
+# `tutorial/107_proofIrrelevanceUnderBinder`.
+#
+
+# Structure, and structure eta on a no.
+def Vconv.struct_then(
+  +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VStep:
+  Vconv.eta_or(
+    Vconv.rigid(fuel, env, cx, a, b), fuel, env, cx, a, b)
+
 # The test is the kernel's own, `Conv.irrel`, and it needs the type of each
 # side. That is where a value is read back -- here and in the K-like rule,
 # and nowhere else -- because inference reads a term in a context of terms.
@@ -260,7 +353,7 @@ def Vconv.irrel_step(
           W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), ta),
           W.Val.core_in(fuel, env, Vconv.depth(cx, 0n), tb)}]}
     case False{}:
-      SNo{}
+      Vconv.struct_then(fuel, env, cx, a, b)
 
 def Vconv.irrel_go(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
@@ -281,7 +374,7 @@ def Vconv.irrel_pick(
     case True{}:
       Vconv.irrel_go(fuel, env, cx, a, b)
     case False{}:
-      SNo{}
+      Vconv.struct_then(fuel, env, cx, a, b)
 
 # Where neither route is the cheap one and a head could still unfold, the
 # answer is not "no": it is "unfold and look again". Saying no there is what
@@ -290,29 +383,16 @@ def Vconv.irrel_pick(
 # The K-like rule, on a value.
 #
 
-def Vconv.irrel_or(
-  st: VStep, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>,
-  +a: W.Val, +b: W.Val
-) -> VStep:
-  match st:
-    case SNo{}:
-      Vconv.irrel_pick(
-        Bool.and(Vconv.maybe_proof(a), Vconv.maybe_proof(b)),
-        fuel, env, cx, a, b)
-    case o:
-      o
-
-# The rule needs the type of each side, inference reads a term, and reading
-# a value back costs the size of the value. Asking it of every pair spent
-# the budget: at the kernel's own fuel of 30000, nine files answered "do not
-# know" that used to answer. Asking it only where the structural comparison
-# has already failed costs nothing on the pairs that agree, which is nearly
-# all of them.
+# It costs. The rule needs the type of each side, inference reads a term,
+# and reading a value back costs the size of the value, which is why nine
+# files answer "do not know" at the kernel's own budget. Inference on values
+# is what makes this order affordable, and it is the next piece of work.
 def Vconv.irrel(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
 ) -> VStep:
-  Vconv.irrel_or(
-    Vconv.rigid(fuel, env, cx, a, b), fuel, env, cx, a, b)
+  Vconv.irrel_pick(
+    Bool.and(Vconv.maybe_proof(a), Vconv.maybe_proof(b)),
+    fuel, env, cx, a, b)
 
 # A recursor whose inductive is a proposition with one constructor and no
 # fields -- `Eq` is the one that matters -- may take any proof of its major
@@ -349,9 +429,14 @@ def Vconv.k_use(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +v: W.Val,
   +d: E.Decl, +ty: T.Term
 ) -> W.Val:
-  W.Val.app(
-    fuel, env, True{},
-    W.VNe{W.HConst{W.Val.head_name(v), W.Val.head_levels(v)}, Nil{}},
+  # `Val.head_back` and not `Val.app`: applying a neutral only lengthens its
+  # spine, and the point of the rule is that the constant rule runs again
+  # with the constructor in the major premise's place. Without that the
+  # recursor comes back unreduced, which is what
+  # `good/tutorial/099_ruleK` answered `reject` on.
+  W.Val.head_back(
+    fuel, env,
+    W.HConst{W.Val.head_name(v), W.Val.head_levels(v)},
     Vconv.k_sp(
       W.Val.args(v), V.Eval.major_idx(d),
       W.Val.core_in(
@@ -402,7 +487,7 @@ def Vconv.k_fix(
   Vconv.k_try(Vconv.k_near(env, v), fuel, env, cx, v)
 
 # The irrelevance test, and the structural comparison when it does not fit.
-# Structure first, proof irrelevance only on a no.
+# Structure eta in a comparison, which Lean calls `isDefEqEtaStruct`.
 #
 
 # The dear route: unfold both heads and look again.
@@ -414,29 +499,23 @@ def Vconv.deep(
     Vconv.k_fix(fuel, env, cx, W.Val.delta(fuel, env, a)),
     Vconv.k_fix(fuel, env, cx, W.Val.delta(fuel, env, b)))
 
-def Vconv.pick_step(b: Bool, x: VStep, y: VStep) -> VStep:
-  match b:
-    case True{}:
-      x
-    case False{}:
-      y
-
-# Offer the cheap route when the two sides are the same head applied to the
-# same number of arguments, and keep the dear one for a no.
-#
-
 def Vconv.offer(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
 ) -> VStep:
   Vconv.pick_step(
     Bool.and(
       Vconv.spine_match(fuel, a, b),
-      Bool.or(W.Val.can_delta(env, a), W.Val.can_delta(env, b))),
+      Bool.or(W.Val.head_const(a), W.Val.head_const(b))),
     SEither{
       Vconv.zip(cx, W.Val.args(a), W.Val.args(b)),
       [VDeep{cx, a, b}]},
+    # Any constant head earns the dear route, not only a definition. A
+    # recursor stands with its rule unfired until its major premise reduces,
+    # and that may need a definition unfolded **inside an argument**:
+    # `Val.delta` does that, and asking only whether the head itself unfolds
+    # leaves `perf/magma-list-pair-n7` answering no.
     Vconv.pick_step(
-      Bool.or(W.Val.can_delta(env, a), W.Val.can_delta(env, b)),
+      Bool.or(W.Val.head_const(a), W.Val.head_const(b)),
       SMore{[VDeep{cx, a, b}]},
       Vconv.irrel(fuel, env, cx, a, b)))
 

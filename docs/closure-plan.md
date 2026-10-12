@@ -519,3 +519,55 @@ What is left is three rules and one representation decision:
    anyway, which is what the four new timeouts are. Lean is call by need;
    the way to it here is a slot in the environment that holds either a value
    or a term, and the branch `closure` is the record of how not to build one.
+
+## Stage 7: sound on values, and the gap is one word
+
+Four more bugs, each named by the file that finds it:
+
+| bug | file |
+|---|---|
+| structure eta is a **conversion** rule too, not only a reduction one | `tutorial/112_structEta` |
+| proof irrelevance must come **before** the structural comparison. Two proofs of one proposition are equal whatever their arguments are, so comparing arguments first answers no where irrelevance answers yes | `tutorial/107_proofIrrelevanceUnderBinder` |
+| the K-like rule must put the constructor in and **run the constant rule again**. Applying a neutral only lengthens its spine, so the recursor came back unreduced | `tutorial/099_ruleK` |
+| any **constant** head earns the dear route, not only a definition. A recursor stands unfired until its major premise reduces, and that may need a definition unfolded inside an argument | `perf/magma-list-pair-n7` |
+
+With all of them in, the whole kernel on values:
+
+| | terms (`main`) | values |
+|---|---|---|
+| correct | 186 | **181** |
+| **wrong** | 0 | **0** |
+| declined | 0 | 2 |
+| out of time | 9 | 12 |
+
+**No wrong answers.** The gap is five files and every one of them says the
+same word:
+
+| file | what it is |
+|---|---|
+| `perf/discarded-argument-match` | out of time. The name is the reason |
+| `perf/proj-lazy-struct` | out of time |
+| `perf/shift-cascade` | out of time |
+| `perf/refute-cheap-last` | declined |
+| `perf/repeated-subproblem` | declined |
+
+The evaluator is **call by value**: an argument is reduced before it goes in
+the environment, which is exactly what buys the sharing -- an environment
+holds values, so a variable used twice costs its value once -- and exactly
+what loses an argument the body throws away. Lean is call by need.
+
+### The last piece, and why it is safe now
+
+Call by need wants a slot that holds either a term with its environment or a
+value, and an update when it is first read. That is a heap, and a heap of
+**values** is sound where a heap of terms was not: the branch `closure` kept
+closures in a `Term` and the same slot was read in two scopes that did not
+contain each other, while a value carries no scope at all -- it is not a
+term until `Val.quote` makes it one. The threading is the one already proven
+twice here: hand back a `Data` record of the answer and the heap, keep every
+self-call in tail position, and take the record apart with a function.
+
+That buys the three timeouts and the two declines, which is 186 with nothing
+wrong, and it is the first point at which the sharing can be asked to earn
+more: `perf/shared-subterm` and the `magma-*` family are what it was built
+for.

@@ -25,6 +25,7 @@ import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
 import ./Conv.bend as C
+import ./Vconv.bend as X
 import ./Ans.bend as A
 import ./Shape.bend as S
 
@@ -499,7 +500,7 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           +gt = V.Eval.whnf(f, env, Infer.res_ty(Infer.infer(f, env, ctx, g)), Nil{})
           +at = Infer.infer(f, env, ctx, a)
           Infer.res_of(
-            C.Conv.eq_unless_no(
+            X.Vconv.eq_unless_no(
               A.Ans.and(
                 Infer.pi_ans(gt),
                 Infer.res_ans(at)),
@@ -550,7 +551,7 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           +vt = Infer.infer(f, env, ctx, v)
           +br = Infer.infer(f, env, ctx, T.Term.inst_at(E.Env.tab(env), bd, v))
           Infer.res_of(
-            C.Conv.eq_unless_no(
+            X.Vconv.eq_unless_no(
               A.Ans.and(Infer.res_ans(vt), Infer.res_ans(br)),
               f, env, ctx, Infer.res_ty(vt), ty),
             Infer.res_ty(br))
