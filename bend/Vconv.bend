@@ -149,6 +149,162 @@ def Vconv.pairs_pick(
     case False{}:
       Con{p, ps}
 
+# Are these two the same value?
+#
+# The comparison asks this before any rule, because two sides that are the
+# same value need no rule -- and the rules are where the cost is. Lean asks
+# the same question first and answers it by the address of the expression.
+# There is no address here, so the walk compares the structure.
+#
+# A slot has to be read for the walk to see anything, and reading one needs
+# the heap, so the answer carries the heap back out. Comparing two slot
+# numbers across two **dropped** heaps would be unsound: the numbers start
+# again in a new heap, so two different thunks can wear the same number.
+#
+# `ByteArray.IsValidUTF8.recOn` of `good/init-prelude` is the declaration
+# that wants this. Its minor premise appears twice, once in the type the
+# file states and once in the type its recursor gives, and the two are the
+# same value. Without this they go to the dear route, which opens
+# `List.utf8Encode`, then `String.utf8EncodeChar`, and then the `Nat.div`
+# and `Nat.mod` those hold: the file does not answer in ninety seconds, and
+# it answers in a fifth of a second when any link of that chain is an
+# axiom.
+type VPr is Data:
+  MkVPr{a: W.Val, b: W.Val}
+
+# The answer, and the heap the reading left behind.
+type VSame is Data:
+  MkVS{ok: Bool, h: W.Hp}
+
+def Vconv.vs_ok(r: VSame) -> Bool:
+  match r:
+    case MkVS{ok, h}:
+      ok
+
+def Vconv.vs_heap(r: VSame) -> W.Hp:
+  match r:
+    case MkVS{ok, h}:
+      h
+
+# What the walk is doing: reading the slots of one pair, comparing a pair
+# whose slots are read, or stopping. The decision travels in the control
+# because a match reads a parameter and not a computed value, and Bend has
+# no mutual recursion to put the decision in a helper.
+type SC is Data:
+  SForce{a: W.Val, b: W.Val, rest: List<&2, VPr>}
+  SCmp{a: W.Val, b: W.Val, rest: List<&2, VPr>}
+  SBad{}
+  # Every pair has been compared. This is a constructor of its own and not
+  # a pair of unknown values: two sides that reduction gave up on are not
+  # known to be the same, and reading them as the same was two wrong
+  # accepts.
+  SDone{}
+
+def Vconv.same_cap() -> Nat:
+  48n
+
+def Vconv.pair_up(
+  xs: List<&2, W.Val>, ys: List<&2, W.Val>, +acc: List<&2, VPr>
+) -> List<&2, VPr>:
+  match xs ys:
+    case Con{x, xr} Con{y, yr}:
+      Con{MkVPr{x, y}, Vconv.pair_up(xr, yr, acc)}
+    case x y:
+      acc
+
+def Vconv.force_if(
+  slot: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp, +v: W.Val
+) -> W.VR:
+  match slot:
+    case True{}:
+      W.Val.more_h(fuel, env, False{}, hp, v)
+    case False{}:
+      W.MkVR{v, hp}
+
+# The next pair, or the empty pair that answers yes.
+def Vconv.same_next(work: List<&2, VPr>) -> SC:
+  match work:
+    case Nil{}:
+      SDone{}
+    case Con{MkVPr{+a, +b}, +rest}:
+      SForce{a, b, rest}
+
+def Vconv.same_cont(ok: Bool, +rest: List<&2, VPr>) -> SC:
+  match ok:
+    case True{}:
+      Vconv.same_next(rest)
+    case False{}:
+      SBad{}
+
+def Vconv.same_go(
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, c: SC
+) -> VSame:
+  match fuel:
+    case 0n:
+      MkVS{False{}, hp}
+    case 1n+(+f):
+      match c:
+        case SBad{}:
+          MkVS{False{}, hp}
+        case SDone{}:
+          MkVS{True{}, hp}
+        case SForce{+a, +b, +rest}:
+          # A slot is read only against a side that is not one. Two slots
+          # are compared by their number, which is free and is what keeps
+          # the laziness: reading both would do the work the cheap route
+          # was built to avoid, and `perf/beta-ladder` stopped answering
+          # when this test read them.
+          +ra : W.VR =
+            Vconv.force_if(W.Val.is_slot(a), f, env, hp, a)
+          +rb : W.VR =
+            Vconv.force_if(
+              W.Val.is_slot(b), f, env, W.VR.heap(ra), b)
+          Vconv.same_go(
+            f, env, W.VR.heap(rb),
+            SCmp{W.VR.val(ra), W.VR.val(rb), rest})
+        case SCmp{a, b, +rest}:
+          match a b:
+            case W.VSlot{+i} W.VSlot{+j}:
+              Vconv.same_go(
+                f, env, hp, Vconv.same_cont(Nat.is_eq(i, j), rest))
+            case W.VNat{v1, m1, z1, s1} W.VNat{v2, m2, z2, s2}:
+              Vconv.same_go(
+                f, env, hp, Vconv.same_cont(Nat.is_eq(v1, v2), rest))
+            case W.VSort{x} W.VSort{y}:
+              Vconv.same_go(
+                f, env, hp,
+                Vconv.same_cont(L.Level.same(x, y), rest))
+            case W.VNe{h1, +s1} W.VNe{h2, +s2}:
+              Vconv.same_go(
+                f, env, hp,
+                Vconv.same_cont(
+                  Bool.and(
+                    W.Val.same_hd(f, h1, h2),
+                    Nat.is_eq(
+                      W.Val.sp_len(s1, 0n), W.Val.sp_len(s2, 0n))),
+                  Vconv.pair_up(s1, s2, rest)))
+            case W.VLam{+t1, +b1, +e1} W.VLam{+t2, +b2, +e2}:
+              Vconv.same_go(
+                f, env, hp,
+                Vconv.same_cont(
+                  C.Conv.same_in(Vconv.same_cap(), env, b1, b2),
+                  Con{MkVPr{t1, t2}, Vconv.pair_up(e1, e2, rest)}))
+            case W.VPi{+t1, +b1, +e1} W.VPi{+t2, +b2, +e2}:
+              Vconv.same_go(
+                f, env, hp,
+                Vconv.same_cont(
+                  C.Conv.same_in(Vconv.same_cap(), env, b1, b2),
+                  Con{MkVPr{t1, t2}, Vconv.pair_up(e1, e2, rest)}))
+            case x y:
+              MkVS{False{}, hp}
+
+def Vconv.same_val(
+  +fuel: Nat, +env: E.DTable, +hp: W.Hp, +a: W.Val, +b: W.Val
+) -> VSame:
+  Vconv.same_go(Vconv.same_cap(), env, hp, SForce{a, b, Nil{}})
+
+# Two values that reduction gave up on are not the same value.
+
 # One pair per argument, at the same depth, and a pair that is already in
 # the list only once.
 #
@@ -802,6 +958,17 @@ def Vconv.offer(
       Bool.or(W.Val.head_const(a), W.Val.head_const(b))),
     fuel, env, hp, cx, a, b)
 
+# The same value needs nothing further asked of it.
+def Vconv.offer_or_same(
+  same: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
+  match same:
+    case True{}:
+      MkSH{SYes{}, hp}
+    case False{}:
+      Vconv.offer(fuel, env, hp, cx, a, b)
+
 # What to do with one pair.
 def Vconv.classify(
   +fuel: Nat, +env: E.DTable, +hp: W.Hp, p: VPair
@@ -824,8 +991,14 @@ def Vconv.classify(
         W.Val.more_h(fuel, env, False{}, W.VR.heap(k1), b)
       +k2 : W.VR =
         Vconv.k_fix(fuel, env, W.VR.heap(m2), cx, W.VR.val(m2))
-      Vconv.offer(
-        fuel, env, W.VR.heap(k2), cx, W.VR.val(k1), W.VR.val(k2))
+      # Two sides that are the same value need no rule, and this is where
+      # that is asked. Everything the rules do is dearer than the asking.
+      +sv : VSame =
+        Vconv.same_val(
+          fuel, env, W.VR.heap(k2), W.VR.val(k1), W.VR.val(k2))
+      Vconv.offer_or_same(
+        Vconv.vs_ok(sv), fuel, env, Vconv.vs_heap(sv), cx,
+        W.VR.val(k1), W.VR.val(k2))
 
 # Work the queue. It empties exactly when every pair in it is equal.
 def Vconv.all(

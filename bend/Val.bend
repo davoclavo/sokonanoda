@@ -51,6 +51,14 @@ type Val is Data:
   # Reduction gave up. Every verdict reads this as "do not know".
   VUnk{}
 
+# Is this value a slot of the heap, not yet read?
+def Val.is_slot(v: Val) -> Bool:
+  match v:
+    case VSlot{n}:
+      True{}
+    case o:
+      False{}
+
 def Val.is_unk(v: Val) -> Bool:
   match v:
     case VUnk{}:
@@ -276,6 +284,19 @@ def Hp.put(+h: Hp, +i: Nat, +v: HCell) -> Hp:
           Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)),
           Ix.Idx.low(Ix.Idx.path(i)), cs, Ix.Idx.path(i), v),
         nx}
+
+# Write a cell only when there is something to write.
+#
+# A reduction that runs out of its budget answers the unknown value, and
+# writing that into the cell poisons the slot: every later read of it gives
+# the unknown value again, however much budget the later reader has. The
+# cell keeps its term instead, and the next reader reduces it anew.
+def Hp.put_if(ok: Bool, +h: Hp, +i: Nat, +v: HCell) -> Hp:
+  match ok:
+    case True{}:
+      Hp.put(h, i, v)
+    case False{}:
+      h
 
 def Hp.next(+h: Hp) -> Nat:
   match h:
@@ -820,7 +841,10 @@ def Val.go(
                   Nil{})
               +fv : Val = Val.pick(dn, HCell.val(cl), VR.val(r))
               Val.go(
-                f, env, dl, Hp.put(VR.heap(r), k, HDone{fv}), CVal{fv}, sp)
+                f, env, dl,
+                Hp.put_if(
+                  Bool.not(Val.is_unk(fv)), VR.heap(r), k, HDone{fv}),
+                CVal{fv}, sp)
             case VUnk{}:
               MkVR{VUnk{}, hp}
         case CTerm{+t, +en}:
