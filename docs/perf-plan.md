@@ -1449,3 +1449,26 @@ Those two numbers are the useful part of the mistake. They are what the
 value kernel would cost if the pairs it cannot settle were free, and the
 gap between them and the sound numbers is the price of the pairs that
 reduction cannot finish. It is most of the time those two files take.
+
+### A small budget inside a test is a wrong answer waiting
+
+`Vconv.same_val` reads a slot whose cell still holds a term, which means it
+reduces. The reduction was given the test's own budget, and that is the
+fault: a reduction which runs out hands back a value with the unknown value
+**inside** it -- a neutral whose spine holds one -- and `Val.go` writes that
+answer into the cell. Every later reader then takes it for the whole truth,
+whatever budget it has. `Hp.put_if` refuses a value that is unknown at the
+top and cannot see one inside.
+
+| the reading's budget | `good/init-prelude` |
+|---|---|
+| 8 steps | **reject in 1.8 s**, which is wrong |
+| 48 steps | no answer in 70 s |
+| the comparison's own | no answer in 70 s |
+
+The first row is the one to keep in mind. It is not a slow answer or a
+decline; it is a **wrong** answer, from a budget that looked like a safe
+economy. The rule it teaches: a reduction whose answer is written into the
+heap must have the budget of whatever will read it, or the write must be
+refused. The reading now takes the comparison's budget, so a reduction that
+does not finish means the comparison has not finished either.
