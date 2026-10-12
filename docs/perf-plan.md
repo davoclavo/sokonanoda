@@ -1408,3 +1408,44 @@ threaded through the test so the answer is sound. Comparing two slots by
 number across two **dropped** heaps would be unsound: the numbers start
 again in a new heap, so two different thunks can wear the same number. That
 is the next piece of work on this file.
+
+### The same value, and the cell that was poisoned
+
+Two fixes, measured together and apart.
+
+**`Vconv.same_val`.** Lean asks first whether the two sides are the same
+expression, by the address. Here the question is asked of the structure: a
+slot against a slot by its number, a literal and a sort by its value, a
+neutral by its head and spine, a binder by `Conv.same_in` of its body. A
+slot against a value is **read**, and the heap is threaded through the test
+so the reading is sound: slot numbers from two dropped heaps can collide.
+
+**`Hp.put_if`.** The forced value of a slot was written back into its cell
+even when the reduction had run out of budget and answered the unknown
+value. That poisoned the slot: every later read gave the unknown value,
+whatever budget the reader had. The cell now keeps its term unless there is
+a real value to write.
+
+| | before | after |
+|---|---|---|
+| the 528 kB closure of `ByteArray.IsValidUTF8.recOn` | no answer in 90 s | **accept in 40 s** |
+| its 168-declaration closure | no answer in 60 s | **accept in 0.17 s** |
+| the corpus, 196 files at a 50 s cap | 552.1 s | **452.8 s** |
+| the score | 189 correct, 0 wrong | 189 correct, 0 wrong |
+
+`good/init-prelude` still does not answer. The declaration this was built
+for is answered now, so what is left there is the next one.
+
+### What a comparison that says yes to what it cannot evaluate looks like
+
+The first version of the test marked "every pair compared" with a pair of
+**unknown values**, so two sides that reduction had given up on read as the
+same value. It answered `perf/shared-subterm` in 0.05 s against 18.9, and
+`perf/church-numerals` in 0.01 s against 3.5 -- and it accepted
+`bad/perf/refute-cheap-first` and `bad/perf/refute-cheap-last`, which are
+files the arena expects to be refused.
+
+Those two numbers are the useful part of the mistake. They are what the
+value kernel would cost if the pairs it cannot settle were free, and the
+gap between them and the sound numbers is the price of the pairs that
+reduction cannot finish. It is most of the time those two files take.
