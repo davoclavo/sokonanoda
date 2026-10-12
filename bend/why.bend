@@ -52,8 +52,22 @@ def Why.bad(+fuel: Nat, +env: E.DTable, p: C.TPair) -> Bool:
       A.Ans.is_no(C.Conv.eq_in(fuel, env, ctx, a, b))
 
 # The pairs this one reduces to.
+#
+# An `SEither` offers two routes and the queue takes the cheap one, keeping
+# the dear one on a stack. A cheap route that a definite no comes back from
+# is recovered there, so a pair refused on the cheap route is not the reason
+# the parent failed. This walk therefore takes the **dear** route: the two
+# sides reduced. Taking the cheap one printed a bound variable against a pi
+# type, which is refused and means nothing.
+def Why.dear(s: C.Step) -> List<&2, C.TPair>:
+  match s:
+    case C.SEither{cheap, dear}:
+      dear
+    case o:
+      C.Conv.step_more(o)
+
 def Why.kids(+fuel: Nat, +env: E.DTable, p: C.TPair) -> List<&2, C.TPair>:
-  C.Conv.step_more(C.Conv.classify_pair(fuel, env, p))
+  Why.dear(C.Conv.classify_pair(fuel, env, p))
 
 def Why.keep(ok: Bool, h: C.TPair, acc: C.TPair) -> C.TPair:
   match ok:

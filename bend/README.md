@@ -877,6 +877,53 @@ for the size of a `UInt64`. Reading it crashed the kernel, and a crash is the
 one answer worse than not knowing. The reader now saturates at a cap and a
 literal that reaches it is read as unknown.
 
+## One wrong answer still open, and how to reach it
+
+`tools/declsweep.py` cut all 2,269 declarations of `perf/grind-ring-5` out
+and checked each on its own. Of them, 40 answer `reject`, and every one of
+the 40 names the same cause: `thm 11861`,
+`Nat.Internal.Linear.ExprCnstr.denote_toNormPoly`. So there is one bug left
+in that corpus, not forty.
+
+To reach it in 296 kB instead of 9.8 MB:
+
+```
+python3 tools/minimise.py <grind-ring-5.ndjson> 11861 /tmp/t.ndjson --thm-axioms
+SOKO_REPORT=1 SOKO_EXPORT=/tmp/t.ndjson bend bend/check.bend
+SOKO_EXPORT=/tmp/t.ndjson bend bend/blame.bend
+```
+
+`--thm-axioms` keeps every definition and turns the theorems into axioms. A
+theorem proves a proposition and proof irrelevance never unfolds its value,
+so the cut is sound, and unlike `--axioms` it does not take `outParam` away
+and fail the universe check on `HAdd.mk` for a reason the real export does
+not have.
+
+What `blame.bend` says: the function wants a proof of
+
+```
+Eq Prop (PolyCnstr.denote ctx (ExprCnstr.toNormPoly (ExprCnstr.mk eq lhs rhs))) B
+```
+
+and the argument proves
+
+```
+Eq Prop (cond eq (Poly.denote_eq ...) (Poly.denote_le ...)) (ite (eq = true) ...)
+```
+
+`toNormPoly` of a constructor unfolds to a term with `cond eq` inside it, so
+the left side is `denote ctx (cond eq P Q)` and the right side is
+`cond eq (denote ctx P) (denote ctx Q)`. Commuting a function through `cond`
+is not a definitional equality when `eq` is a variable, so either the proof
+reaches this pair only after a case analysis this kernel is not performing,
+or one of the two sides is a reduction this kernel is not finishing.
+
+Two facts narrow it. The build with references for closed expressions only
+rejects it as well, so the open reference did not cause it. And the arena
+score does not see it: `perf/grind-ring-5` is 9.8 MB and cannot be read in
+the 60 seconds the arena gives it, so this is a correctness debt rather than
+a point.
+
 ## Structure eta, and the theorem it was hiding
 
 `perf/grind-ring-5` is 9.8 MB and the kernel answered `reject` on it, which is

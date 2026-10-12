@@ -8,6 +8,11 @@ at that size. This walks the expression graph from the declaration's own type
 and value, takes the closure of the expressions, levels and names it reaches,
 and then the declarations those expressions name, to a fixed point.
 
+--thm-axioms keeps every definition and turns only the theorems into axioms.
+A theorem proves a proposition and proof irrelevance never unfolds its value,
+so this is sound, and it is the mode to reach for: it cuts most of a corpus
+away without the artefact below.
+
 --axioms keeps only the type of every declaration the target names and emits
 it as an axiom. That is far smaller, and it is enough whenever the rejection
 does not need a definition unfolded.
@@ -27,6 +32,7 @@ import json, sys, collections
 def main():
     src, target, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
     as_axioms = "--axioms" in sys.argv
+    thm_axioms = "--thm-axioms" in sys.argv
     meta = None
     names, levels, exprs, decls = {}, {}, {}, []
     for l in open(src):
@@ -161,14 +167,20 @@ def main():
             # an inductive block, a quotient and a recursor must stay whole;
             # anything else may become an axiom when that is asked for
             whole = k in ("inductive", "quot")
+            # A theorem proves a proposition, and proof irrelevance means its
+            # value is never unfolded, so dropping it is sound and is what
+            # makes a cut small without the artefact that `--axioms` brings.
+            drop_value = (as_axioms or (thm_axioms and k == "thm")) and not whole
             keep.add(j)
-            for e in decl_exprs(decls[j][1], as_axioms and not whole): want_e(e)
+            for e in decl_exprs(decls[j][1], drop_value): want_e(e)
             for nm in decl_names(decls[j][1]): want_n(nm)
 
     def emit_decl(j):
         raw, d = decls[j]
         k = next(iter(d)); v = d[k]
-        if not as_axioms or k in ("inductive", "quot", "axiom"):
+        if k in ("inductive", "quot", "axiom"):
+            return raw
+        if not as_axioms and not (thm_axioms and k == "thm"):
             return raw
         return json.dumps({"axiom": {"isUnsafe": False,
                                      "levelParams": v.get("levelParams") or [],
