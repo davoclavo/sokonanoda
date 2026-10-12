@@ -145,14 +145,12 @@ holds 1,824 declarations, `perf/app-lam`, `perf/fueled-chain`,
 certificates, which are `decide` over 7^4 to 21^4 tuples with a list lookup
 inside every one.
 
-`perf/app-lam` says in its own description what it wants: an **infer
-cache**. Each level applies a constant to two copies of one shared
-expression, and a checker that infers the type of each copy again does
-exponential work in the nesting. Lean can key that cache on the expression
-alone, because its free variables are unique names; a de Bruijn term means
-the same type depends on the context it is read in, so the key here has to
-hold the context as well. That is the next piece of work, and
-`init-prelude` and `perf/grind-ring-5` want it too.
+`perf/app-lam` answers now, in 10.0 s against a limit of 100 s. It wanted
+two things: the type of a repeated argument inferred once, which is keyed on
+the entry a reference names and held for the length of one spine, and a walk
+for an unsafe use that resolves each entry once. `docs/perf-plan.md` has the
+generated family that found the second one. Whether `init-prelude` and
+`perf/grind-ring-5` want a cache that reaches further is not measured yet.
 
 The four `perf/magma-*` files want neither sharing nor a cache. They are
 arithmetic and list lookups by the hundred million, and what reaches them is
@@ -184,8 +182,7 @@ Here is where the 124 `good` files small enough to read now stand:
 **Reduction throughput.** Reading was never the problem and the checking was.
 The three `proj-*-struct` tests all answer on the value kernel now, in under
 three seconds each, and what each of them needed is in
-`docs/perf-plan.md`. `app-lam` is still out of reach, and it is an infer
-cache that it asks for.
+`docs/perf-plan.md`. `app-lam` answers in 10.0 s.
 
 **Whitespace in a reader.** A blank after a colon is handled. A blank anywhere
 else is not, and the real corpora are not promised to be formatted like the
@@ -383,15 +380,15 @@ tarball, 195 attempted and one too large to read:
 
 | | before the speed work | after the level rules | after the recursor | the term kernel | the value kernel |
 |---|---|---|---|---|---|
-| correct | 101 | 101 | 173 | 186 | **188** |
+| correct | 101 | 101 | 173 | 186 | **189** |
 | declined | 82 | 87 | 17 | 0 | **0** |
 | wrong | 0 | 0 | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 | 10 | **8** |
+| error or timeout | 11 | 7 | 5 | 10 | **7** |
 
 **Every file it reads gets an answer, every answer is correct, and nothing is
-declined.** The eight it does not answer are `init-prelude`,
-`perf/app-lam`, `perf/fueled-chain`, `perf/grind-ring-5` and the four
-`perf/magma-*` tests. Each of those spends its **whole** arena limit, from
+declined.** The seven it does not answer are `init-prelude`,
+`perf/fueled-chain`, `perf/grind-ring-5` and the four `perf/magma-*`
+tests. Each of those spends its **whole** arena limit, from
 fifty seconds to three hundred and ninety, so no constant factor reaches
 any of them.
 

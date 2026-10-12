@@ -1149,11 +1149,52 @@ each level and the comparison met `2^n` of them where `n` were distinct.
 Dropping a pair already in the list answers it in 7.7 s. Call by need is
 what makes this cheap: without the heap there is no name to compare.
 
-### What `perf/app-lam` does not want
+### What `perf/app-lam` wanted, and how a generated family found it
 
 Its own description names two things: an **infer cache**, because each level
 applies a constant to two copies of one shared expression, and cheap
-substitution into a lambda body. Both were tried and neither moved it.
+substitution into a lambda body. The cache is half of it. The other half was
+somewhere nobody had looked.
+
+A family of the same shape, generated at `n` levels from the file's own
+prelude, is what found it. `tools` has no script for this; the generator is
+thirty lines and the shape is `wrap2 L L` at every level, where `L` is one
+entry named twice.
+
+| `n` | before | with the infer cache | with both fixes |
+|---|---|---|---|
+| 12 | 1.21 s | 0.64 s | 0.62 s |
+| 16 | 13.2 s | 0.92 s | 0.60 s |
+| 18 | 58.7 s | 2.15 s | 0.62 s |
+| 26 | -- | -- | 0.62 s |
+| 40 | -- | -- | 0.60 s |
+
+A factor of two per level, with and without the cache. So the cache was not
+the whole answer, and the next step was to ask what else grew. Inference on
+its own was flat in `n`. `Kernel.check_decl` on its own was flat in `n`. What
+grew was **`Kernel.uses_unsafe`**: the walk that asks whether a declaration
+mentions a declaration Lean never looked at, which resolved a reference
+wherever it met one. A term that names one entry twice then cost the work of
+the whole expansion.
+
+It visits each entry once now. What an entry holds is the same term wherever
+it is named from, and the shift does not change which constants it mentions,
+so the number of the entry is the whole of the key.
+
+Both fixes are needed, and each was measured without the other:
+
+| | `perf/app-lam`, limit 100 s |
+|---|---|
+| neither | no answer |
+| the cache alone | no answer |
+| the walk alone | no answer |
+| both | **accept in 10.0 s** |
+
+The lesson is the one the earlier stages kept teaching. Three attempts went
+into what the description pointed at, and the measurement that found the
+fault was the one that asked each part of the kernel separately how it grew.
+
+### Ruled out on the way
 
 | what was tried | `perf/app-lam` at 110 s |
 |---|---|
@@ -1161,12 +1202,5 @@ substitution into a lambda body. Both were tried and neither moved it.
 | the type of a repeated argument inferred once, per spine | no answer |
 | the same, with the spine collected through references | no answer |
 
-The first of those is the useful one: with **no conversion at all**, which is
-not a kernel, the file still does not answer. So the cost is inference
-itself, and it is not the duplicated argument that the description points
-at. The two copies do arrive as one reference each, with the same entry and
-the same shift, so the cache does hit -- it is just not where the time is.
-
-The spine walk and its cache are reverted. The next step is to find out
-where inference spends its time on one declaration of that file, and
-`tools/declsweep.py` cuts them out one at a time.
+The first of those still says something: with **no conversion at all**, which
+is not a kernel, the file did not answer. The cost was never conversion.
