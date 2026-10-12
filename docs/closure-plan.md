@@ -346,3 +346,57 @@ bugs in seconds and are the first thing to write next time.
 stops at the smallest subterm where the two reducers disagree. That is what
 found the fourth bug, and no amount of reasoning about de Bruijn indices
 found it before the tool did.
+
+## Stage 4: the value evaluator, and what conversion on values needs
+
+`bend/Val.bend` is the value evaluator, and it is **verified**:
+`bend/nfdiff.bend` takes every declaration's normal form twice -- once by
+`Eval.whnf` driven into every subterm, once by `Val.eval` with the answer
+read back -- and across the 176 small arena files that finish in thirty
+seconds, 175 agree. The one that does not is the comparison running out of
+its own budget on an 8.9-million-character normal form whose two forms are
+identical character for character.
+
+Four bugs the gate found in minutes, each worth knowing before writing this
+again:
+
+1. a recursor's rule takes the recursor's own arguments first, then the
+   constructor's fields, then the rest. Leaving the first group out puts the
+   fields where the motive belongs.
+2. a quotient takes the **last** argument of the value under `Quot.mk`.
+3. a projection's guard is on the field index **plus** the constructor's
+   parameters.
+4. structure eta belongs in the value evaluator too.
+
+### The constraint the next step has to respect
+
+`Val.eval` unfolds a definition as soon as it meets one, and conversion on
+values cannot be built on that. The reason is in `perf/identical-nesting`:
+conversion today compares two spines **before** unfolding their head, and
+reduced instead "it builds twelve nested structures twice and does not finish
+in six minutes". An evaluator that unfolds eagerly has already paid that cost
+before conversion gets a chance to avoid it.
+
+So the next piece is an evaluator with two modes, which is the distinction
+Lean draws between `whnfCore` and `whnf`: stop at a constant that **could**
+unfold, hand back the neutral, and let conversion decide. Then:
+
+- two neutrals with the same head and the same number of arguments compare
+  argument by argument, and nothing unfolds;
+- a definite no there puts the unfolding back on the table, which is the
+  `SEither` route `Conv.eq_all` already has;
+- everything else -- eta, the K rule, proof irrelevance, a literal against a
+  constructor -- is the same rule it is today, written against values.
+
+Proof irrelevance and the K rule need the **type** of a value, which means
+either inference on values or a read back at that one point. A read back
+there is sound and rare, and it is the cheaper way to start.
+
+### What is where
+
+| branch | what it holds |
+|---|---|
+| `main` | 186 of 195, 0 wrong. The reference, structure eta, the tools, every measurement |
+| `nbe` | `Val.bend` and `nfdiff.bend`: the verified value evaluator, called by nothing yet |
+| `closure` | the closure-in-a-term attempt, and the four bugs it paid for |
+| `memo` | the memo, and the 64.8 GB that closed it |
