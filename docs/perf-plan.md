@@ -1046,3 +1046,105 @@ that the cold-start lesson above invalidates.
    its size and its free-variable bound. The bound now travels in the
    shareable table, so two tables remain, and the number that made this look
    urgent was a first-run measurement.
+
+## What the value kernel was actually spending
+
+The heap was built to make the value kernel faster than the main line, and
+the first measurement said it was four times slower: 523.9 s over the corpus
+against 257.5 s, and eighteen files past twenty-five seconds against ten.
+None of that was the heap.
+
+### The ten that are left are not close
+
+Every one of the ten files the main line does not answer blows its **whole**
+arena limit, not a little over it.
+
+| file | limit | main |
+|---|---|---|
+| `init-prelude` | 50 s | no answer |
+| `perf/app-lam` | 100 s | no answer |
+| `perf/beta-ladder` | 50 s | no answer |
+| `perf/fueled-chain` | 50 s | no answer |
+| `perf/grind-ring-5` | 60 s | no answer |
+| `perf/magma-list-deep-n21` | 80 s | no answer |
+| `perf/magma-list-deep-n36` | 390 s | no answer |
+| `perf/magma-list-pair-n21` | 260 s | no answer |
+| `perf/magma-list-pair-n7` | 60 s | no answer |
+| `perf/shared-subterm` | 50 s | no answer |
+
+So no constant factor reaches any of them, and a plan that buys thirty
+percent buys nothing. That is what makes the value kernel worth the work:
+`perf/beta-ladder` answers on it in 2.7 s.
+
+### Five strict picks, and what each one cost
+
+An argument reduces before a match picks an arm. Every one of these was a
+`pick` over branches that all did their work, and the arm that was taken
+threw the rest away. The file is `perf/discarded-argument-match`, which the
+main line answers in 0.02 s.
+
+| what the pick threw away | time |
+|---|---|
+| nothing fixed yet | no answer in 40 s |
+| proof irrelevance, asked of every pair | 13.2 s |
+| `Val.const_next`: a definition's levels substituted into its body, an iota step's arguments, and a quotient's function, all three per constant | 9.4 s |
+| two inferences where the test had already said no | 9.4 s |
+| **the type of every binder, reduced** | **0.14 s** |
+
+The binder type is the one that is also a rule and not only a cost. The
+reduction that substitutes never looks at a binder type, so every one the
+value kernel reduced was work no answer needed. It takes a slot now.
+
+### Proof irrelevance costs the size of the side, per pair
+
+`perf/church-numerals` compares two normal forms of fourteen thousand
+applications that agree. Turning the rule off answered it in 0.14 s against
+forty-five seconds with it on, and the two halves of its test -- reading
+each side back, and inferring a type for each -- are both the size of the
+side. Lean asks the rule of every pair too, and can afford to because its
+inference is remembered.
+
+So the read back gets eighty steps and no more. A side that does not fit
+leaves `TUnk` behind, inference fails on that, and the rule does not fire;
+a no that rests on a side which was cut off becomes "do not know". The file
+answers accept in 2.9 s.
+
+### Two redesigns that measured worse
+
+**Proof irrelevance as an alternative, tried only when the structural route
+fails.** It is the right order for cost -- a pair that agrees never asks for
+the rule -- and the search pays for it. Every pair offers an alternative,
+each alternative holds the whole of the rest of the work, and a file whose
+comparison fails anywhere then restarts the queue over and over:
+`perf/discarded-argument-match` and `perf/repeated-subproblem` both spent
+three hundred thousand steps without an answer.
+
+**A stack of frames, each with its own alternative.** This is the shape the
+comparison really has, and it is complete where the single alternative the
+queue keeps is not. It also explores far more: `perf/church-numerals` needed
+ten times the budget to answer, and `perf/repeated-subproblem` stopped
+answering. Both are reverted. The queue keeps one alternative at a time.
+
+### The unfolding walk, and which arguments it may leave alone
+
+A step that unfolds a neutral unfolded every argument. Only some of them can
+matter: a primitive reads two as numbers, a recursor its major premise, a
+quotient the quotient, and a projection its subject. Leaving the rest alone
+is what lets `perf/shift-cascade` answer, in 39.5 s.
+
+It does not hold under a definition. A definition's body may read any of its
+own arguments, and which ones is not known until it unfolds, and
+`perf/magma-list-pair-n7` answered **reject** -- a wrong answer, the one
+thing that must stay at zero -- when its arguments stopped unfolding. So a
+definition unfolds all of them, as it did before, and
+`perf/proj-lazy-struct` still spends a hundred thousand steps inside the
+field nobody reads.
+
+### A pair asked once
+
+Two arguments in one slot are one argument, and the slot number says so.
+`perf/repeated-subproblem` compares `Tr.node u u` against `Tr.node v v` at
+every level, where both positions hold the same slot, so the pairs double at
+each level and the comparison met `2^n` of them where `n` were distinct.
+Dropping a pair already in the list answers it in 7.7 s. Call by need is
+what makes this cheap: without the heap there is no name to compare.
