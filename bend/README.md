@@ -138,14 +138,25 @@ be stated and then mechanically proven, in the same language as the code.
 
 Honestly and in order of size.
 
-**Throughput.** Nine files run past sixty seconds: `init-prelude`, which is
-3.7 MB, and eight `perf` tests. Nothing else is in the way of an answer, and
-no constant factor reaches them. `perf/shared-subterm` answers at a budget of
-3000 and wants more than seventy seconds at 30000, so it is about a hundred
-times away; `init-prelude` does not finish in nine hundred seconds. Five of
-the nine are small files built to punish a kernel with no sharing in its
-terms, and `docs/perf-plan.md` records two measured attempts at sharing and
-why Bend charges for both.
+**Throughput, and a cache for inference.** Eight files run past their arena
+limits, and each spends the whole of it: `init-prelude`, which is 3.7 MB and
+holds 1,824 declarations, `perf/app-lam`, `perf/fueled-chain`,
+`perf/grind-ring-5`, which is 10 MB, and the four `perf/magma-*`
+certificates, which are `decide` over 7^4 to 21^4 tuples with a list lookup
+inside every one.
+
+`perf/app-lam` says in its own description what it wants: an **infer
+cache**. Each level applies a constant to two copies of one shared
+expression, and a checker that infers the type of each copy again does
+exponential work in the nesting. Lean can key that cache on the expression
+alone, because its free variables are unique names; a de Bruijn term means
+the same type depends on the context it is read in, so the key here has to
+hold the context as well. That is the next piece of work, and
+`init-prelude` and `perf/grind-ring-5` want it too.
+
+The four `perf/magma-*` files want neither sharing nor a cache. They are
+arithmetic and list lookups by the hundred million, and what reaches them is
+the cost of one reduction step.
 
 **A string literal.** The corpus holds ten kinds of expression node and this
 kernel reads nine. The one it does not is `strVal`, in 74 places across four
@@ -171,10 +182,10 @@ Here is where the 124 `good` files small enough to read now stand:
 | timed out | 9 |
 
 **Reduction throughput.** Reading was never the problem and the checking was.
-Three `perf` tests still time out: `app-lam` and the two `proj-*-struct`. The
-work is reduction and inference doing real work, so a faster table will not
-move them. See "Making it fast" for what did move them, and for the four
-places a guard was written and never reached.
+The three `proj-*-struct` tests all answer on the value kernel now, in under
+three seconds each, and what each of them needed is in
+`docs/perf-plan.md`. `app-lam` is still out of reach, and it is an infer
+cache that it asks for.
 
 **Whitespace in a reader.** A blank after a colon is handled. A blank anywhere
 else is not, and the real corpora are not promised to be formatted like the
@@ -370,17 +381,27 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | before the speed work | after the level rules | after the recursor | now |
-|---|---|---|---|---|
-| correct | 101 | 101 | 173 | **186** |
-| declined | 82 | 87 | 17 | **0** |
-| wrong | 0 | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 | 9 |
+| | before the speed work | after the level rules | after the recursor | the term kernel | the value kernel |
+|---|---|---|---|---|---|
+| correct | 101 | 101 | 173 | 186 | **188** |
+| declined | 82 | 87 | 17 | 0 | **0** |
+| wrong | 0 | 0 | 0 | 0 | **0** |
+| error or timeout | 11 | 7 | 5 | 10 | **8** |
 
 **Every file it reads gets an answer, every answer is correct, and nothing is
-declined.** The nine it does not read are eight `perf` tests and
-`init-prelude`, all of which run past sixty seconds, plus one more too large
-to read at all.
+declined.** The eight it does not answer are `init-prelude`,
+`perf/app-lam`, `perf/fueled-chain`, `perf/grind-ring-5` and the four
+`perf/magma-*` tests. Each of those spends its **whole** arena limit, from
+fifty seconds to three hundred and ninety, so no constant factor reaches
+any of them.
+
+The last column is the value kernel of `bend/Val.bend` and
+`bend/Vconv.bend`, which carries an environment and a heap instead of
+substituting. It answers `perf/beta-ladder` in 2.7 s,
+`perf/shared-subterm` in 17.3 s and `perf/repeated-subproblem` in 7.8 s,
+and the kernel that substitutes answers none of the three.
+`docs/closure-plan.md` is how it was built and `docs/perf-plan.md` is what
+each piece of it was measured to be worth.
 
 `init-prelude` was a wrong answer for one iteration, and finding out why took
 two fixes. See "What a faster kernel found in the prelude" below.
