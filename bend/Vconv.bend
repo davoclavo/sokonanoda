@@ -865,6 +865,29 @@ def Vconv.all(
             Vconv.step_alts(st, a, rest, as),
             List.append(&2, VPair, Vconv.step_more(st), rest))
 
+# Where this comparison does not know, the one that substitutes is asked.
+#
+# The two decide the same relation, and this one is faster on nearly every
+# file; where it gives up, the older one often does not. `Nat.modCoreGo_lt`
+# of `good/init-prelude` is the file that says so: its proof applies a motive
+# held behind a reference, and the comparison of the motive's instance with
+# the type the argument has answers "do not know" here and yes there. The
+# whole closure of that theorem is 152 declarations, and it declines in 7.3 s
+# by this comparison and accepts in 0.2 s by that one.
+#
+# The fallback is a match and not a `pick`, so the comparison that
+# substitutes runs only where this one has already given up. A pair that
+# settles never pays for it.
+def Vconv.or_terms(
+  a: A.Ans, +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +x: T.Term,
+  +y: T.Term
+) -> A.Ans:
+  match a:
+    case A.AUnk{}:
+      C.Conv.eq_in(fuel, env, cx, x, y)
+    case o:
+      o
+
 # Are these two terms definitionally equal? The context tells the walk how
 # many binders it starts inside, which is where a rigid variable's level
 # counts from.
@@ -882,9 +905,11 @@ def Vconv.eq_in(
     W.Val.core_in_h(fuel, env, W.Hp.new(), Vconv.depth(cx, 0n), a)
   +r2 : W.VR =
     W.Val.core_in_h(fuel, env, W.VR.heap(r1), Vconv.depth(cx, 0n), b)
-  Vconv.all(
-    fuel, env, W.VR.heap(r2), A.AYes{}, Nil{},
-    [VP{cx, W.VR.val(r1), W.VR.val(r2)}])
+  Vconv.or_terms(
+    Vconv.all(
+      fuel, env, W.VR.heap(r2), A.AYes{}, Nil{},
+      [VP{cx, W.VR.val(r1), W.VR.val(r2)}]),
+    fuel, env, cx, a, b)
 
 # Conversion, unless the question is already settled. The left answer
 # arrives as a parameter so a definite no returns without the work, which is
