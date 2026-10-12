@@ -1586,3 +1586,49 @@ the peel is not the path the comparison takes.
 What is left to try for the magma family is the cost of one reduction step,
 which is where three of the six are. That is the next measurement: where the
 inner loop of a `decide` over tuples spends its time.
+
+### The heap earns its cost
+
+Call by need costs a trie write for every argument that is not a variable or
+a literal, and in a long computation the trie holds millions of cells. So the
+obvious question is whether the laziness pays for the heap. It does, and by a
+lot: with the argument of an application reduced where it is given, which is
+call by value and no heap traffic at all,
+
+| | call by need | call by value |
+|---|---|---|
+| `perf/magma-list-pair-n7` | accept in 24.7 s | no answer in 60 s |
+| `perf/shared-subterm` | accept in 18.8 s | no answer in 60 s |
+| `perf/discarded-argument-match` | accept in 0.02 s | accept in 0.02 s |
+
+The third row is there because it used to be the file that argued for the
+heap, and the term comparison asked first now answers it either way.
+
+### Three guesses at the `isValidChar_UInt32` pair, all wrong
+
+The declaration is one pair that no route settles, in a closure of 54
+declarations. Three explanations were built and measured, and none of them is
+it:
+
+1. **A literal peeled one successor at a time.** Turning that arm of the
+   comparison into an outright no left the cut at the same sixty seconds.
+2. **The rule conditions read eagerly.** `Val.rule_kind` asked all four of
+   its tests through a `pick`, two of which read the environment and one of
+   which walks a recursor's rules. Asking them one at a time changed nothing
+   measurable on any file.
+3. **A literal wearing a successor.** `Nat.lt n m` is `Nat.le (n+1) m`, so a
+   primitive meeting `Nat.succ 1114112` sees a constructor application and
+   not a literal, and `Nat.ble` then counts down. Teaching the literal test
+   to see through the coats -- with the name of each coat checked against the
+   successor the inner literal names -- left the cut at sixty seconds.
+
+All three are reverted. What is true of the pair remains: inference of that
+value takes 0.29 s with the comparisons removed and does not finish in sixty
+with them, and axiomatising any one of `Nat.ble`, `Nat.decLt`, `Nat.decLe`,
+`UInt32.size`, `Nat.isValidChar` or `Decidable.decide` makes the file reject
+at once, so every one of them is needed for the proof to go through.
+
+The next thing to try is not another guess. It is to make one of the probes
+fast enough to name the pair: `bend/blame.bend` walks the value and asks
+inference at every node, which is why it cannot be used where one inference
+takes a minute.
