@@ -781,6 +781,49 @@ needs `Term.occurs`, `Term.pars_ok`, `Term.has_bvar`, `Term.pi_count` and
 half-built version is a point worse than none.
 
 
+### B24: the memo does not hit, so a stored hash would not earn its refactor
+
+| hypothesis | status | result |
+|---|---|---|
+| B24 the memo failed on the cost of its key, so a hash stored in every node, which makes the key free, would make it pay | **rejected** | the memo does not hit at all: given a free key it fills 64.8 GB and the process dies |
+
+B22 left one reading open. The memo was built, it was correct, and what it
+cost was the key: hashing a term and comparing two of them are both the size
+of the term. A hash **stored in each node** removes that, because a node's
+hash is its children's hashes mixed, which is O(1) at construction, and the
+comparison on a hash match stays exact so a wrong hash can only lose a hit
+and never a verdict. That is 442 sites, and it was worth measuring before
+spending them.
+
+The measurement was a probe: the deep hash, no cap on the key, and the
+bucket's first entry accepted without comparison, which is what a stored hash
+with an O(1) comparison would cost. On `perf/shared-subterm`:
+
+```
+185.28 real   64826261504 maximum resident set size   exit 1
+```
+
+Sixty-five gigabytes and dead. So the memo was never short of a cheaper key.
+It **does not hit**: nearly every term it stores is distinct, because each of
+the two repeated computations carries its own accumulated substitution, and
+two terms that mean the same thing are not the same syntax. A memo keyed on
+syntax cannot see that they are one computation.
+
+### What that leaves
+
+The sharing these files need is not sharing of answers; it is sharing of the
+**work**, and that needs the shared subterm to stay one object through
+substitution. That is what a closure is: a term paired with an environment,
+where instantiating a binder pushes a value onto the environment rather than
+copying it into the body. Then `rec t` and `rec t` are literally one object
+and reduce once.
+
+Bend is affine, so a term used twice is copied, and that is the whole
+difficulty: a closure machine here means a graph reducer with a heap of its
+own -- an arena of nodes, indices instead of pointers, and an explicit stack
+-- written inside Bend, with the expression table as its first layer. That is
+a different program from this one, not a change to it.
+
 ### B23: a lower fuel does not convert a file that runs out of time
 
 | hypothesis | status | result |
