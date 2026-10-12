@@ -940,12 +940,18 @@ def Val.core_h(+fuel: Nat, +env: E.DTable, +hp: Hp, +t: T.Term) -> VR:
 # context, and reading it in an empty environment makes every one of its
 # variables unknown. That is what made the K-like rule answer no and what
 # made thirty-one files answer "do not know".
+# The list is built by consing and not by appending. `List.append` walks
+# what it has already built, so appending one binder at a time costs the
+# square of the depth -- and a comparison under fourteen thousand binders
+# asks for this list once per pair. Consing from the outermost binder
+# inwards puts them in the same order for the cost of one cell each.
 def Val.rigids_go(+n: Nat, +d: Nat, +acc: List<&2, Val>) -> List<&2, Val>:
   match n:
     case 0n:
       acc
     case 1n+k:
-      Val.rigids_go(k, d, List.append(&2, Val, acc, [Val.rigid(k)]))
+      Val.rigids_go(
+        k, d, Con{Val.rigid(Nat.sub(Nat.sub(d, k), 1n)), acc})
 
 def Val.rigids(+d: Nat) -> List<&2, Val>:
   Val.rigids_go(d, d, Nil{})

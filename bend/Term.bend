@@ -204,6 +204,44 @@ def Term.is_unk(t: Term) -> Bool:
     case x:
       False{}
 
+# Does this term hold the term reduction gives back when it runs out of
+# budget, anywhere inside it?
+#
+# A read back that is given a small budget stops where the budget stops and
+# leaves this term behind, so the answer is how to tell a term that was read
+# back whole from one that was cut off. Out of budget answers yes, which is
+# the safe side: a verdict is never read off a term reduction gave up on.
+def Term.any_unk(+fuel: Nat, t: Term) -> Bool:
+  match fuel:
+    case 0n:
+      True{}
+    case 1n+(+f):
+      match t:
+        case TUnk{}:
+          True{}
+        case TVar{i}:
+          False{}
+        case TSort{l}:
+          False{}
+        case TNat{v, nm, zr, sc}:
+          False{}
+        case TConst{n, ls}:
+          False{}
+        case TRef{i, k, m}:
+          False{}
+        case TApp{+g, +a}:
+          Bool.or(Term.any_unk(f, g), Term.any_unk(f, a))
+        case TLam{+ty, +bd}:
+          Bool.or(Term.any_unk(f, ty), Term.any_unk(f, bd))
+        case TPi{+ty, +bd}:
+          Bool.or(Term.any_unk(f, ty), Term.any_unk(f, bd))
+        case TLet{+ty, +v, +bd}:
+          Bool.or(
+            Term.any_unk(f, ty),
+            Bool.or(Term.any_unk(f, v), Term.any_unk(f, bd)))
+        case TProj{tn, idx, +st}:
+          Term.any_unk(f, st)
+
 # How many binders a telescope opens with. The result type of a constructor
 # is an application of its inductive and never a pi, so this counts exactly
 # the parameters and the fields.

@@ -412,6 +412,41 @@ def Vconv.ty_of(
 # before. The rule fires on few pairs, and inference is the dearest thing a
 # comparison does: asking for both types where the test says no paid for
 # two inferences that nothing read.
+# What the rule may spend on reading a side back.
+#
+# The test reads both sides back and infers a type for each, and both cost
+# the size of the side. Lean asks the rule of every pair and can afford to,
+# because its inference is remembered; nothing here remembers one. So the
+# read back gets a small budget of its own: a side that does not fit leaves
+# `TUnk` behind, inference fails on that, and the rule does not fire.
+#
+# `perf/church-numerals` is the file that sets this. Its two sides are
+# normal forms of fourteen thousand applications that agree, and asking the
+# rule of every pair of them cost forty-five seconds against a tenth of a
+# second for the comparison alone.
+def Vconv.quote_cap() -> Nat:
+  80n
+
+# A no that rests on a side which was cut off is not a no. The pair is left
+# as "do not know", because the rule might have fired on the whole side.
+def Vconv.soften(st: VStep) -> VStep:
+  match st:
+    case SNo{}:
+      SUnk{}
+    case o:
+      o
+
+def Vconv.struct_maybe(
+  cut: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
+  +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val
+) -> VSH:
+  match cut:
+    case False{}:
+      Vconv.struct_then(fuel, env, hp, cx, a, b)
+    case True{}:
+      +r : VSH = Vconv.struct_then(fuel, env, hp, cx, a, b)
+      MkSH{Vconv.soften(Vconv.sh_step(r)), Vconv.sh_heap(r)}
+
 def Vconv.irrel_step(
   ok: Bool, +fuel: Nat, +env: E.DTable, +hp: W.Hp,
   +cx: List<&2, T.Term>, +a: W.Val, +b: W.Val, +qa: T.Term, +qb: T.Term
@@ -429,7 +464,11 @@ def Vconv.irrel_step(
       MkSH{
         SMore{[VP{cx, W.VR.val(r1), W.VR.val(r2)}]}, W.VR.heap(r2)}
     case False{}:
-      Vconv.struct_then(fuel, env, hp, cx, a, b)
+      Vconv.struct_maybe(
+        Bool.or(
+          T.Term.any_unk(Vconv.quote_cap(), qa),
+          T.Term.any_unk(Vconv.quote_cap(), qb)),
+        fuel, env, hp, cx, a, b)
 
 def Vconv.irrel_go(
   +fuel: Nat, +env: E.DTable, +hp: W.Hp, +cx: List<&2, T.Term>, +a: W.Val,
@@ -437,8 +476,12 @@ def Vconv.irrel_go(
 ) -> VSH:
   # Reading a value back hands back a term, not a value, so no slot leaves
   # the heap here and the two readings can start from the same one.
-  +qa : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), a)
-  +qb : T.Term = W.Val.quote_d_h(fuel, env, hp, Vconv.depth(cx, 0n), b)
+  +qa : T.Term =
+    W.Val.quote_d_h(
+      Vconv.quote_cap(), env, hp, Vconv.depth(cx, 0n), a)
+  +qb : T.Term =
+    W.Val.quote_d_h(
+      Vconv.quote_cap(), env, hp, Vconv.depth(cx, 0n), b)
   Vconv.irrel_step(
     Vconv.irrel_ok(fuel, env, cx, qa, qb),
     fuel, env, hp, cx, a, b, qa, qb)
