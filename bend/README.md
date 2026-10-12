@@ -1005,20 +1005,27 @@ which is what the Rust kernel gets from a pointer and a hash table. Four of
 the nine are the arena's `magma-*` family, which exists to punish a cache
 that drops entries, so seven of the nine are the same ask.
 
-A cache cannot be threaded through this kernel as it stands. `Eval.whnf`
-would have to hand one back as well as a term, so every one of its fourteen
-self-calls would need a helper to take the pair apart, and Bend does not let
-a helper call the function it helps. The shape that works is an abstract
-machine: one tail-recursive loop whose state holds the fuel, the
-environment, the cache, the term under control, the spine, and a stack of
-frames for the nested reductions that `whnf` does today inside an argument.
-`Conv.eq_all` is already such a loop and would carry the cache in its
-accumulator.
+A cache **can** be threaded through this kernel, and it was. `Eval.whnf` hands
+back a `Data` record of the term and the memo, because a Bend pair is a `Type`
+and may be used once while a `Data` record may be used twice; every self-call
+of `whnf` is in tail position, so the loop never takes its own result apart,
+and only `match` is restricted to a parameter or a field, so a function may
+take the record apart at the few nested reductions. `Conv.eq_all` carries the
+memo in its accumulator. All 17 regression tests passed on it.
 
-That is the next piece of work, and it is a rewrite of the evaluator rather
-than a change to it. `good/init-prelude` needs it too and needs more: 1,824
-declarations, each of them real work, and it does not finish in nine hundred
-seconds.
+What cannot be paid for is the **key**. Lean keys its cache on a pointer,
+which is free to hash and free to compare. Bend exposes no pointer, so the key
+is the content, and the content costs what the reduction costs: at a key cap
+of 24 nodes nothing hits, because the terms whose reduction repeats are built
+by substitution and are large; at a cap of 200 a 292-byte export no longer
+finishes in sixty seconds, because deep self-similar terms collide in any
+bounded hash and the comparison then walks the whole of one.
+
+So the memo needs hash consing, which needs an identity for a term that this
+language does not give. That work sits on the branch `memo`, measured and
+unmerged, and `docs/perf-plan.md` records the numbers. `good/init-prelude`
+needs it too and needs more: 1,824 declarations, each of them real work, and
+it does not finish in nine hundred seconds.
 
 ## Reading an export
 

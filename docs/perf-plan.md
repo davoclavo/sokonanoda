@@ -780,6 +780,59 @@ needs `Term.occurs`, `Term.pars_ok`, `Term.has_bvar`, `Term.pi_count` and
 `Term.bend`. The work is saved as a patch rather than committed, because the
 half-built version is a point worse than none.
 
+
+### B22: a memo for reduction, and the identity Bend does not have
+
+| hypothesis | status | result |
+|---|---|---|
+| B22 a cache from a term to its weak head normal form pays for the seven cache-punishing files | **rejected** | the key costs what the reduction costs, at every size |
+
+Seven of the nine are the same ask. `perf/shared-subterm` states
+
+```
+ldepth (perfect n leaf) = ldepth2 (perfect n leaf)
+```
+
+by `refl`, with `n` a tower of 1,100 `succ`, so the tree has 2^1100 nodes.
+The recursor's own rule builds `succ (max (rec t) (rec t))`: the field `t` is
+shared, and the two `rec t` are **two computations** on it. No representation
+of terms makes them one, and reducing the argument first does not either,
+because what is duplicated is the computation and not the value. Four more of
+the nine are the arena's `magma-*` family, which exists to punish a cache
+that drops entries.
+
+The threading is not the obstacle, and it is worth writing down how it works.
+`Eval.whnf` can hand back a `Data` record of the term and the memo — a Bend
+pair is a `Type` and may be used once, a `Data` record may be used twice —
+and every self-call of `whnf` is in tail position, so the loop never has to
+take its own result apart. Only `match` is restricted to a parameter or a
+field, so a function may take the record apart at the few nested reductions.
+`Conv.eq_all` is already an accumulator loop and carries the memo in it.
+That was built, and all 17 regression tests passed on it.
+
+The obstacle is the **key**. Lean keys its cache on a pointer: free to hash,
+free to compare. Bend exposes no pointer, so the key is the content, and the
+content costs what the reduction costs.
+
+| key cap | result |
+|---|---|
+| 24 nodes | `perf/church-numerals` 0.2 s, and no hit on any of the nine |
+| 200 nodes | a 292-byte export does not finish in sixty seconds |
+| no cap | `perf/church-numerals` goes from 0.1 s to more than sixty |
+
+A small cap never hits, because the terms whose reduction repeats are built
+by substitution and a term built by substitution is large. A large cap hits
+and pays the whole cost of the reduction at every lookup, because deep
+self-similar terms collide in any bounded hash and the comparison then walks
+the whole of one.
+
+So the memo needs hash consing, and hash consing needs an identity for a term
+that this language does not give. The work is on the branch `memo` and is not
+merged. The honest next step is not a better hash: it is either an identity
+for terms, which means interning every term reduction builds and threading
+the intern table through substitution, or it is accepting that these seven
+files stay out of reach.
+
 ### The rig: do not use `--threads 8` on this machine
 
 A whole stretch of measurements was poisoned by it. The same binary answers a
