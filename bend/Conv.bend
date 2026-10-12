@@ -216,12 +216,13 @@ def Conv.same_step(+env: E.DTable, a: T.Term, b: T.Term) -> SameStep:
       SNext{[MkTT{t1, t2}, MkTT{v1, v2}, MkTT{b1, b2}]}
     case T.TUnk{} T.TUnk{}:
       SNext{Nil{}}
-    case T.TRef{i} T.TRef{j}:
-      Conv.same_of(Nat.is_eq(i, j))
-    case T.TRef{+i} y:
-      SNext{[MkTT{E.Env.expr(env, i), y}]}
-    case x T.TRef{+j}:
-      SNext{[MkTT{x, E.Env.expr(env, j)}]}
+    case T.TRef{i, k1, m1} T.TRef{j, k2, m2}:
+      Conv.same_of(
+        Bool.and(Nat.is_eq(i, j), Bool.and(Nat.is_eq(k1, k2), Nat.is_eq(m1, m2))))
+    case T.TRef{+i, +k, m} y:
+      SNext{[MkTT{E.Env.expr_at(env, i, k), y}]}
+    case x T.TRef{+j, +k, m}:
+      SNext{[MkTT{x, E.Env.expr_at(env, j, k)}]}
     case x y:
       SDiff{}
 

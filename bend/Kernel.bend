@@ -615,8 +615,8 @@ def Kernel.uses_unsafe(+fuel: Nat, t: T.Term, +env: E.DTable) -> Bool:
       False{}
     case 1n+f:
       match t:
-        case T.TRef{+i}:
-          Kernel.uses_unsafe(f, E.Env.expr(env, i), env)
+        case T.TRef{+i, +k, m}:
+          Kernel.uses_unsafe(f, E.Env.expr_at(env, i, k), env)
         case T.TConst{+n, ls}:
           E.Decl.is_unsafe(E.Lookup.get(E.Env.find(env, n)))
         case T.TApp{g, a}:

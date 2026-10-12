@@ -227,7 +227,9 @@ def Shape.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           Shape.const_type(E.Env.find(env, n), ls)
         case T.TApp{g, +a}:
           +gt = V.Eval.whnf(f, env, Shape.ty(Shape.infer(f, env, ctx, g)), Nil{})
-          Shape.if_ok(Shape.is_pi(gt), T.Term.inst(Shape.pi_bd(gt), a))
+          Shape.if_ok(
+            Shape.is_pi(gt),
+            T.Term.inst_at(E.Env.tab(env), Shape.pi_bd(gt), a))
         case T.TLam{+ty, bd}:
           +bt = Shape.infer(f, env, Con{ty, ctx}, bd)
           Shape.if_ok(Shape.ok(bt), T.TPi{ty, Shape.ty(bt)})
@@ -242,14 +244,14 @@ def Shape.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
               Bool.and(Shape.is_sort(ts), Shape.is_sort(bs))),
             T.TSort{L.Level.mk_imax(Shape.sort_level(ts), Shape.sort_level(bs))})
         case T.TLet{ty, +v, bd}:
-          Shape.infer(f, env, ctx, T.Term.inst(bd, v))
+          Shape.infer(f, env, ctx, T.Term.inst_at(E.Env.tab(env), bd, v))
         case T.TNat{+v, +nm, +zr, +sc}:
           SOk{T.TConst{nm, Nil{}}}
         case T.TUnk{}:
           SBad{}
-        case T.TRef{+i}:
+        case T.TRef{+i, +k, m}:
           # A reference is resolved against the table and asked again.
-          Shape.infer(f, env, ctx, E.Env.expr(env, i))
+          Shape.infer(f, env, ctx, E.Env.expr_at(env, i, k))
         case T.TProj{tn, +idx, +st}:
           Shape.proj_from(
             f, env,

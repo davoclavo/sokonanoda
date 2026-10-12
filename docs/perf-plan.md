@@ -794,6 +794,104 @@ of the same source is fast, and a 292-byte file takes two hundred seconds. It
 led to reverting work that was sound. The rig uses `--threads 4` now, and the
 perf plan's own rule about a thread count being a collective question stands.
 
+
+### B21: a reference for the open case, which is almost all of it
+
+The four-class table above was measured by a tool that read a reference as a
+leaf, and it put the weight in the wrong column. Measured again from the
+export itself, with the free variables of each entry computed bottom up:
+
+| file | entries | open | names a universe |
+|---|---|---|---|
+| `perf/shared-subterm` | 1,175 | 8% | 1% |
+| `perf/beta-ladder` | 10,284 | **99%** | 0% |
+| `perf/fueled-chain` | 16,168 | **94%** | 4% |
+| `perf/app-lam` | 24,430 | **99%** | 0% |
+
+So the level substitution is not the work. A level parameter appears in 0 to
+4 percent of the entries, and the open expression is 94 to 99 percent of
+them. The distribution of the free-variable count settles the design too:
+almost every open entry uses one, two or three distinct variables.
+
+**What the parse stored, before.** A tool that sums the nodes of every entry
+of the table, rather than of the declarations:
+
+| file | stored nodes | largest entry |
+|---|---|---|
+| `perf/shared-subterm` | 5,893 | 65 |
+| `perf/beta-ladder` | 56,009,873 | 15,999 |
+| `perf/fueled-chain` | **6,646,462,095** | 183,695,885 |
+
+A reference stood only for a closed entry, so a large **open** entry was
+copied into every parent, and the copies compounded. That is the 869 kB file
+storing six billion nodes.
+
+**Two designs were simulated before either was built.** The simulation
+replays the export's graph and sums what each rule would store.
+
+| rule | `beta-ladder` | `fueled-chain` | `app-lam` |
+|---|---|---|---|
+| closed references only, size 64 | 56,009,881 | 6,681,072,761 | 119,141,552,556,382,848 |
+| lambda lifting, any size | 12,029,924 | 155,990 | 96,050,881 |
+| a shift in the reference, any size | **26,946** | **52,218** | **65,427** |
+
+Lambda lifting fails. It closes an entry by abstracting its free variables,
+which needs no new machinery at all, and the use site then costs one
+application per variable: the entries with two thousand and four thousand
+free variables make that worse than the copy.
+
+A shift costs one word and wins everywhere, so that is what was built.
+
+**`TRef{i, k, m}`.** `i` names the entry, `k` shifts its free variables into
+the scope the reference stands in, and `m` bounds them, so the variables a
+reference uses are the ones from `k` up to `k + m`. A lift or a substitution
+compares its cutoff against that range and answers in one of three ways: no
+variable of the reference moves, so leave it; every one moves, so change `k`
+and leave the entry alone; or the cutoff falls inside the range, and only
+then is the entry read and walked.
+
+The parser writes a shift of zero, because an expression of the export's
+table is named by expressions at its own binder depth, and a de Bruijn term
+is the same term wherever it is named from. That is how Lean shares its own
+expressions.
+
+Three things make it sound. A reference still may not name an expression
+that mentions a level parameter, because the remapping is per declaration
+and the table is shared. A declaration's own type is still stored with its
+references expanded, because every pass that reads a type as syntax reads a
+reference as a leaf. And the walks that may meet a reference in a value --
+`Term.lift_at`, `Term.subst_at`, `Term.inst_at` -- take the table, while the
+walks that may not keep the old signature and resolve against an empty
+table, so a reference that ever reached them would be answered "do not know"
+rather than answered wrongly.
+
+What it bought:
+
+| file | stored before | stored after | read into terms |
+|---|---|---|---|
+| `perf/shared-subterm` | 5,893 | 5,893 | 0.0 s |
+| `perf/beta-ladder` | 56,009,873 | **34,280** | 0.2 s |
+| `perf/fueled-chain` | 6,646,462,095 | **222,028** | 0.4 s |
+| `perf/app-lam` | could not be read | **70,326** | 0.7 s |
+
+`perf/let-ladder` answers in 1.67 s where it took 3.83 s. The score is 186
+with the same nine files out of time, so the parse is no longer the wall for
+any of them: every one of the nine is now the checker's own work.
+
+### The rig: throw away the first run of a new binary
+
+A fresh binary answered `perf/shared-subterm` in 53 seconds and the same
+binary answered it in 36 milliseconds on the next run. The first execution
+of a newly written file on this machine pays a fixed cost of tens of
+seconds, and two binaries compared in one pass therefore hand the first one
+a result that means nothing.
+
+That is what made the earlier conclusion -- that restoring the references in
+binder types was slower -- wrong: a parse-only counter showed 53 s against
+0.24 s between two builds whose node counts were identical to the digit, and
+both answered in 36 ms once warm. Every measurement in this file from here
+on runs each binary once on a small file first and reports the second run.
+
 ### The four classes, and the order they put the work in
 
 | file | closed, level-free | closed, with level | open, level-free | open, with level |
@@ -806,25 +904,24 @@ perf plan's own rule about a thread count being a collective question stands.
 A reference now covers the first column, which is why `shared-subterm` builds
 4,282 nodes instead of 6,292 and why the other three gain almost nothing.
 
-The table orders what is left:
+What is left, in the order the measurements put it in. The first three items
+of the earlier list are done, and the fourth turned out to rest on a number
+that the cold-start lesson above invalidates.
 
-1. **A shift in the reference**, so it may stand for an **open** expression.
-   `TRef{i, sh}` denotes the entry lifted by `sh`, and the entry's own count
-   of outside binders decides when `Term.lift` and `Term.subst` may answer in
-   one step and when they must expand. That is 98.5% of `app-lam`, the file
-   that cannot be read at all.
-2. **A level substitution in the reference**, so it may stand for an
-   expression that names a universe. The per-declaration remapping is why it
-   may not today, and the composition of that remapping with any later
-   substitution is an association list from name to level, which is short
-   enough to carry. That is 90% of `fueled-chain` and 75% of the prelude.
-3. **The analysis passes resolve.** `Term.occurs`, `Term.pars_ok`,
-   `Term.has_bvar`, `Term.pi_count` and `Term.pi_skip` read a reference as a
-   leaf, which is why a type is expanded today. Moving them to a module that
-   can see the table is the pattern already proven by moving the syntactic
-   test from `Term` to `Conv`.
-4. **One table, not three.** `ETable` should hold each entry's term beside
-   its size, its free-variable count and whether it names a universe. Three
-   tables mean three copies of a growing trie per expression line, because
-   `Parse.expr_of` takes the whole state, and that is what took
-   `perf/beta-ladder` from 0.16 s to 2.4 s to read.
+1. **The checker's own work.** All nine files that run out of time now spend
+   it in the checker, not the parser. Eager substitution is why: a beta step
+   pushes the substitution into the body and the result is a new term, so an
+   expression that was shared once is expanded once per use. A machine that
+   carries an environment instead of substituting -- a closure -- is what
+   fixes `perf/beta-ladder` and `perf/app-lam`, and it is a rewrite of
+   `Eval.whnf`, not a tweak of it.
+2. **A cache for `whnf` and for conversion.** `good/init-prelude` holds 1,824
+   declarations and each is real work; it does not finish in nine hundred
+   seconds. Nothing here remembers a reduction, so the same subterm is
+   reduced once per occurrence.
+3. **A level substitution in the reference**, which the measurement above
+   puts at 0 to 4 percent of the entries. It is no longer the next thing.
+4. **One table, not three.** `ETable` could hold each entry's term beside
+   its size and its free-variable bound. The bound now travels in the
+   shareable table, so two tables remain, and the number that made this look
+   urgent was a first-run measurement.

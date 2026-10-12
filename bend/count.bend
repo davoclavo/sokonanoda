@@ -45,7 +45,7 @@ def Count.nodes(t: T.Term, +acc: Nat) -> Nat:
       1n+acc
     case T.TProj{tn, idx, st}:
       Count.nodes(st, 1n+acc)
-    case T.TRef{i}:
+    case T.TRef{i, k, m}:
       1n+acc
 
 def Count.decl(+d: E.Decl, +acc: Nat) -> Nat:

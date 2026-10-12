@@ -35,30 +35,24 @@
 import Base
 import ./Level.bend as L
 import ./Term.bend as T
+import ./Idx.bend as Ix
 
-# A bound on the number of bits an index has. A Bend `Nat` holds less than
-# 2^48, so no index reaches this. The descent stops when the index runs out,
-# not here; this is only what makes the recursion terminate.
+# The five lines of the descent live in `Idx.bend`, because `Term.bend` holds
+# the table of expressions and may not import this file.
 def Table.bits() -> Nat:
-  48n
+  Ix.Idx.bits()
 
-# Is this index the one stored at the node the descent has reached?
 def Table.here(+i: Nat) -> Bool:
-  Nat.is_eq(i, 0n)
+  Ix.Idx.here(i)
 
-# Does the rest of this index take the low half?
 def Table.low(+i: Nat) -> Bool:
-  Nat.is_eq(Nat.mod(i, 2n), 0n)
+  Ix.Idx.low(i)
 
-# The index with the bit this level used taken off. The stored index is one
-# more than the number asked for, so that zero can mean "stop here".
 def Table.rest(+i: Nat) -> Nat:
-  Nat.div(i, 2n)
+  Ix.Idx.rest(i)
 
-# The path an index takes. One more than the index, so that the index itself
-# is reached when the path runs out.
 def Table.path(+i: Nat) -> Nat:
-  1n+i
+  Ix.Idx.path(i)
 
 # Levels
 # ------
@@ -189,129 +183,13 @@ def LTable.set(
 
 # Terms
 # -----
+#
+# The table of expressions is in `Term.bend`, because `Term.subst` must
+# resolve a reference and `Term.bend` may not import this file. These two
+# stand here so that the name the rest of the kernel calls does not change.
 
-type ETable is Data:
-  ExTip{}
-  ExNode{v: Maybe<&2, T.Term>, lo: ETable, hi: ETable}
-
-def ETable.new() -> ETable:
-  ExTip{}
-
-# A slot nothing was written to answers the unknown term, so a line that names
-# an expression the export never wrote is not mistaken for a real one.
-def ETable.or_unk(m: Maybe<&2, T.Term>) -> T.Term:
-  match m:
-    case None{}:
-      T.TUnk{}
-    case Some{v}:
-      v
-
-def ETable.at(t: ETable) -> T.Term:
-  match t:
-    case ExTip{}:
-      T.TUnk{}
-    case ExNode{v, lo, hi}:
-      ETable.or_unk(v)
-
-def ETable.get(
-  n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat
-) -> T.Term:
-  match n:
-    case 0n:
-      T.TUnk{}
-    case 1n+m:
-      match stop:
-        case True{}:
-          ETable.at(t)
-        case False{}:
-          match b:
-            case True{}:
-              match t:
-                case ExTip{}:
-                  T.TUnk{}
-                case ExNode{v, lo, hi}:
-                  ETable.get(
-                    m,
-                    Table.here(Table.rest(i)),
-                    Table.low(Table.rest(i)),
-                    lo,
-                    Table.rest(i))
-            case False{}:
-              match t:
-                case ExTip{}:
-                  T.TUnk{}
-                case ExNode{v, lo, hi}:
-                  ETable.get(
-                    m,
-                    Table.here(Table.rest(i)),
-                    Table.low(Table.rest(i)),
-                    hi,
-                    Table.rest(i))
-
-def ETable.set(
-  n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat, +v: T.Term
-) -> ETable:
-  match n:
-    case 0n:
-      t
-    case 1n+m:
-      match stop:
-        case True{}:
-          match t:
-            case ExTip{}:
-              ExNode{Some{v}, ExTip{}, ExTip{}}
-            case ExNode{o, lo, hi}:
-              ExNode{Some{v}, lo, hi}
-        case False{}:
-          match b:
-            case True{}:
-              match t:
-                case ExTip{}:
-                  ExNode{
-                    None{},
-                    ETable.set(
-                      m,
-                      Table.here(Table.rest(i)),
-                      Table.low(Table.rest(i)),
-                      ExTip{},
-                      Table.rest(i),
-                      v),
-                    ExTip{}}
-                case ExNode{o, lo, hi}:
-                  ExNode{
-                    o,
-                    ETable.set(
-                      m,
-                      Table.here(Table.rest(i)),
-                      Table.low(Table.rest(i)),
-                      lo,
-                      Table.rest(i),
-                      v),
-                    hi}
-            case False{}:
-              match t:
-                case ExTip{}:
-                  ExNode{
-                    None{},
-                    ExTip{},
-                    ETable.set(
-                      m,
-                      Table.here(Table.rest(i)),
-                      Table.low(Table.rest(i)),
-                      ExTip{},
-                      Table.rest(i),
-                      v)}
-                case ExNode{o, lo, hi}:
-                  ExNode{
-                    o,
-                    lo,
-                    ETable.set(
-                      m,
-                      Table.here(Table.rest(i)),
-                      Table.low(Table.rest(i)),
-                      hi,
-                      Table.rest(i),
-                      v)}
+def ETable.new() -> T.ETable:
+  T.ETable.new()
 
 # Numbers
 # -------
@@ -455,23 +333,11 @@ def Table.write_nat(+t: NTable, +i: Nat, +v: Nat) -> NTable:
     Table.path(i),
     v)
 
-# The two the rest of the kernel calls.
-def Table.read(+t: ETable, +i: Nat) -> T.Term:
-  ETable.get(
-    Table.bits(),
-    Table.here(Table.path(i)),
-    Table.low(Table.path(i)),
-    t,
-    Table.path(i))
+def Table.read(+t: T.ETable, +i: Nat) -> T.Term:
+  T.Term.read_ex(t, i)
 
-def Table.write(+t: ETable, +i: Nat, +v: T.Term) -> ETable:
-  ETable.set(
-    Table.bits(),
-    Table.here(Table.path(i)),
-    Table.low(Table.path(i)),
-    t,
-    Table.path(i),
-    v)
+def Table.write(+t: T.ETable, +i: Nat, +v: T.Term) -> T.ETable:
+  T.Term.write_ex(t, i, v)
 
 def Table.read_lv(+t: LTable, +i: Nat) -> L.Level:
   LTable.get(

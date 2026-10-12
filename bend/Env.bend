@@ -596,20 +596,34 @@ type DTree is Data:
 # carries the environment. Keeping the name `DTable` is deliberate: a hundred
 # and forty signatures name it and none of them had to change.
 type DTable is Data:
-  MkDT{ds: DTree, ex: Tb.ETable}
+  MkDT{ds: DTree, ex: T.ETable}
 
 def Env.empty() -> DTable:
-  MkDT{DTip{}, Tb.ETable.new()}
+  MkDT{DTip{}, T.ETable.new()}
 
 # An environment over an export's expression table.
-def Env.over(+ex: Tb.ETable) -> DTable:
+def Env.over(+ex: T.ETable) -> DTable:
   MkDT{DTip{}, ex}
 
 # The expression the table holds under this index.
 def Env.expr(+env: DTable, +i: Nat) -> T.Term:
   match env:
     case MkDT{ds, +ex}:
-      Tb.Table.read(ex, i)
+      T.Term.read_ex(ex, i)
+
+# What a reference stands for: the entry, with its free variables shifted to
+# the scope the reference stands in. A closed entry needs no shift, and that
+# is the case the walk answers in one step.
+def Env.expr_at(+env: DTable, +i: Nat, +k: Nat) -> T.Term:
+  match env:
+    case MkDT{ds, +ex}:
+      T.Term.lift_if(Nat.is_eq(k, 0n), ex, T.Term.read_ex(ex, i), k, 0n)
+
+# The expression table itself, for the walks that must resolve a reference.
+def Env.tab(+env: DTable) -> T.ETable:
+  match env:
+    case MkDT{ds, +ex}:
+      ex
 
 def Env.found(m: Maybe<&2, Decl>, +i: Nat) -> Lookup:
   match m:

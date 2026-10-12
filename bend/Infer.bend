@@ -504,7 +504,7 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
                 Infer.pi_ans(gt),
                 Infer.res_ans(at)),
               f, env, ctx, Infer.res_ty(at), Infer.pi_dom(gt)),
-            T.Term.inst(Infer.pi_bd(gt), a))
+            T.Term.inst_at(E.Env.tab(env), Infer.pi_bd(gt), a))
         case T.TLam{+ty, bd}:
           +bt = Infer.infer(f, env, Con{ty, ctx}, bd)
           Infer.res_of(Infer.res_ans(bt), T.TPi{ty, Infer.res_ty(bt)})
@@ -524,11 +524,11 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           ROk{T.TConst{nm, Nil{}}}
         case T.TUnk{}:
           RUnk{}
-        case T.TRef{+i}:
+        case T.TRef{+i, +k, m}:
           # A reference is resolved against the table and asked again. What
           # the table holds has references for its own children, so this costs
           # one step however large the expression it names.
-          Infer.infer(f, env, ctx, E.Env.expr(env, i))
+          Infer.infer(f, env, ctx, E.Env.expr_at(env, i, k))
         case T.TProj{tn, +idx, +st}:
           +sty = V.Eval.whnf(
             f, env, Infer.res_ty(Infer.infer(f, env, ctx, st)), Nil{})
@@ -548,7 +548,7 @@ def Infer.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
             Infer.res_ty(fr))
         case T.TLet{ty, +v, bd}:
           +vt = Infer.infer(f, env, ctx, v)
-          +br = Infer.infer(f, env, ctx, T.Term.inst(bd, v))
+          +br = Infer.infer(f, env, ctx, T.Term.inst_at(E.Env.tab(env), bd, v))
           Infer.res_of(
             C.Conv.eq_unless_no(
               A.Ans.and(Infer.res_ans(vt), Infer.res_ans(br)),

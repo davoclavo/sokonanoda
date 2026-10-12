@@ -80,5 +80,5 @@ def Show.term(+fuel: Nat, t: T.Term) -> String:
           Nat.show(v)
         case T.TUnk{}:
           "?"
-        case T.TRef{+i}:
-          "@" ++ Nat.show(i)
+        case T.TRef{+i, +k, m}:
+          "@" ++ Nat.show(i) ++ "+" ++ Nat.show(k)

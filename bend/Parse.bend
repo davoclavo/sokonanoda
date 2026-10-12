@@ -27,7 +27,7 @@ import ./Table.bend as Tb
 type PState is Data:
   MkPS{
     nlev: Nat, levs: Tb.LTable,
-    nexp: Nat, exps: Tb.ETable,
+    nexp: Nat, exps: T.ETable,
     decls: List<&2, E.Decl>,
     # The ids of `Nat`, `Nat.zero` and `Nat.succ`, or zero when not yet seen.
     # A `natVal` node names the real `Nat`, so a literal cannot be read until
@@ -84,7 +84,7 @@ def Parse.start() -> PState:
     1n,
     Tb.LTable.new(),
     0n,
-    Tb.ETable.new(),
+    T.ETable.new(),
     Nil{}, 0n, 0n, 0n,
     [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n], 0n, 0n, 0n, Tb.NTable.new(), 0n,
     Tb.NTable.new(), Tb.NTable.new()}
@@ -110,14 +110,16 @@ def Parse.lev(+levs: Tb.LTable, +i: Nat) -> L.Level:
 #
 # So a type is expanded and a value is not. A type is small, bounded by the
 # declaration's own statement, and a value is where the sharing is.
-def Parse.deep(+fuel: Nat, +ex: Tb.ETable, t: T.Term) -> T.Term:
+def Parse.deep(+fuel: Nat, +ex: T.ETable, t: T.Term) -> T.Term:
   match fuel:
     case 0n:
       T.TUnk{}
     case 1n+f:
       match t:
-        case T.TRef{+i}:
-          Parse.deep(f, ex, Tb.Table.read(ex, i))
+        case T.TRef{+i, +k, m}:
+          Parse.deep(
+            f, ex,
+            T.Term.lift_if(Nat.is_eq(k, 0n), ex, T.Term.read_ex(ex, i), k, 0n))
         case T.TApp{g, a}:
           T.TApp{Parse.deep(f, ex, g), Parse.deep(f, ex, a)}
         case T.TLam{ty, bd}:
@@ -134,12 +136,17 @@ def Parse.deep(+fuel: Nat, +ex: Tb.ETable, t: T.Term) -> T.Term:
         case o:
           o
 
-def Parse.exp_pick(ok: Bool, +exps: Tb.ETable, +i: Nat) -> T.Term:
+# `b` is what the shareable table holds: zero where no reference may stand
+# for the entry, and one more than its free-variable bound otherwise. The
+# shift is zero, because an expression of the export's table is named by
+# expressions at its own binder depth and a de Bruijn term is the same term
+# wherever it is named from.
+def Parse.exp_pick(ok: Bool, +b: Nat, +exps: T.ETable, +i: Nat) -> T.Term:
   match ok:
     case True{}:
-      T.TRef{i}
+      T.TRef{i, 0n, Nat.sub(b, 1n)}
     case False{}:
-      Tb.Table.read(exps, i)
+      T.Term.read_ex(exps, i)
 
 # Above this expanded size, a reference costs less than a copy.
 #
@@ -170,7 +177,7 @@ def Parse.size_add(+a: Nat, +b: Nat) -> Nat:
 # records for it.
 def Parse.size_of(+sz: Tb.NTable, t: T.Term) -> Nat:
   match t:
-    case T.TRef{+i}:
+    case T.TRef{+i, k, m}:
       Tb.Table.read_nat(sz, i)
     case T.TApp{f, a}:
       Parse.size_add(
@@ -194,34 +201,43 @@ def Parse.size_of(+sz: Tb.NTable, t: T.Term) -> Nat:
 
 # The term an expression index stands for: a reference when one is sound and
 # the expression is large, and a copy of the stored tree otherwise.
-def Parse.exp(
-  +sh: Tb.NTable, +sz: Tb.NTable, +exps: Tb.ETable, +i: Nat
-) -> T.Term:
+def Parse.exp_at(+b: Nat, +sz: Tb.NTable, +exps: T.ETable, +i: Nat) -> T.Term:
   Parse.exp_pick(
     Bool.and(
-      Nat.is_eq(Tb.Table.read_nat(sh, i), 1n),
+      Nat.is_lt(0n, b),
       Nat.is_le(Parse.big(), Tb.Table.read_nat(sz, i))),
-    exps, i)
+    b, exps, i)
 
-def Parse.share_bit(ok: Bool) -> Nat:
+def Parse.exp(
+  +sh: Tb.NTable, +sz: Tb.NTable, +exps: T.ETable, +i: Nat
+) -> T.Term:
+  Parse.exp_at(Tb.Table.read_nat(sh, i), sz, exps, i)
+
+def Parse.share_bit(ok: Bool, +m: Nat) -> Nat:
   match ok:
     case True{}:
-      1n
+      1n+m
     case False{}:
       0n
 
 # The type an expression index stands for, with every reference expanded.
 def Parse.ty(
-  +sh: Tb.NTable, +sz: Tb.NTable, +ex: Tb.ETable, +i: Nat
+  +sh: Tb.NTable, +sz: Tb.NTable, +ex: T.ETable, +i: Nat
 ) -> T.Term:
   Parse.deep(Parse.fuel(), ex, Parse.exp(sh, sz, ex, i))
 
-# May a reference stand for this expression?
+# May a reference stand for this expression, and what does it then carry?
+#
+# The one condition is that the expression names no level parameter. A
+# level-free term needs no remapping, and the remapping is per declaration
+# while the table is shared by all of them.
+#
+# Being closed is not a condition any more. An open expression is 94 to 99
+# percent of what a large export holds, and the reference carries the bound
+# on its free variables so that a lift or a substitution can tell in one step
+# whether it has to look inside.
 def Parse.shareable(+t: T.Term) -> Nat:
-  Parse.share_bit(
-    Bool.and(
-      Bool.not(T.Term.has_free(t, 0n)),
-      T.Term.pars_ok(t, 0n)))
+  Parse.share_bit(T.Term.pars_ok(t, 0n), T.Term.max_free(t))
 
 # The i-th number of a list, or zero.
 def Parse.nat_at(xs: List<&2, Nat>, i: Nat) -> Nat:
@@ -902,7 +918,7 @@ def Parse.step(+st: PState, k: R.LineKind, +line: List<&2, U32>) -> PState:
           MkPS{
             nl, lv,
             1n+ne,
-            Tb.Table.write(ex, R.Reader.field("ie", line), t),
+            T.Term.write_ex(ex, R.Reader.field("ie", line), t),
             ds, nt, zr, sc, pm, bl, yes, no, rc, eqn,
             Tb.Table.write_nat(
               sh, R.Reader.field("ie", line), Parse.shareable(t)),
@@ -989,7 +1005,7 @@ def Parse.decls_of(st: PState) -> List<&2, E.Decl>:
 
 # The expression table the parse built. The kernel needs it, because a term
 # may hold a reference into it.
-def Parse.exps_of(st: PState) -> Tb.ETable:
+def Parse.exps_of(st: PState) -> T.ETable:
   match st:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz}:
       ex

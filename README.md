@@ -11,7 +11,9 @@ NDJSON parser are all its work. So are the cache shapes and sizes, which this
 fork leaves alone because measuring the alternatives showed the parent had
 already picked well.
 
-Three changes sit on top, and they come to roughly 200 lines.
+Three changes sit on top, and they come to roughly 200 lines. A second
+implementation of the kernel core, written in Bend 2 and proven in it, lives in
+`bend/`.
 
 ## What this fork changes
 
@@ -57,6 +59,39 @@ Other ideas were measured and dropped: `target-cpu=native`, the parent's
 tables, a union-find conversion cache, and a budget that scales with the thread
 count. None beat the parent's existing choices. See
 [docs/perf-plan.md](docs/perf-plan.md).
+
+## The kernel core in Bend 2
+
+`bend/` holds a second, independent implementation of the dependently typed
+core, written in [Bend 2](https://github.com/bendlang/bend) and checked by
+Bend's own checker. It is about 9,800 lines across 28 files, and it shares no
+code with the Rust checker above.
+
+It is not a port of the whole thing and not a performance exercise. Bend has no
+`U64`, so the packed pointers and hash-consed terms that make the Rust checker
+fast cannot be carried over. What Bend offers instead is that a claim about the
+kernel can be stated and then mechanically proven, in the same language as the
+code. `LAWS.bend` states the laws and `PROOF.bend` proves them by induction;
+`bend PROOF.bend` prints `ALL PROOFS CHECK` only when every law holds. The three
+proven today say that an empty level assignment leaves a level, a list of
+levels, and a term alone. That is a small claim, and it is the kind a kernel
+silently assumes: if it were false, a declaration with no level parameters could
+be read at the wrong type.
+
+Across the 196 tests in the arena's tarball it answers 186 correct, 0 declined
+and 0 wrong. Nine run past sixty seconds and one is too large to read. The seven
+large real-world corpora cannot be read at all, so this kernel cannot enter the
+arena, and the gap is not a matter of a few more rules.
+
+```
+devbox run bend          # three built-in environments
+devbox run bend-proof    # the laws
+devbox run bend-check    # a real export, named by SOKO_EXPORT
+```
+
+[bend/README.md](bend/README.md) carries the detail: what each file holds, how
+three of Bend's rules shape every one of them, what is still missing, and the
+wrong answers that the proofs and the speed work turned up.
 
 ## Tools
 

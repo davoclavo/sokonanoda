@@ -8,6 +8,7 @@
 
 import Base
 import ./Level.bend as L
+import ./Idx.bend as Ix
 
 type Term is Data:
   TVar{i: Nat}
@@ -49,11 +50,133 @@ type Term is Data:
   # what it finds has references for its own children, so every step is
   # shallow.
   #
-  # The parser emits one only for an expression with no free variable in it. A
-  # closed term is the same term in every scope, so `Term.subst` and
-  # `Term.lift` leave a reference alone and cost nothing, which is what makes
-  # this sound as well as cheap.
-  TRef{i: Nat}
+  # `i` names the entry. `k` is a shift: a free variable of the entry stands
+  # for the variable `k` higher here. `m` bounds the entry's own free
+  # variables, so the variables this reference uses are the ones from `k` up
+  # to `k + m`, and an entry with `m` of zero is closed.
+  #
+  # Those two numbers are what let a reference stand for an **open**
+  # expression, which is 94 to 99 percent of what a large export holds. A
+  # closed reference alone took the stored table of `perf/app-lam` from
+  # 10^17 nodes to 10^17 nodes, because the entry that is copied is the open
+  # one. With the shift it stores 65 thousand.
+  #
+  # The parser emits one only for an expression with no level parameter in
+  # it. A level-free term needs no remapping, and the remapping is per
+  # declaration while the table is shared by all of them.
+  TRef{i: Nat, k: Nat, m: Nat}
+
+# The export's table of expressions.
+#
+# This is a binary trie on the bits of the index, holding a value at every
+# node. It stands here rather than in `Table.bend` because `Term.subst` and
+# `Term.lift` must resolve a reference, and `Table.bend` imports this file.
+type ETable is Data:
+  ExTip{}
+  ExNode{v: Maybe<&2, Term>, lo: ETable, hi: ETable}
+
+def ETable.new() -> ETable:
+  ExTip{}
+
+# A slot nothing was written to answers the unknown term, so a line that names
+# an expression the export never wrote is not mistaken for a real one.
+def ETable.or_unk(m: Maybe<&2, Term>) -> Term:
+  match m:
+    case None{}:
+      TUnk{}
+    case Some{v}:
+      v
+
+def ETable.at(t: ETable) -> Term:
+  match t:
+    case ExTip{}:
+      TUnk{}
+    case ExNode{v, lo, hi}:
+      ETable.or_unk(v)
+
+def ETable.get(n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat) -> Term:
+  match n:
+    case 0n:
+      TUnk{}
+    case 1n+m:
+      match stop:
+        case True{}:
+          ETable.at(t)
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case ExTip{}:
+                  TUnk{}
+                case ExNode{v, lo, hi}:
+                  ETable.get(
+                    m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
+                    lo, Ix.Idx.rest(i))
+            case False{}:
+              match t:
+                case ExTip{}:
+                  TUnk{}
+                case ExNode{v, lo, hi}:
+                  ETable.get(
+                    m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
+                    hi, Ix.Idx.rest(i))
+
+def ETable.set(n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat, +v: Term) -> ETable:
+  match n:
+    case 0n:
+      t
+    case 1n+m:
+      match stop:
+        case True{}:
+          match t:
+            case ExTip{}:
+              ExNode{Some{v}, ExTip{}, ExTip{}}
+            case ExNode{o, lo, hi}:
+              ExNode{Some{v}, lo, hi}
+        case False{}:
+          match b:
+            case True{}:
+              match t:
+                case ExTip{}:
+                  ExNode{
+                    None{},
+                    ETable.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
+                      ExTip{}, Ix.Idx.rest(i), v),
+                    ExTip{}}
+                case ExNode{o, lo, hi}:
+                  ExNode{
+                    o,
+                    ETable.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
+                      lo, Ix.Idx.rest(i), v),
+                    hi}
+            case False{}:
+              match t:
+                case ExTip{}:
+                  ExNode{
+                    None{},
+                    ExTip{},
+                    ETable.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
+                      ExTip{}, Ix.Idx.rest(i), v)}
+                case ExNode{o, lo, hi}:
+                  ExNode{
+                    o,
+                    lo,
+                    ETable.set(
+                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
+                      hi, Ix.Idx.rest(i), v)}
+
+def Term.read_ex(+t: ETable, +i: Nat) -> Term:
+  ETable.get(
+    Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)), Ix.Idx.low(Ix.Idx.path(i)),
+    t, Ix.Idx.path(i))
+
+def Term.write_ex(+t: ETable, +i: Nat, +v: Term) -> ETable:
+  ETable.set(
+    Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)), Ix.Idx.low(Ix.Idx.path(i)),
+    t, Ix.Idx.path(i), v)
 
 # Choose between two terms on a computed Bool.
 def Term.pick(b: Bool, x: Term, y: Term) -> Term:
@@ -126,8 +249,6 @@ def Term.occurs(t: Term, +n: Nat) -> Bool:
       False{}
 
 # Does the constant `n` appear in any of these terms?
-    case TRef{i}:
-      False{}
 
 def Term.occurs_any(ts: List<&2, Term>, +n: Nat) -> Bool:
   match ts:
@@ -173,7 +294,7 @@ def Term.pars_ok(t: Term, +n: Nat) -> Bool:
       True{}
     case TProj{tn, idx, st}:
       Term.pars_ok(st, n)
-    case TRef{i}:
+    case TRef{i, k, m}:
       True{}
 
 # Does this term hold a variable bound `d` binders out or further?
@@ -207,16 +328,14 @@ def Term.has_free(t: Term, +d: Nat) -> Bool:
       False{}
     case TProj{tn, idx, st}:
       Term.has_free(st, d)
-    case TRef{i}:
-      False{}
+    case TRef{i, +k, +m}:
+      Bool.and(Nat.is_lt(0n, m), Nat.is_lt(d, Nat.add(k, m)))
 
 # Does this term use the variable bound `d` binders out?
 #
 # The Lean kernel calls this a loose bound variable. A projection out of a
 # proposition needs it: a field before the one projected has to be a proof
 # only when the rest of the constructor's telescope uses it.
-    case TRef{i}:
-      True{}
 
 def Term.has_bvar(t: Term, +d: Nat) -> Bool:
   match t:
@@ -242,46 +361,216 @@ def Term.has_bvar(t: Term, +d: Nat) -> Bool:
       False{}
     case TProj{tn, idx, st}:
       Term.has_bvar(st, d)
+    case TRef{i, +k, +m}:
+      Bool.and(Nat.is_le(k, d), Nat.is_lt(d, Nat.add(k, m)))
 
-# Add `d` to every free variable whose index is at least `cut`.
-    case TRef{i}:
-      False{}
+def Term.nat_pick(b: Bool, +x: Nat, +y: Nat) -> Nat:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
 
-def Term.lift(t: Term, +d: Nat, +cut: Nat) -> Term:
+# One less, and zero stays zero.
+def Term.drop1(+n: Nat) -> Nat:
+  Term.nat_pick(Nat.is_eq(n, 0n), 0n, Nat.sub(n, 1n))
+
+# The variables a reference uses are the ones from `k` up to `k + m`, so a
+# reference with `m` of zero uses none of them however large `k` is.
+def Term.ref_bound(+k: Nat, +m: Nat) -> Nat:
+  Term.nat_pick(Nat.is_eq(m, 0n), 0n, Nat.add(k, m))
+
+# One more than the largest free variable, and zero for a closed term.
+#
+# The parser records this for every expression it stores, because it is what
+# a reference to an open expression carries: it says when a lift or a
+# substitution may leave the reference alone.
+def Term.max_free(t: Term) -> Nat:
   match t:
     case TVar{+i}:
-      Term.pick(Nat.is_lt(i, cut), TVar{i}, TVar{Nat.add(i, d)})
-    case TSort{l}:
-      TSort{l}
-    case TConst{n, ls}:
-      TConst{n, ls}
+      1n+i
     case TApp{f, a}:
-      TApp{Term.lift(f, d, cut), Term.lift(a, d, cut)}
+      Nat.max(Term.max_free(f), Term.max_free(a))
     case TLam{ty, bd}:
-      TLam{Term.lift(ty, d, cut), Term.lift(bd, d, 1n+cut)}
+      Nat.max(Term.max_free(ty), Term.drop1(Term.max_free(bd)))
     case TPi{ty, bd}:
-      TPi{Term.lift(ty, d, cut), Term.lift(bd, d, 1n+cut)}
+      Nat.max(Term.max_free(ty), Term.drop1(Term.max_free(bd)))
     case TLet{ty, v, bd}:
-      TLet{Term.lift(ty, d, cut), Term.lift(v, d, cut), Term.lift(bd, d, 1n+cut)}
-    case TNat{v, m, z, c}:
-      TNat{v, m, z, c}
-    case TUnk{}:
-      TUnk{}
+      Nat.max(
+        Nat.max(Term.max_free(ty), Term.max_free(v)),
+        Term.drop1(Term.max_free(bd)))
     case TProj{tn, idx, st}:
-      TProj{tn, idx, Term.lift(st, d, cut)}
+      Term.max_free(st)
+    case TRef{i, +k, +m}:
+      Term.ref_bound(k, m)
+    case o:
+      0n
+
+# What a lift or a substitution does to a reference.
+#
+# The variables a reference uses are the ones from `k` up to `k + m`. If the
+# cutoff falls outside that range, every variable moves the same way and the
+# reference answers in one step, which is the whole point of it. If the
+# cutoff falls inside, some move and some do not, and no single shift says
+# that: the entry has to be read and walked.
+type RefAct is Data:
+  # No variable of the reference reaches the cutoff.
+  RKeep{}
+  # Every one does.
+  RShift{}
+  # Some do and some do not, so the entry has to be read and walked.
+  RExpand{}
+  # The same, for an entry that needs no shift. A reference the parser wrote
+  # carries a shift of zero, so this is the common one, and it saves a walk
+  # of the entry that would rebuild it unchanged.
+  RHere{}
+
+def Term.act_expand(here: Bool) -> RefAct:
+  match here:
+    case True{}:
+      RHere{}
+    case False{}:
+      RExpand{}
+
+def Term.act_pick(closed: Bool, above: Bool, below: Bool, here: Bool) -> RefAct:
+  match closed:
+    case True{}:
+      RKeep{}
+    case False{}:
+      match above:
+        case True{}:
+          RShift{}
+        case False{}:
+          match below:
+            case True{}:
+              RKeep{}
+            case False{}:
+              Term.act_expand(here)
+
+# A lift moves the variables at the cutoff and above, so `cut` at `k` moves.
+def Term.lift_act(+k: Nat, +m: Nat, +cut: Nat) -> RefAct:
+  Term.act_pick(
+    Nat.is_eq(m, 0n),
+    Nat.is_le(cut, k),
+    Nat.is_le(Nat.add(k, m), cut),
+    Nat.is_eq(k, 0n))
+
+# A substitution replaces the variable at the cutoff, so `cut` at `k` is the
+# one being replaced and the reference has to be read.
+def Term.subst_act(+k: Nat, +m: Nat, +cut: Nat) -> RefAct:
+  Term.act_pick(
+    Nat.is_eq(m, 0n),
+    Nat.is_lt(cut, k),
+    Nat.is_le(Nat.add(k, m), cut),
+    Nat.is_eq(k, 0n))
+
+# The answer for a term that is not a reference is never read.
+def Term.lift_act_of(t: Term, +cut: Nat) -> RefAct:
+  match t:
+    case TRef{i, +k, +m}:
+      Term.lift_act(k, m, cut)
+    case o:
+      RKeep{}
+
+def Term.subst_act_of(t: Term, +cut: Nat) -> RefAct:
+  match t:
+    case TRef{i, +k, +m}:
+      Term.subst_act(k, m, cut)
+    case o:
+      RKeep{}
+
+# The walk a reference may cost. Running out hands back the unknown term,
+# which every verdict reads as "do not know" rather than as a no.
+def Term.walk_fuel() -> Nat:
+  1000000n
+
+# Add `d` to every free variable whose index is at least `cut`.
+#
+# `act` says what to do when `t` is a reference. It travels as a parameter
+# because the decision is a computed value and a Bend match scrutinizes only
+# a parameter or a field, so the caller of each step computes the next one.
+def Term.lift_go(
+  +fuel: Nat, +ex: ETable, t: Term, act: RefAct, +d: Nat, +cut: Nat
+) -> Term:
+  match fuel:
+    case 0n:
+      TUnk{}
+    case 1n+f:
+      match t:
+        case TVar{+i}:
+          Term.pick(Nat.is_lt(i, cut), TVar{i}, TVar{Nat.add(i, d)})
+        case TSort{l}:
+          TSort{l}
+        case TConst{n, ls}:
+          TConst{n, ls}
+        case TApp{+g, +a}:
+          TApp{
+            Term.lift_go(f, ex, g, Term.lift_act_of(g, cut), d, cut),
+            Term.lift_go(f, ex, a, Term.lift_act_of(a, cut), d, cut)}
+        case TLam{+ty, +bd}:
+          TLam{
+            Term.lift_go(f, ex, ty, Term.lift_act_of(ty, cut), d, cut),
+            Term.lift_go(f, ex, bd, Term.lift_act_of(bd, 1n+cut), d, 1n+cut)}
+        case TPi{+ty, +bd}:
+          TPi{
+            Term.lift_go(f, ex, ty, Term.lift_act_of(ty, cut), d, cut),
+            Term.lift_go(f, ex, bd, Term.lift_act_of(bd, 1n+cut), d, 1n+cut)}
+        case TLet{+ty, +v, +bd}:
+          TLet{
+            Term.lift_go(f, ex, ty, Term.lift_act_of(ty, cut), d, cut),
+            Term.lift_go(f, ex, v, Term.lift_act_of(v, cut), d, cut),
+            Term.lift_go(f, ex, bd, Term.lift_act_of(bd, 1n+cut), d, 1n+cut)}
+        case TNat{v, m, z, c}:
+          TNat{v, m, z, c}
+        case TUnk{}:
+          TUnk{}
+        case TProj{+tn, +idx, +st}:
+          TProj{tn, idx, Term.lift_go(f, ex, st, Term.lift_act_of(st, cut), d, cut)}
+        case TRef{+i, +k, +m}:
+          match act:
+            case RKeep{}:
+              TRef{i, k, m}
+            case RShift{}:
+              TRef{i, Nat.add(k, d), m}
+            case RExpand{}:
+              +e : Term = Term.read_ex(ex, i)
+              +up : Term = Term.lift_go(f, ex, e, Term.lift_act_of(e, 0n), k, 0n)
+              Term.lift_go(f, ex, up, Term.lift_act_of(up, cut), d, cut)
+            case RHere{}:
+              +h : Term = Term.read_ex(ex, i)
+              Term.lift_go(f, ex, h, Term.lift_act_of(h, cut), d, cut)
+
+# The lift the kernel calls where a term may hold a reference.
+def Term.lift_at(+ex: ETable, +t: Term, +d: Nat, +cut: Nat) -> Term:
+  Term.lift_go(Term.walk_fuel(), ex, t, Term.lift_act_of(t, cut), d, cut)
+
+# A lift by zero is the term itself, and the walk would rebuild the whole of
+# it to find that out. Resolving a reference to a closed entry takes this
+# path, which is the common one.
+def Term.lift_if(no: Bool, +ex: ETable, +t: Term, +d: Nat, +cut: Nat) -> Term:
+  match no:
+    case True{}:
+      t
+    case False{}:
+      Term.lift_at(ex, t, d, cut)
+
+# The lift for a term that holds no reference, which is every type: a
+# declaration's type is stored with its references expanded, because the
+# passes that read a type as syntax read a reference as a leaf. An empty
+# table resolves a reference to the unknown term, so a reference that
+# reached here would be answered "do not know" and never answered wrongly.
+def Term.lift(+t: Term, +d: Nat, +cut: Nat) -> Term:
+  Term.lift_go(Term.walk_fuel(), ETable.new(), t, Term.lift_act_of(t, cut), d, cut)
 
 # Lift a value into the scope it lands in, unless it lands in the scope it
 # was written in. A lift by zero is the value itself, and `Term.lift` would
 # walk and rebuild the whole of it to find that out.
-    case TRef{i}:
-      TRef{i}
-
-def Term.lift_by(at_top: Bool, v: Term, +cut: Nat) -> Term:
+def Term.lift_by(at_top: Bool, +ex: ETable, v: Term, +cut: Nat) -> Term:
   match at_top:
     case True{}:
       v
     case False{}:
-      Term.lift(v, cut, 0n)
+      Term.lift_at(ex, v, cut, 0n)
 
 # What one variable of the body becomes.
 #
@@ -290,49 +579,86 @@ def Term.lift_by(at_top: Bool, v: Term, +cut: Nat) -> Term:
 # evaluates before the match picks an arm, so a lift written there copied the
 # whole value at every variable in the body, matching or not. A body with a
 # thousand variables copied a thousand values to use one.
-def Term.subst_var(hit: Bool, +i: Nat, +v: Term, +cut: Nat) -> Term:
+def Term.subst_var(
+  hit: Bool, +ex: ETable, +i: Nat, +v: Term, +cut: Nat
+) -> Term:
   match hit:
     case True{}:
-      Term.lift_by(Nat.is_eq(cut, 0n), v, cut)
+      Term.lift_by(Nat.is_eq(cut, 0n), ex, v, cut)
     case False{}:
       Term.pick(Nat.is_lt(i, cut), TVar{i}, TVar{Nat.sub(i, 1n)})
 
 # Replace the variable at depth `cut` with `v`, and shift the ones above it
 # down by one. This is the de Bruijn instantiation a beta step needs.
-def Term.subst(t: Term, +v: Term, +cut: Nat) -> Term:
-  match t:
-    case TVar{+i}:
-      Term.subst_var(Nat.is_eq(i, cut), i, v, cut)
-    case TSort{l}:
-      TSort{l}
-    case TConst{n, ls}:
-      TConst{n, ls}
-    case TApp{f, a}:
-      TApp{Term.subst(f, v, cut), Term.subst(a, v, cut)}
-    case TLam{ty, bd}:
-      TLam{Term.subst(ty, v, cut), Term.subst(bd, v, 1n+cut)}
-    case TPi{ty, bd}:
-      TPi{Term.subst(ty, v, cut), Term.subst(bd, v, 1n+cut)}
-    case TLet{ty, vl, bd}:
-      TLet{Term.subst(ty, v, cut), Term.subst(vl, v, cut), Term.subst(bd, v, 1n+cut)}
-    case TNat{v, m, z, c}:
-      TNat{v, m, z, c}
-    case TUnk{}:
+def Term.subst_go(
+  +fuel: Nat, +ex: ETable, t: Term, act: RefAct, +v: Term, +cut: Nat
+) -> Term:
+  match fuel:
+    case 0n:
       TUnk{}
-    case TProj{tn, idx, st}:
-      TProj{tn, idx, Term.subst(st, v, cut)}
+    case 1n+f:
+      match t:
+        case TVar{+i}:
+          Term.subst_var(Nat.is_eq(i, cut), ex, i, v, cut)
+        case TSort{l}:
+          TSort{l}
+        case TConst{n, ls}:
+          TConst{n, ls}
+        case TApp{+g, +a}:
+          TApp{
+            Term.subst_go(f, ex, g, Term.subst_act_of(g, cut), v, cut),
+            Term.subst_go(f, ex, a, Term.subst_act_of(a, cut), v, cut)}
+        case TLam{+ty, +bd}:
+          TLam{
+            Term.subst_go(f, ex, ty, Term.subst_act_of(ty, cut), v, cut),
+            Term.subst_go(f, ex, bd, Term.subst_act_of(bd, 1n+cut), v, 1n+cut)}
+        case TPi{+ty, +bd}:
+          TPi{
+            Term.subst_go(f, ex, ty, Term.subst_act_of(ty, cut), v, cut),
+            Term.subst_go(f, ex, bd, Term.subst_act_of(bd, 1n+cut), v, 1n+cut)}
+        case TLet{+ty, +vl, +bd}:
+          TLet{
+            Term.subst_go(f, ex, ty, Term.subst_act_of(ty, cut), v, cut),
+            Term.subst_go(f, ex, vl, Term.subst_act_of(vl, cut), v, cut),
+            Term.subst_go(f, ex, bd, Term.subst_act_of(bd, 1n+cut), v, 1n+cut)}
+        case TNat{n, m, z, c}:
+          TNat{n, m, z, c}
+        case TUnk{}:
+          TUnk{}
+        case TProj{+tn, +idx, +st}:
+          TProj{
+            tn, idx,
+            Term.subst_go(f, ex, st, Term.subst_act_of(st, cut), v, cut)}
+        case TRef{+i, +k, +m}:
+          match act:
+            case RKeep{}:
+              TRef{i, k, m}
+            case RShift{}:
+              TRef{i, Nat.sub(k, 1n), m}
+            case RExpand{}:
+              +up : Term = Term.lift_at(ex, Term.read_ex(ex, i), k, 0n)
+              Term.subst_go(f, ex, up, Term.subst_act_of(up, cut), v, cut)
+            case RHere{}:
+              +h : Term = Term.read_ex(ex, i)
+              Term.subst_go(f, ex, h, Term.subst_act_of(h, cut), v, cut)
+
+# The substitution the kernel calls where a term may hold a reference.
+def Term.subst_at(+ex: ETable, +t: Term, +v: Term, +cut: Nat) -> Term:
+  Term.subst_go(Term.walk_fuel(), ex, t, Term.subst_act_of(t, cut), v, cut)
+
+# The substitution for a term that holds no reference. See `Term.lift`.
+def Term.subst(+t: Term, +v: Term, +cut: Nat) -> Term:
+  Term.subst_go(
+    Term.walk_fuel(), ETable.new(), t, Term.subst_act_of(t, cut), v, cut)
 
 # Instantiate the body of a binder with `v`, which is the common case of
 # `Term.subst` at depth zero.
-    case TRef{i}:
-      TRef{i}
-
 def Term.inst(bd: Term, +v: Term) -> Term:
   Term.subst(bd, v, 0n)
 
-# Substitute the level parameters through a list of levels. This is written
-# out rather than passed to `List.map`, because a Bend template argument must
-# be closed and the mapped function mentions `vs`.
+def Term.inst_at(+ex: ETable, bd: Term, +v: Term) -> Term:
+  Term.subst_at(ex, bd, v, 0n)
+
 def Term.subst_level_list(ls: List<&2, L.Level>, +vs: List<&2, L.Level>) -> List<&2, L.Level>:
   match ls:
     case Nil{}:
@@ -373,8 +699,8 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TProj{tn, idx, Term.remap_levels(st, ps)}
 
 # Substitute a declaration's level parameters throughout a term.
-    case TRef{i}:
-      TRef{i}
+    case TRef{i, k, m}:
+      TRef{i, k, m}
 
 def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
   match t:
@@ -398,5 +724,5 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TUnk{}
     case TProj{tn, idx, st}:
       TProj{tn, idx, Term.subst_levels(st, vs)}
-    case TRef{i}:
-      TRef{i}
+    case TRef{i, k, m}:
+      TRef{i, k, m}

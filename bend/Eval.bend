@@ -631,8 +631,8 @@ def Eval.deref(+n: Nat, +env: E.DTable, t: T.Term) -> T.Term:
       t
     case 1n+k:
       match t:
-        case T.TRef{+i}:
-          Eval.deref(k, env, E.Env.expr(env, i))
+        case T.TRef{+i, +sh, m}:
+          Eval.deref(k, env, E.Env.expr_at(env, i, sh))
         case o:
           o
 
@@ -677,20 +677,23 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
             case Nil{}:
               T.TLam{ty, bd}
             case Con{a, rest}:
-              Eval.whnf(f, env, Eval.dr(env, T.Term.inst(bd, a)), rest)
+              Eval.whnf(
+                f, env,
+                Eval.dr(env, T.Term.inst_at(E.Env.tab(env), bd, a)), rest)
         case T.TPi{ty, bd}:
           Eval.rebuild(sp, T.TPi{ty, bd})
         case T.TLet{ty, v, bd}:
-          Eval.whnf(f, env, Eval.dr(env, T.Term.inst(bd, v)), sp)
+          Eval.whnf(
+            f, env, Eval.dr(env, T.Term.inst_at(E.Env.tab(env), bd, v)), sp)
         case T.TNat{v, nm, zr, sc}:
           Eval.rebuild(sp, T.TNat{v, nm, zr, sc})
         case T.TUnk{}:
           T.TUnk{}
-        case T.TRef{+i}:
+        case T.TRef{+i, +k, m}:
           # A caller that did not resolve first. Every call inside this def
           # resolves, so this fires once for a term handed in from outside and
           # costs one step, not one step per use.
-          Eval.whnf(f, env, E.Env.expr(env, i), sp)
+          Eval.whnf(f, env, E.Env.expr_at(env, i, k), sp)
         case T.TProj{tn, +idx, st}:
           +sw = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, st), Nil{}))
           Eval.pick_t(
