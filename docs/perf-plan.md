@@ -1986,3 +1986,31 @@ that a decision procedure walks, so what is left is the speed of
 evaluation itself, not a rule the kernel is missing. 192 of 196 is where
 this engine stops, and the next move is a different engine rather than
 another tuning.
+
+### The thunks are not the lets
+<!-- 2026-10-13 -->
+
+A thunk costs two writes down the trie and a read, so the obvious next
+lever is to stop making ones nobody shares. The cheapest version of that
+is the `let`: its arm has the body in hand, so it could see whether the
+body reads the bound variable more than once.
+
+Measured first, as an upper bound: evaluate every `let` value **eagerly**,
+which is sound for terms that terminate and is the most a strictness rule
+for lets could ever save. `perf/magma-list-pair-n7` stays at 14 s and
+`perf/shared-subterm` at 9. Nothing. The thunks of these files come from
+applications, not from lets.
+
+For an application the knowledge is in the wrong place: the arm that
+allocates sees the argument, and the arm that could say whether the
+argument is shared -- the one that binds it under a lambda -- runs later.
+Moving the allocation there means the spine carries unevaluated arguments,
+which is a new kind of value and a new case in every path that reads a
+spine, and the native rules force two of them whether they are shared or
+not.
+
+So the ceiling stands. An array-backed heap is about 1.4x and needs the
+evaluator as an explicit stack machine; strictness on applications is
+perhaps 1.3x and needs the allocation moved under the binder. Together
+about 1.8x, and `perf/magma-list-deep-n36` -- the closest of the four --
+is 2.3x away.
