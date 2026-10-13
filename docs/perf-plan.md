@@ -1711,3 +1711,23 @@ So the literal has to be a term of its own. What keeps that sound:
 The last two are what keep a wrong answer out. A file that computes with a
 string -- `String.decEq "a" "b"`, say -- then declines, which is the answer
 this kernel is entitled to.
+
+### Where the magma files spend their time
+<!-- 2026-10-12 -->
+
+`perf/magma-list-pair-n21` flattens to 337 declarations. The first 336 of
+them check in 0.37 s together, and the last one -- the theorem the file is
+about, name 1294 -- does not finish in 120 s. So nothing of that file is a
+walk over declarations and all of it is one conversion. The same question at
+n7 answers in 26 s of its sixty, so the cost grows with n and the file is a
+scaling wall and not a missing rule.
+
+What that points at is a conversion memo. The comparison meets the same pair
+of subterms many times over, and `Vconv.zip` already dedupes a pair of slots
+inside one zip; a set that outlives the zip, keyed by the two slot numbers,
+is the shape Lean's own `eqv_manager` has. The slot is what makes it
+possible: a value has no identity, and a slot does.
+
+A string literal is not these files' wall. `grind-ring-5`,
+`magma-list-deep-n21` and `magma-list-deep-n36` hold 33, 8 and 8 of them,
+and all three time out rather than decline.
