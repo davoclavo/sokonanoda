@@ -1731,3 +1731,43 @@ possible: a value has no identity, and a slot does.
 A string literal is not these files' wall. `grind-ring-5`,
 `magma-list-deep-n21` and `magma-list-deep-n36` hold 33, 8 and 8 of them,
 and all three time out rather than decline.
+
+## What `good/init-prelude` has left
+<!-- 2026-10-12 -->
+
+With wide numbers the file answers in 3.53 s, and the answer is `declined`.
+`bend/trust.bend` names the reason: three recursors of one declaration
+cannot be derived, and they are the three of `Lean.Syntax`.
+
+That block is a **nested** inductive, not a mutual one. Its line in the
+export says `numNested: 2` and lists one type, `Lean.Syntax`, with four
+constructors -- and three recursors, each with three motives and seven
+minor premises. The rules of the three name
+`Lean.Syntax.missing/node/atom/ident`, then `List.nil` and `List.cons`,
+then `Array.mk`: `Syntax.node` holds an `Array Syntax`, so Lean eliminates
+`Syntax`, `List Syntax` and `Array Syntax` together.
+
+`bend/Rec.bend` derives the recursor of one inductive with one motive. The
+header of that file already lists what it does not do, and this is the
+first item: a nested block. Deriving one means building the motives and
+minors of the auxiliary types from the nesting, which is the piece of work
+between this file and `accept`.
+
+Nothing else in the file is in the way. Of 2106 declarations, every one
+passes its own checks, and the three recursors above are the only ones
+taken on trust.
+
+### The score, and what each file still needs
+
+| file | limit | what it needs |
+|---|---|---|
+| `good/init-prelude` | 50 s | the recursors of a nested block, derived |
+| `perf/fueled-chain` | 50 s | an algorithm: neither kernel answers it |
+| `perf/grind-ring-5` | 60 s | throughput on one brute-force conversion |
+| `perf/magma-list-deep-n21` | 80 s | the same, and it is 25% over |
+| `perf/magma-list-pair-n21` | 260 s | the same |
+| `perf/magma-list-deep-n36` | 390 s | the same |
+
+The four at the bottom are one declaration each: a `countermodel` over
+`Fin n` that a decision procedure walks. `magma-list-deep-n21` checks 622
+of its 623 declarations in 1.2 s and spends the rest on the last one.
