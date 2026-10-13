@@ -247,6 +247,38 @@ def Term.bytes_same(xs: List<&2, U32>, ys: List<&2, U32>) -> Bool:
     case x y:
       False{}
 
+# Are these two terms the same syntax?
+#
+# This is not conversion: nothing reduces and nothing unfolds. It is for
+# two terms built from the same declarations, where syntax is the question
+# -- the types a nested block eliminates, compared against each other.
+def Term.eq(fuel: Nat, a: Term, b: Term) -> Bool:
+  match fuel:
+    case 0n:
+      False{}
+    case 1n+(+f):
+      match a b:
+        case TVar{+i} TVar{+j}:
+          Nat.is_eq(i, j)
+        case TSort{x} TSort{y}:
+          L.Level.eq(x, y)
+        case TConst{+n1, +l1} TConst{+n2, +l2}:
+          Bool.and(Nat.is_eq(n1, n2), Term.same_levels(l1, l2))
+        case TApp{f1, a1} TApp{f2, a2}:
+          Bool.and(Term.eq(f, f1, f2), Term.eq(f, a1, a2))
+        case TLam{t1, b1} TLam{t2, b2}:
+          Bool.and(Term.eq(f, t1, t2), Term.eq(f, b1, b2))
+        case TPi{t1, b1} TPi{t2, b2}:
+          Bool.and(Term.eq(f, t1, t2), Term.eq(f, b1, b2))
+        case TNat{+v1, m1, z1, s1} TNat{+v2, m2, z2, s2}:
+          Nat.is_eq(v1, v2)
+        case TStr{n1, b1} TStr{n2, b2}:
+          Term.bytes_same(b1, b2)
+        case TUnk{} TUnk{}:
+          True{}
+        case x y:
+          False{}
+
 def Term.is_big(t: Term) -> Bool:
   match t:
     case TBig{ds, nm, zr, sc}:
@@ -322,6 +354,24 @@ def Term.any_unk(+fuel: Nat, t: Term) -> Bool:
 # How many binders a telescope opens with. The result type of a constructor
 # is an application of its inductive and never a pi, so this counts exactly
 # the parameters and the fields.
+# The binder type of a pi, or the unknown term when it is not one.
+def Term.pi_ty(t: Term) -> Term:
+  match t:
+    case TPi{+ty, bd}:
+      ty
+    case x:
+      TUnk{}
+
+# The body of a pi, or the term itself when it is not one. For reading a
+# telescope one binder at a time while the argument of that binder is
+# substituted in.
+def Term.pi_body(t: Term) -> Term:
+  match t:
+    case TPi{ty, +bd}:
+      bd
+    case x:
+      x
+
 def Term.pi_count(t: Term, +acc: Nat) -> Nat:
   match t:
     case TPi{ty, bd}:

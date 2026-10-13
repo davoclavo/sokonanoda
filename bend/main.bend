@@ -121,7 +121,7 @@ def Main.env_iota_at(major: T.Term) -> List<&2, E.Decl>:
   , E.DRec{3n, [], Main.rec_type(), 0n, 0n, 1n, 2n, False{},
       [ E.MkRule{1n, 0n, Main.rhs_first()}
       , E.MkRule{2n, 0n, Main.rhs_second()}],
-      [0n], True{}}
+      [0n], [3n], True{}}
   , E.DAxiom{4n, [], T.TPi{T.TConst{0n, []}, T.TSort{L.LSucc{L.LZero{}}}}}
   , E.DAxiom{5n, [], T.TApp{T.TConst{4n, []}, T.TConst{1n, []}}}
   , E.DDef{6n, [],

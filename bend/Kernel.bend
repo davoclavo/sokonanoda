@@ -543,7 +543,7 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
                     Kernel.ctor_pos_ok(
                       E.DCtor{id, ps, ty, ind, cidx, np, nf}))))))),
         Kernel.is_type(fuel, env, ty)))
-    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +sibs, +named}:
       A.Ans.and(
         A.Ans.and(
           A.Ans.of(
@@ -552,13 +552,13 @@ def Kernel.check_decl(+fuel: Nat, +env: E.DTable, d: E.Decl) -> A.Ans:
               Bool.and(
                 Kernel.rec_ok(
                   env,
-                  E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}),
+                  E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named}),
                 Kernel.rec_counts_ok(
                   env,
-                  E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})))),
+                  E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named})))),
           Kernel.rec_elim(
             fuel, env,
-            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})),
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named})),
         Kernel.is_type(fuel, env, ty))
     case E.DQuot{id, ps, ty, kind, eq}:
       A.Ans.and(
@@ -767,7 +767,7 @@ def Kernel.kind_name(d: E.Decl) -> String:
       "ind  "
     case E.DCtor{id, ps, ty, ind, cidx, np, nf}:
       "ctor "
-    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}:
+    case E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named}:
       "rec  "
     case E.DQuot{id, ps, ty, kind, eq}:
       "quot "
@@ -840,25 +840,25 @@ def Kernel.why_kind(+fuel: Nat, +env: E.DTable, d: E.Decl) -> String:
         A.Ans.of(
           Kernel.ctor_pos_ok(E.DCtor{id, ps, ty, ind, cidx, np, nf}))) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty))
-    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +sibs, +named}:
       Kernel.flag("params", A.Ans.of(E.Decl.no_dupes(ps))) ++
       Kernel.flag(
         "block",
         A.Ans.of(
           Kernel.rec_ok(
             env,
-            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))) ++
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named}))) ++
       Kernel.flag(
         "counts",
         A.Ans.of(
           Kernel.rec_counts_ok(
             env,
-            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named}))) ++
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named}))) ++
       Kernel.flag(
         "elim",
         Kernel.rec_elim(
           fuel, env,
-          E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})) ++
+          E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named})) ++
       Kernel.flag("type", Kernel.is_type(fuel, env, ty))
     case o:
       ""
@@ -915,7 +915,41 @@ def Kernel.rules_match(
 # whatever form it reduced to. A shape the derivation does not handle gives
 # `T.TUnk`, which converts with nothing, so the answer is no and the block
 # stays trusted.
-def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
+# A nested block's recursor, verified.
+#
+# The block states more motives than it declares types, and the types it
+# does not name are found by a walk of the constructors' fields. Every rule
+# the recursor states is compared against the one the derivation builds for
+# that constructor; the rules of the sibling eliminators are not this
+# recursor's to state, and reduction never reads them from here.
+def Kernel.nest_rules(
+  rs: List<&2, E.RecRule>, +fuel: Nat, +env: E.DTable, +r: E.Decl
+) -> A.Ans:
+  match rs:
+    case Nil{}:
+      A.AYes{}
+    case Con{+h, t}:
+      A.Ans.and(
+        C.Conv.eq(
+          fuel, env,
+          R.Rec.nest_rule(fuel, env, r, E.RecRule.ctor(h)),
+          E.RecRule.rhs(h)),
+        Kernel.nest_rules(t, fuel, env, r))
+
+def Kernel.nest_verified(
+  +fuel: Nat, +env: E.DTable, +r: E.Decl
+) -> A.Ans:
+  A.Ans.and(
+    C.Conv.eq(
+      fuel, env,
+      R.Rec.nest_derive(fuel, env, r),
+      E.Decl.type_at(
+        r,
+        R.Rec.lvl_shift(
+          List.length(&2, Nat, E.Decl.params(r)), 0n, 0n))),
+    Kernel.nest_rules(E.Decl.rec_rules(r), fuel, env, r))
+
+def Kernel.flat_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
   A.Ans.and(
     A.Ans.and(
       C.Conv.eq(
@@ -934,6 +968,23 @@ def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
           E.Decl.rec_rules(r)))),
     Kernel.rules_match(fuel, env, r, E.Decl.rec_nmin(r), 0n))
 
+# Does this recursor eliminate more types than its block declares?
+def Kernel.is_nested(+r: E.Decl) -> Bool:
+  Nat.is_lt(
+    List.length(&2, Nat, E.Decl.rec_inds(r)), E.Decl.rec_nm(r))
+
+def Kernel.verified_pick(
+  nested: Bool, +fuel: Nat, +env: E.DTable, +r: E.Decl
+) -> A.Ans:
+  match nested:
+    case True{}:
+      Kernel.nest_verified(fuel, env, r)
+    case False{}:
+      Kernel.flat_verified(fuel, env, r)
+
+def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
+  Kernel.verified_pick(Kernel.is_nested(r), fuel, env, r)
+
 # Does this declaration still have to be taken on trust?
 #
 # An inductive and its constructors are checked by the ten rules on a block.
@@ -942,12 +993,12 @@ def Kernel.rec_verified(+fuel: Nat, +env: E.DTable, +r: E.Decl) -> A.Ans:
 # still taken on trust, because nothing here derives one.
 def Kernel.trusted_ans(+fuel: Nat, +env: E.DTable, d: E.Decl) -> Bool:
   match d:
-    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +named}:
+    case E.DRec{+id, +ps, +ty, +np, +ni, +nm, +nmin, +k, +rules, +inds, +sibs, +named}:
       Bool.not(
         A.Ans.is_yes(
           Kernel.rec_verified(
             fuel, env,
-            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, named})))
+            E.DRec{id, ps, ty, np, ni, nm, nmin, k, rules, inds, sibs, named})))
     case o:
       False{}
 

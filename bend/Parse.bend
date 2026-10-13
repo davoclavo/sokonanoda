@@ -401,11 +401,50 @@ def Parse.name_starts(+line: List<&2, U32>, +w: String) -> Bool:
 # Lean, which numbers them, and it still refuses the three attacks the rule is
 # for: `extra-rec` names its rogue eliminator `False.rogue`, and
 # `misnamed_rec_user` and `dup_rec_def2` each name theirs `not_rec`.
+# Which eliminator of its block a name is: one for `rec`, two for `rec_1`,
+# three for `rec_2`, and so on, and zero for a name that is neither.
+#
+# The number is the order of the types a nested block eliminates, and the
+# rule of one eliminator names another, so the derivation needs it. Nothing
+# rests on the name being honest: a wrong order makes the derived rule
+# differ from the stated one, which leaves the block trusted.
+# The first slot that matches, over the eight a block may have.
+def Parse.slot_pick(hit: Bool, +k: Nat) -> Nat:
+  match hit:
+    case True{}:
+      1n+k
+    case False{}:
+      0n
+
+def Parse.rec_slot(+line: List<&2, U32>, +k: Nat) -> Nat:
+  Parse.slot_pick(
+    Parse.name_is(line, "rec_" ++ Nat.show(k)), k)
+
+def Parse.rec_slot_of(+line: List<&2, U32>, n: Nat, +k: Nat) -> Nat:
+  match n:
+    case 0n:
+      0n
+    case 1n+m:
+      Nat.add(
+        Parse.rec_slot(line, k), Parse.rec_slot_of(line, m, 1n+k))
+
+def Parse.mark_pick(plain: Bool, +line: List<&2, U32>) -> Nat:
+  match plain:
+    case True{}:
+      1n
+    case False{}:
+      Parse.rec_slot_of(line, 8n, 1n)
+
+def Parse.rec_mark(+line: List<&2, U32>) -> Nat:
+  Parse.mark_pick(
+    Parse.name_is(line, "rec"), line)
+
 def Parse.upd_rec(+line: List<&2, U32>, +rc: Tb.NTable) -> Tb.NTable:
   Parse.pick_tbl(
     Bool.or(
       Parse.name_is(line, "rec"), Parse.name_starts(line, "rec_")),
-    Tb.Table.write_nat(rc, R.Reader.field("in", line), 1n),
+    Tb.Table.write_nat(
+      rc, R.Reader.field("in", line), Parse.rec_mark(line)),
     rc)
 
 # `Eq` is the name with no prefix and the component `Eq`.
@@ -867,7 +906,53 @@ def Parse.ctor_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
         R.Reader.field("numFields", o)}
 
 # One recursor.
-def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
+# The names of every recursor of a block, in the order the export lists
+# them. A rule of a nested block names a sibling, so the derivation needs
+# them, and this is read once per block and handed to each one.
+def Parse.rec_names(os: List<&2, List<&2, U32>>) -> List<&2, Nat>:
+  match os:
+    case Nil{}:
+      Nil{}
+    case Con{o, t}:
+      Con{R.Reader.field("name", o), Parse.rec_names(t)}
+
+# The name whose slot is `k`, or zero.
+def Parse.pick_one(b: Bool, +x: Nat, +y: Nat) -> Nat:
+  match b:
+    case True{}:
+      x
+    case False{}:
+      y
+
+# The whole list is walked whichever way the test goes, because a pick runs
+# both branches, and a block has eight eliminators at the most.
+def Parse.name_at_slot(
+  ns: List<&2, Nat>, +rc: Tb.NTable, +k: Nat
+) -> Nat:
+  match ns:
+    case Nil{}:
+      0n
+    case Con{+h, t}:
+      Parse.pick_one(
+        Nat.is_eq(Tb.Table.read_nat(rc, h), k), h,
+        Parse.name_at_slot(t, rc, k))
+
+# The recursors of a block in the order of the types they eliminate, which
+# is the order of their names: `rec`, then `rec_1`, then `rec_2`.
+def Parse.rec_sorted(
+  n: Nat, +ns: List<&2, Nat>, +rc: Tb.NTable, +k: Nat
+) -> List<&2, Nat>:
+  match n:
+    case 0n:
+      Nil{}
+    case 1n+m:
+      Con{
+        Parse.name_at_slot(ns, rc, k),
+        Parse.rec_sorted(m, ns, rc, 1n+k)}
+
+def Parse.rec_of(
+  +o: List<&2, U32>, +st: PState, +sibs: List<&2, Nat>
+) -> E.Decl:
   match st:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn}:
       E.DRec{
@@ -886,8 +971,10 @@ def Parse.rec_of(+o: List<&2, U32>, +st: PState) -> E.Decl:
           MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn},
           R.Reader.num_list("levelParams", o)),
         R.Reader.num_list("all", o),
-        Nat.is_eq(
-          Tb.Table.read_nat(rc, R.Reader.field("name", o)), 1n)}
+        sibs,
+        Bool.not(
+          Nat.is_eq(
+            Tb.Table.read_nat(rc, R.Reader.field("name", o)), 0n))}
 
 # Add every object of an array, in order, to the declarations.
 def Parse.add_inds(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>) -> List<&2, E.Decl>:
@@ -904,20 +991,33 @@ def Parse.add_ctors(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.De
     case Con{o, t}:
       Parse.add_ctors(t, st, Con{Parse.ctor_of(o, st), ds})
 
-def Parse.add_recs(os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>) -> List<&2, E.Decl>:
+def Parse.add_recs(
+  os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>,
+  +sibs: List<&2, Nat>
+) -> List<&2, E.Decl>:
   match os:
     case Nil{}:
       ds
     case Con{o, t}:
-      Parse.add_recs(t, st, Con{Parse.rec_of(o, st), ds})
+      Parse.add_recs(t, st, Con{Parse.rec_of(o, st, sibs), ds}, sibs)
 
 # Fold a whole inductive block into the declarations: the types first, then
 # the constructors, then the recursors, which is the order a later
 # declaration may rely on.
+# The recursors of a block, with the names of all of them to hand.
+def Parse.add_recs_at(
+  +os: List<&2, List<&2, U32>>, +st: PState, +ds: List<&2, E.Decl>,
+  +rc: Tb.NTable
+) -> List<&2, E.Decl>:
+  Parse.add_recs(
+    os, st, ds,
+    Parse.rec_sorted(
+      List.length(&2, List<&2, U32>, os), Parse.rec_names(os), rc, 1n))
+
 def Parse.block_of(+line: List<&2, U32>, +st: PState) -> List<&2, E.Decl>:
   match st:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn}:
-      Parse.add_recs(
+      Parse.add_recs_at(
         R.Reader.obj_list("recs", line),
         MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn},
         Parse.add_ctors(
@@ -926,7 +1026,8 @@ def Parse.block_of(+line: List<&2, U32>, +st: PState) -> List<&2, E.Decl>:
           Parse.add_inds(
             R.Reader.obj_list("types", line),
             MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn},
-            ds)))
+            ds)),
+        rc)
 
 # Quotients
 # ---------
