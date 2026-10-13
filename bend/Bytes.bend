@@ -111,11 +111,18 @@ def Bytes.pick_nat(b: Bool, x: Nat, y: Nat) -> Nat:
 # the one answer worse than not knowing. So the reader stops here instead, and
 # a literal that reaches this cap is read as unknown.
 #
-# The cap is 2^31. Bend writes a number up to 2^32-1 in source, and ten times
-# this one and nine more is still inside the 2^48 an immediate holds, so the
-# accumulator never overflows.
+# The cap is 2^40, written as a product because Bend reads a number up to
+# 2^32-1 in source. Ten times this one and nine more is 1.1e13, well inside
+# the 2.8e14 an immediate holds, so the accumulator never overflows.
+#
+# A cap of 2^31 was the first number here, and it was too low to read
+# `4294967296`, the size of a `UInt32`. The prelude decides
+# `1114112 < UInt32.size` to show that every `Char` fits a `UInt32`, and an
+# unknown literal there made the whole file decline. That number and
+# `18446744073709551616` are the only literals in the corpus above 2^31, and
+# the second one is past what an immediate holds whatever this cap says.
 def Bytes.nat_cap() -> Nat:
-  2147483648n
+  Nat.mul(1073741824n, 1024n)
 
 # One more digit, or the cap. The cap is below 2^48 by enough that ten times
 # it and nine more is still an immediate, so this never overflows.

@@ -159,8 +159,19 @@ def Val.sp_take(n: Nat, sp: List<&2, Val>) -> List<&2, Val>:
 # body throws away -- `perf/discarded-argument-match` is the file that says
 # so -- and call by name pays twice for one it reads twice, which is the
 # sharing this whole evaluator exists for.
+# A cell of the heap: the term it still holds, the weak value it reduced to
+# with delta off, or the value it reduced to with delta on.
+#
+# The middle one is why there are three. Conversion reduces with delta off
+# first, and that answer is not the cell's value: `whnfCore` stops at a
+# definition it may not unfold. A reader with delta on has to reduce the
+# term again, so the term stays beside the weak value. Writing the weak
+# value as the cell's value made five files of the corpus reject proofs
+# that Lean accepts, and dropping the weak value instead cost
+# `perf/shared-subterm` twenty seconds.
 type HCell is Data:
   HRaw{t: T.Term, en: List<&2, Val>}
+  HWeak{v: Val, t: T.Term, en: List<&2, Val>}
   HDone{v: Val}
 
 type HTab is Data:
@@ -317,19 +328,35 @@ def HCell.is_done(c: HCell) -> Bool:
   match c:
     case HRaw{t, en}:
       False{}
+    case HWeak{v, t, en}:
+      False{}
     case HDone{v}:
       True{}
+
+# Does this cell hold a value a reader with delta off may take?
+def HCell.is_weak(c: HCell) -> Bool:
+  match c:
+    case HRaw{t, en}:
+      False{}
+    case HWeak{v, t, en}:
+      True{}
+    case HDone{v}:
+      False{}
 
 def HCell.val(c: HCell) -> Val:
   match c:
     case HRaw{t, en}:
       VUnk{}
+    case HWeak{+v, t, en}:
+      v
     case HDone{+v}:
       v
 
 def HCell.term(c: HCell) -> T.Term:
   match c:
     case HRaw{+t, en}:
+      t
+    case HWeak{v, +t, en}:
       t
     case HDone{v}:
       T.TUnk{}
@@ -338,8 +365,19 @@ def HCell.env(c: HCell) -> List<&2, Val>:
   match c:
     case HRaw{t, +en}:
       en
+    case HWeak{v, t, +en}:
+      en
     case HDone{v}:
       Nil{}
+
+# What to write back after a reduction: the value, when delta was on, and
+# the weak value beside the term when it was off.
+def HCell.after(ok: Bool, +v: Val, +t: T.Term, +en: List<&2, Val>) -> HCell:
+  match ok:
+    case True{}:
+      HDone{v}
+    case False{}:
+      HWeak{v, t, en}
 
 def VR.val(r: VR) -> Val:
   match r:
@@ -660,6 +698,88 @@ def Val.nat_sc(v: Val) -> Nat:
     case o:
       0n
 
+# Is this a one-field constructor of its own, applied to one argument?
+#
+# `Nat.succ` is the one that matters, and this is how it is recognised
+# without the kernel having to know the name: a literal carries the name of
+# the successor it was read with, so the argument says whether the head is
+# that successor.
+def Val.succ_at(+d: E.Decl, +sp: List<&2, Val>) -> Bool:
+  Bool.and(
+    E.Decl.is_ctor(d),
+    Bool.and(
+      Nat.is_eq(E.Decl.ctor_np(d), 0n),
+      Bool.and(
+        Nat.is_eq(E.Decl.ctor_nf(d), 1n),
+        Nat.is_eq(Val.sp_len(sp, 0n), 1n))))
+
+# Is the argument a literal whose successor is this very constructor, and
+# does one more still fit a literal?
+def Val.sc_of(+v: Val, +id: Nat) -> Bool:
+  Bool.and(
+    Bool.and(Val.is_nat(v), Nat.is_eq(Val.nat_sc(v), id)),
+    Nat.is_lt(Nat.add(Val.nat_of(v), 1n), V.Eval.num_cap()))
+
+# `Nat.succ` of a literal is a literal, and this is what says so.
+#
+# Without it the two forms are different values, and that is expensive
+# rather than wrong: a native rule reads numbers, so `Nat.ble (succ n) m`
+# with the successor in the way falls back on the structure of `Nat.ble`.
+# For the prelude's `1114112 < UInt32.size` that is a million iota steps,
+# and it is where `good/init-prelude` used to stop.
+#
+# The argument is read where it stands and is never forced. A literal and a
+# variable are already values in the spine, which covers the two ways the
+# form arises, and forcing was wrong: a cell read under `whnfCore` keeps
+# the value it had with delta off, so forcing one argument of every
+# one-field constructor made five files reject that Lean accepts.
+def Val.succ_ready(+d: E.Decl, +sp: List<&2, Val>) -> Bool:
+  Bool.and(Val.succ_at(d, sp), Val.sc_of(Val.sp_nth(0n, sp), E.Decl.id(d)))
+
+# The single argument of a neutral that has exactly one, or the unknown
+# value. A `Nat.succ` that is already reduced looks like this.
+def Val.sp_one(sp: List<&2, Val>) -> Val:
+  match sp:
+    case Nil{}:
+      VUnk{}
+    case Con{+x, rest}:
+      match rest:
+        case Nil{}:
+          x
+        case o:
+          VUnk{}
+
+def Val.inner_of(v: Val) -> Val:
+  match v:
+    case VNe{hd, sp}:
+      Val.sp_one(sp)
+    case o:
+      VUnk{}
+
+def Val.fold_pick(ok: Bool, +y: Val, v: Val) -> Val:
+  match ok:
+    case True{}:
+      VNat{
+        Nat.add(Val.nat_of(y), 1n), Val.nat_name(y), Val.nat_zr(y),
+        Val.nat_sc(y)}
+    case False{}:
+      v
+
+# `Nat.succ` of a literal, read as a literal, where `v` is the value and
+# `y` is its one argument after reduction.
+#
+# This is the second place the form turns up. The rule above fires where
+# `Nat.succ` is the head being reduced and its argument is a value already.
+# Here a native rule has forced its own two arguments and one of them came
+# back as `succ` of something: `Nat.decLt n m` is `Nat.ble (n+1) m`, so
+# every comparison of the prelude arrives this way, and without the fold
+# `1114112 < UInt32.size` is a million iota steps.
+#
+# A value that does not fold is handed back as it stands, with its slot
+# still inside it, so nothing of the sharing is lost.
+def Val.fold_with(+v: Val, +y: Val) -> Val:
+  Val.fold_pick(Val.sc_of(y, Val.head_name(v)), y, v)
+
 # The next thing to work on when a constant is the control.
 #
 # The order is the one `Eval.whnf` uses: a primitive, then a definition, then
@@ -677,6 +797,7 @@ type RuleK is Data:
   RDef{}
   RIota{}
   RQuot{}
+  RSucc{}
   RNone{}
 
 def Val.pick_k(b: Bool, x: RuleK, y: RuleK) -> RuleK:
@@ -698,7 +819,9 @@ def Val.rule_kind(
       Bool.and(dl, E.Decl.is_def(d)), RDef{},
       Val.pick_k(
         Val.can_iota(d, sp, mw), RIota{},
-        Val.pick_k(Val.quot_ready(env, d, sp, mw), RQuot{}, RNone{}))))
+        Val.pick_k(
+          Val.quot_ready(env, d, sp, mw), RQuot{},
+          Val.pick_k(Val.succ_ready(d, sp), RSucc{}, RNone{})))))
 
 # What reduction does next, and the spine it does it to.
 type Next is Data:
@@ -735,6 +858,15 @@ def Val.next_of(
         Val.iota_args(env, d, sp, mw)}
     case RQuot{}:
       MkNx{CVal{Val.quot_fn(d, sp)}, Val.quot_args(d, sp, mw)}
+    case RSucc{}:
+      MkNx{
+        CVal{
+          VNat{
+            Nat.add(Val.nat_of(Val.sp_nth(0n, sp)), 1n),
+            Val.nat_name(Val.sp_nth(0n, sp)),
+            Val.nat_zr(Val.sp_nth(0n, sp)),
+            Val.nat_sc(Val.sp_nth(0n, sp))}},
+        Val.sp_drop(1n, sp)}
     case RNone{}:
       MkNx{CVal{VNe{HConst{n, ls}, Nil{}}}, sp}
 
@@ -842,7 +974,13 @@ def Val.go(
               # term. An argument reduces before a match picks an arm, so a
               # `pick` over two reductions runs both of them.
               +cl : HCell = Hp.cell(hp, k)
-              +dn : Bool = HCell.is_done(cl)
+              # A value the cell holds is this reader's answer when it was
+              # reduced with delta on, or when this reader has delta off as
+              # well.
+              +dn : Bool =
+                Bool.or(
+                  HCell.is_done(cl),
+                  Bool.and(HCell.is_weak(cl), Bool.not(dl)))
               +r : VR =
                 Val.go(
                   f, env, dl, hp,
@@ -851,10 +989,17 @@ def Val.go(
                     CTerm{HCell.term(cl), HCell.env(cl)}),
                   Nil{})
               +fv : Val = Val.pick(dn, HCell.val(cl), VR.val(r))
+              # Nothing is written when the cell already held the value
+              # this reader used. Writing then would put a weak value over
+              # a finished one, with the term gone, and the cell would
+              # answer "unknown" from that point on.
               Val.go(
                 f, env, dl,
                 Hp.put_if(
-                  Bool.not(Val.is_unk(fv)), VR.heap(r), k, HDone{fv}),
+                  Bool.and(
+                    Bool.not(dn), Bool.not(Val.is_unk(fv))),
+                  VR.heap(r), k,
+                  HCell.after(dl, fv, HCell.term(cl), HCell.env(cl))),
                 CVal{fv}, sp)
             case VUnk{}:
               MkVR{VUnk{}, hp}
@@ -920,10 +1065,32 @@ def Val.go(
                   f, env, dl, VR.heap(a0),
                   Val.pick_c(ip, CVal{Val.sp_nth(1n, sp)}, CVal{VUnk{}}),
                   Nil{})
+              # One level inside each of those two, for the fold that
+              # reads `Nat.succ` of a literal as a literal. A native rule
+              # is about to read both of them as numbers, so this is the
+              # one place the extra reduction is paid for. Forcing the
+              # argument of every one-field constructor instead costs
+              # `perf/args-before-unfold` its whole limit.
+              +b0 : VR =
+                Val.go(
+                  f, env, dl, VR.heap(a1),
+                  Val.pick_c(
+                    ip, CVal{Val.inner_of(VR.val(a0))}, CVal{VUnk{}}),
+                  Nil{})
+              +b1 : VR =
+                Val.go(
+                  f, env, dl, VR.heap(b0),
+                  Val.pick_c(
+                    ip, CVal{Val.inner_of(VR.val(a1))}, CVal{VUnk{}}),
+                  Nil{})
               +sp1 : List<&2, Val> =
                 Val.pick_sp(
                   ip,
-                  Con{VR.val(a0), Con{VR.val(a1), Val.sp_drop(2n, sp)}},
+                  Con{
+                    Val.fold_with(VR.val(a0), VR.val(b0)),
+                    Con{
+                      Val.fold_with(VR.val(a1), VR.val(b1)),
+                      Val.sp_drop(2n, sp)}},
                   sp)
               +mi : Val =
                 Val.pick(
@@ -933,7 +1100,7 @@ def Val.go(
                     Nat.is_lt(V.Eval.quot_pos(d), Val.sp_len(sp1, 0n)),
                     Val.sp_nth(V.Eval.quot_pos(d), sp1),
                     VSort{L.LZero{}}))
-              +mr : VR = Val.go(f, env, dl, VR.heap(a1), CVal{mi}, Nil{})
+              +mr : VR = Val.go(f, env, dl, VR.heap(b1), CVal{mi}, Nil{})
               # a value of a structure type is its own constructor applied
               # to its own fields, so a recursor stuck on one is not stuck
               +mw : Val = Val.eta_struct(env, d, ls, sp1, VR.val(mr))

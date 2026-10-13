@@ -1089,8 +1089,16 @@ def Vconv.or_terms(
 # costs that budget and the value comparison carries on. The budget is
 # small enough that a file whose answer is a computation loses little, and
 # large enough to settle a telescope.
+#
+# The budget is measured, and it is a window rather than a floor. The term
+# kernel substitutes, so a term can double in size at every step, and the
+# cost of a step is the size of the term. At 1000 the attempt on
+# `good/init-prelude`'s `Char.ofNatAux` does not finish in thirty seconds;
+# at 100 the first four hundred declarations of the same file do not
+# finish, because there the attempt is what settles them. Three hundred to
+# six hundred answers all of them, and five hundred is the middle of it.
 def Vconv.try_cap() -> Nat:
-  3000n
+  500n
 
 def Vconv.eq_values(
   +fuel: Nat, +env: E.DTable, +cx: List<&2, T.Term>, +a: T.Term,

@@ -1632,3 +1632,82 @@ The next thing to try is not another guess. It is to make one of the probes
 fast enough to name the pair: `bend/blame.bend` walks the value and asks
 inference at every node, which is why it cannot be used where one inference
 takes a minute.
+
+## The wall of `good/init-prelude`, found and moved
+<!-- 2026-10-12 -->
+
+The theorem that stopped the file is
+`_private.Init.Prelude.0.isValidChar_UInt32`, declaration 901 of 1938, and it
+proves `1114112 < UInt32.size` by `decide`. Four things had to change before
+it went through, and the first of them is why the three attempts above
+failed.
+
+**The reader's cap was below the number.** `UInt32.size` is `4294967296`,
+which is 2^32, and `Bytes.nat_cap` was 2^31. A literal at or above the cap is
+read as the unknown term, so the proof could not be decided at all, and the
+fold of a successor into a literal had nothing to fold against. The cap is
+2^40 now, written as a product because Bend reads a number up to 2^32-1 in
+source. The native arithmetic has always capped at 2^47, so nothing else had
+to move. `18446744073709551616` is the only other literal in the corpus
+above 2^31, and it is past what a Bend `Nat` holds whatever this cap says.
+
+**A literal wearing a successor.** `Nat.decLt n m` is `Nat.ble (n+1) m`, so
+every comparison of the prelude hands a native rule `Nat.succ` of a literal.
+`Val.succ_ready` reads that form as a literal where `Nat.succ` is the head
+being reduced, and `Val.fold_with` reads it where a native rule has forced
+its own two arguments. With the bigger cap the two together take the cut from
+sixteen seconds to a third of one.
+
+**Forcing has to be narrow.** Forcing the one argument of every one-field
+constructor also folds the form, and it costs `perf/args-before-unfold` its
+whole limit: that file is built to punish exactly that. The fold now forces
+only one level inside the two arguments of a native rule, which is the one
+place the kernel is about to read a value as a number anyway.
+
+**The heap may not keep a weak value.** Forcing turned up a wrong answer
+that was already there. A cell of the heap held whatever its term reduced
+to, and conversion reduces with delta off first, so a cell could keep a
+`whnfCore` answer -- which stops at a definition it may not unfold -- as the
+cell's value. A later reader with delta on took that weak value for the
+whole reduction, left the definition folded, and the comparison answered no.
+Five files of the corpus rejected proofs that Lean accepts as soon as
+forcing made this common. A cell is now `HRaw`, `HWeak` or `HDone`: the weak
+value is kept beside the term, a reader with delta off may take it, and a
+reader with delta on reduces the term again and writes `HDone`. Nothing is
+written when the cell already held the value the reader used, because that
+would put a weak value over a finished one with the term gone.
+
+The weak value is not free. `perf/shared-subterm` answered in 0.10 s with
+the unsound memo and takes 24 s with this one, which is the file's real cost
+under a kernel that unfolds what it should. It is inside its limit of fifty.
+
+**The term attempt needs a window.** `Vconv.try_cap` was 3000. The term
+kernel substitutes, so a term can double at every step and the cost of a
+step is the size of the term: at 1000 the attempt on `Char.ofNatAux` does not
+finish in thirty seconds, and at 100 the first four hundred declarations of
+the same file do not finish, because there the attempt is what settles them.
+Three hundred to six hundred answers both, and the cap is 500.
+
+Declaration 901 now checks in 2.4 s, and the file reaches declaration 909,
+`Lean.Name.hasMacroScopes._f`, which holds the string literal `"_hyg"`.
+
+### What a string literal needs, and why the easy form is not available
+
+Lean's own kernel expands a string literal to its constructor application
+when a rule needs one. In the Lean this corpus was exported from, that form
+is not `String.mk (List.cons (Char.ofNat c) ...)`: there is no `String.mk` in
+any of the four exports that hold a literal. `String` is a structure over a
+`ByteArray` with a proof that the bytes are valid UTF-8, so its constructor
+takes a proof, and a kernel cannot write one.
+
+So the literal has to be a term of its own. What keeps that sound:
+
+- its type is `String`, which every one of the four files names;
+- two literals with the same bytes are equal, and two with different bytes
+  are not;
+- a literal against anything else is **unknown**, not unequal;
+- a recursor or a projection on a literal is unknown.
+
+The last two are what keep a wrong answer out. A file that computes with a
+string -- `String.decEq "a" "b"`, say -- then declines, which is the answer
+this kernel is entitled to.
