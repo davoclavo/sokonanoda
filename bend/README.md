@@ -378,29 +378,29 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | before the speed work | after the level rules | after the recursor | the term kernel | the value kernel | with wide numbers |
-|---|---|---|---|---|---|---|
-| correct | 101 | 101 | 173 | 186 | 190 | **190** |
-| declined | 82 | 87 | 17 | 0 | 0 | **1** |
-| wrong | 0 | 0 | 0 | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 | 10 | 6 | **5** |
+| | after the recursor | the term kernel | the value kernel | wide numbers | nested recursors |
+|---|---|---|---|---|---|
+| correct | 173 | 186 | 190 | 190 | **191** |
+| declined | 17 | 0 | 0 | 1 | **0** |
+| wrong | 0 | 0 | 0 | 0 | **0** |
+| error or timeout | 5 | 10 | 6 | 5 | **5** |
 
-**Every answer is correct, and one file declines.** The six it does not
-answer are `init-prelude`, `perf/fueled-chain`, `perf/grind-ring-5` and
-three of the four `perf/magma-*` tests, and the two kinds are now apart:
+**Every file it answers, it answers correctly, and nothing is declined.**
+`good/init-prelude` accepts in 4 s of its fifty: 2106 declarations, every
+one checked, including the three eliminators of `Lean.Syntax` -- a
+**nested** inductive, whose three motives eliminate `Syntax`,
+`Array Syntax` and `List Syntax` together. `bend/nestchk.bend` is the gate
+for that derivation and `bend/trust.bend` names any recursor still taken on
+trust.
 
-- `good/init-prelude` **answers**, in 3.5 s of its fifty, and the answer is
-  `declined`. Of its 2106 declarations every one passes its own checks, and
-  three recursors are taken on trust: those of `Lean.Syntax`, a **nested**
-  inductive whose three motives eliminate `Syntax`, `List Syntax` and
-  `Array Syntax` together. `bend/Rec.bend` derives the recursor of one
-  inductive with one motive, so that block is the one thing between the
-  file and `accept`. `bend/trust.bend` is what names it.
-- the other five spend their **whole** limit, from fifty seconds to three
-  hundred and ninety. Four of them are one declaration each -- a
-  `countermodel` over `Fin n` that a decision procedure walks --  and
-  `perf/magma-list-deep-n21` checks 622 of its 623 declarations in 1.2 s
-  and spends the rest on the last one. No constant factor reaches them.
+The five it does not answer are `perf/fueled-chain`, `perf/grind-ring-5`
+and three of the four `perf/magma-*` tests, and only one of them is within
+a constant factor: `perf/magma-list-pair-n21` accepts in 273 s against a
+limit of 260. The others are a factor of seven, of ten, and worse, and
+`perf/fueled-chain` is answered by neither kernel. Four of the five are one
+declaration each -- a `countermodel` over `Fin n` that a decision procedure
+walks -- and `perf/magma-list-deep-n21` checks 622 of its 623 declarations
+in 1.2 s and spends the rest on the last one.
 
 The last column is the value kernel of `bend/Val.bend` and
 `bend/Vconv.bend`, which carries an environment and a heap instead of
