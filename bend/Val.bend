@@ -911,7 +911,122 @@ def Val.proj_ctrl(
 #
 # A variable that already holds a slot keeps that slot, so the two readers
 # share one cell and one reduction.
-def Val.arg_cell(+hp: Hp, t: T.Term, +en: List<&2, Val>) -> VR:
+# Is this term a value already, with nothing in it that any rule fires on?
+#
+# A constructor or an inductive type applied to such terms is one: no rule
+# of this kernel reduces it, so building the value costs the applications
+# and nothing else. A definition, a recursor and a quotient are all out,
+# because each of them has a rule; a bare variable, sort or literal is in,
+# but a variable at the head of an application is not -- its value may be a
+# lambda, and then the application is a beta step.
+#
+# `atom` carries which of the two is being asked.
+def Val.rigid_hd(+d: E.Decl) -> Bool:
+  Bool.or(E.Decl.is_ctor(d), E.Decl.is_ind(d))
+
+def Val.rigid_go(
+  fuel: Nat, +env: E.DTable, atom: Bool, t: T.Term
+) -> Bool:
+  match fuel:
+    case 0n:
+      False{}
+    case 1n+(+f):
+      match t:
+        case T.TVar{i}:
+          atom
+        case T.TSort{l}:
+          atom
+        case T.TNat{v, nm, zr, sc}:
+          atom
+        case T.TConst{+n, ls}:
+          Val.rigid_hd(E.Lookup.get(E.Env.find(env, n)))
+        case T.TApp{+g, +a}:
+          Bool.and(
+            Val.rigid_go(f, env, False{}, g),
+            Val.rigid_go(f, env, True{}, a))
+        case o:
+          False{}
+
+# How far the test looks. A term deeper than this takes a slot, which is
+# never wrong and only sometimes slower.
+#
+# Three is measured. `perf/magma-list-pair-n7` and `perf/shared-subterm`
+# both answer fastest there, and both get slower as the test is allowed
+# deeper: a value built where it stands is copied where the body uses its
+# variable twice, and a slot is copied as a number. So the rule pays for a
+# constructor with its arguments and stops before the trees.
+def Val.rigid_cap() -> Nat:
+  3n
+
+def Val.rigid_term(+env: E.DTable, t: T.Term) -> Bool:
+  Val.rigid_go(Val.rigid_cap(), env, True{}, t)
+
+# A constant on its own is a value when nothing can unfold it. A
+# constructor, an inductive type, a recursor, an axiom and a quotient are
+# all of them already in head normal form, so a slot for one would be a
+# path down the trie written and another read to arrive at the value that
+# was already there.
+#
+# Half the time of `perf/magma-list-pair-n7` was the heap write, and the
+# type arguments of that file -- `Fin 21`, `Magma (Fin 21)` and the
+# constructors of its lists -- are what wrote it.
+# The value of a term the test above answered yes for. No rule fires on
+# one, so this builds and never reduces, and that is why it can live
+# outside `Val.go`: Bend has no mutual recursion, and a builder that called
+# the evaluator would need it.
+#
+# A variable at the head of an application cannot happen, because the test
+# says no to one, so a spine over a variable answers the unknown value.
+def Val.rigid_app(v: Val, sp: List<&2, Val>) -> Val:
+  match sp:
+    case Nil{}:
+      v
+    case o:
+      VUnk{}
+
+def Val.rigid_val(
+  fuel: Nat, +en: List<&2, Val>, t: T.Term, +sp: List<&2, Val>
+) -> Val:
+  match fuel:
+    case 0n:
+      VUnk{}
+    case 1n+(+f):
+      match t:
+        case T.TVar{+i}:
+          Val.rigid_app(Val.at(i, en), sp)
+        case T.TSort{l}:
+          VSort{l}
+        case T.TNat{v, nm, zr, sc}:
+          VNat{v, nm, zr, sc}
+        case T.TConst{+n, +ls}:
+          VNe{HConst{n, ls}, sp}
+        case T.TApp{+g, +a}:
+          Val.rigid_val(
+            f, en, g, Con{Val.rigid_val(f, en, a, Nil{}), sp})
+        case o:
+          VUnk{}
+
+def Val.const_cell(+hp: Hp, ok: Bool, +n: Nat, +ls: List<&2, L.Level>, +en: List<&2, Val>) -> VR:
+  match ok:
+    case True{}:
+      MkVR{VNe{HConst{n, ls}, Nil{}}, hp}
+    case False{}:
+      MkVR{VSlot{Hp.next(hp)}, Hp.alloc(hp, T.TConst{n, ls}, en)}
+
+# A term that is a value already is built where it stands. The decision is
+# here rather than at the application, because choosing between a control
+# that holds the term and one that does not copies the whole term and then
+# drops it, and that cost is paid on every application of the file.
+def Val.rig_cell(
+  ok: Bool, +hp: Hp, +t: T.Term, +en: List<&2, Val>
+) -> VR:
+  match ok:
+    case True{}:
+      MkVR{Val.rigid_val(Val.rigid_cap(), en, t, Nil{}), hp}
+    case False{}:
+      MkVR{VSlot{Hp.next(hp)}, Hp.alloc(hp, t, en)}
+
+def Val.arg_cell(+env: E.DTable, +hp: Hp, +t: T.Term, +en: List<&2, Val>) -> VR:
   match t:
     case T.TVar{+i}:
       MkVR{Val.at(i, en), hp}
@@ -921,8 +1036,13 @@ def Val.arg_cell(+hp: Hp, t: T.Term, +en: List<&2, Val>) -> VR:
       MkVR{VNat{v, nm, zr, sc}, hp}
     case T.TUnk{}:
       MkVR{VUnk{}, hp}
+    case T.TConst{+n, +ls}:
+      Val.const_cell(
+        hp,
+        Bool.not(E.Decl.is_def(E.Lookup.get(E.Env.find(env, n)))), n, ls,
+        en)
     case o:
-      MkVR{VSlot{Hp.next(hp)}, Hp.alloc(hp, o, en)}
+      Val.rig_cell(Val.rigid_term(env, o), hp, o, en)
 
 # Reduce to a value.
 #
@@ -1019,22 +1139,22 @@ def Val.go(
               # does, and a read back. The reduction that substitutes does
               # not look at a binder type at all, and every one this
               # reduced was work the answer did not need.
-              +r : VR = Val.arg_cell(hp, ty, en)
+              +r : VR = Val.arg_cell(env, hp, ty, en)
               Val.go(
                 f, env, dl, VR.heap(r), CVal{VLam{VR.val(r), bd, en}}, sp)
             case T.TPi{+ty, +bd}:
-              +r : VR = Val.arg_cell(hp, ty, en)
+              +r : VR = Val.arg_cell(env, hp, ty, en)
               Val.go(
                 f, env, dl, VR.heap(r), CVal{VPi{VR.val(r), bd, en}}, sp)
             case T.TApp{+g, +a}:
               # The argument does not reduce here. It takes a slot of the
               # heap, and it reduces where the body first reads it -- or
               # never, if the body throws it away.
-              +r : VR = Val.arg_cell(hp, a, en)
+              +r : VR = Val.arg_cell(env, hp, a, en)
               Val.go(
                 f, env, dl, VR.heap(r), CTerm{g, en}, Con{VR.val(r), sp})
             case T.TLet{+ty, +v, +bd}:
-              +r : VR = Val.arg_cell(hp, v, en)
+              +r : VR = Val.arg_cell(env, hp, v, en)
               Val.go(
                 f, env, dl, VR.heap(r), CTerm{bd, Con{VR.val(r), en}}, sp)
             case T.TRef{+i, +k, m}:
