@@ -1942,3 +1942,47 @@ itself. The levers that remain are an array-backed heap -- which needs the
 evaluator rewritten as an explicit stack machine, for about 1.4x more --
 and strictness: an argument that the callee always reduces needs no thunk
 at all, and a thunk is two writes and a read. Neither is a tuning.
+
+### Two conversion policies, and why `perf/fueled-chain` is not one of them
+<!-- 2026-10-13 -->
+
+The notes above say the term comparison answers a cut of
+`perf/fueled-chain` in 4.4 s where the value one does not, so two policies
+were measured against the file:
+
+1. **A third stage.** Term at 500 steps, then the value comparison, then
+   the term comparison again at the whole budget. The file does not answer
+   in 120 s against a limit of fifty, because the value stage spends its
+   budget before the third stage is reached. `perf/magma-list-pair-n7` is
+   unchanged at 14 s, so the stage is free elsewhere -- it simply does not
+   reach this file.
+2. **The term comparison first, at the whole budget.** The file still does
+   not answer in 150 s, and `good/init-prelude` loses its answer as well:
+   3 s becomes more than 150, because the term comparison grinds where the
+   value one computes.
+
+So the cut was not the file. What the term comparison does in 4.4 s is one
+declaration of it; the whole file is past both kernels, and no ordering of
+the two reaches it.
+
+## Where this engine stops: 192 of 196
+
+| file | limit | measured | over by |
+|---|---|---|---|
+| `perf/magma-list-deep-n36` | 390 s | over 900 s | 2.3x |
+| `perf/magma-list-deep-n21` | 80 s | over 400 s | 5x |
+| `perf/grind-ring-5` | 60 s | over 400 s | 7x |
+| `perf/fueled-chain` | 50 s | neither kernel answers | -- |
+
+The two levers that are left are written up above: an array-backed heap,
+worth about 1.4x more and needing the evaluator rewritten as an explicit
+stack machine, and strictness, so that an argument the callee always
+reduces needs no thunk -- a thunk being two writes and a read. Together
+they might reach 1.7x, which still leaves `-n36` short of its limit and
+the other three far from theirs.
+
+Each of the first three is one declaration: a `countermodel` over `Fin n`
+that a decision procedure walks, so what is left is the speed of
+evaluation itself, not a rule the kernel is missing. 192 of 196 is where
+this engine stops, and the next move is a different engine rather than
+another tuning.
