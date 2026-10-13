@@ -378,12 +378,12 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | after the recursor | the term kernel | the value kernel | wide numbers | nested recursors |
+| | the term kernel | the value kernel | wide numbers | nested recursors | a four-way heap |
 |---|---|---|---|---|---|
-| correct | 173 | 186 | 190 | 190 | **191** |
-| declined | 17 | 0 | 0 | 1 | **0** |
+| correct | 186 | 190 | 190 | 191 | **192** |
+| declined | 0 | 0 | 1 | 0 | **0** |
 | wrong | 0 | 0 | 0 | 0 | **0** |
-| error or timeout | 5 | 10 | 6 | 5 | **5** |
+| error or timeout | 10 | 6 | 5 | 5 | **4** |
 
 **Every file it answers, it answers correctly, and nothing is declined.**
 `good/init-prelude` accepts in 4 s of its fifty: 2106 declarations, every
@@ -393,14 +393,19 @@ one checked, including the three eliminators of `Lean.Syntax` -- a
 for that derivation and `bend/trust.bend` names any recursor still taken on
 trust.
 
-The five it does not answer are `perf/fueled-chain`, `perf/grind-ring-5`
-and three of the four `perf/magma-*` tests, and only one of them is within
-a constant factor: `perf/magma-list-pair-n21` accepts in 273 s against a
-limit of 260. The others are a factor of seven, of ten, and worse, and
-`perf/fueled-chain` is answered by neither kernel. Four of the five are one
-declaration each -- a `countermodel` over `Fin n` that a decision procedure
-walks -- and `perf/magma-list-deep-n21` checks 622 of its 623 declarations
-in 1.2 s and spends the rest on the last one.
+The four it does not answer are `perf/fueled-chain`, `perf/grind-ring-5`,
+`perf/magma-list-deep-n21` and `-n36`. Three of them are one declaration
+each -- a `countermodel` over `Fin n` that a decision procedure walks --
+and `perf/magma-list-deep-n21` checks 622 of its 623 declarations in 1.2 s
+and spends the rest on the last one. `perf/fueled-chain` is answered by
+neither kernel.
+
+`perf/magma-list-pair-n21` was the fifth until the heap's trie went from
+two ways to four: 273 s to 166 s, against a limit of 260. The same change
+took `perf/magma-list-pair-n7` from 21 s to 15 and `perf/shared-subterm`
+from 18 s to 10. `docs/perf-plan.md` has the measurements, including why
+Bend's own `Array` -- thirteen times faster per write -- cannot be used
+without rewriting the evaluator as an explicit stack machine.
 
 The last column is the value kernel of `bend/Val.bend` and
 `bend/Vconv.bend`, which carries an environment and a heap instead of
