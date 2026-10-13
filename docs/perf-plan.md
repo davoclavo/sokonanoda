@@ -1892,3 +1892,25 @@ one.
 Duplication is not the cost, by the way: the same two million writes with
 the trie duplicated at every step, the way `+hp` duplicates it, take 2.61 s
 against 2.20 s. It is the writes.
+
+### The same four ways for the other two tables
+<!-- 2026-10-13 -->
+
+The heap is not the only trie. The export's expressions live in one, read
+every time reduction meets a reference, and the declarations live in
+another, read for every constant of every reduction. Both are four-way now,
+on the same measurement, and the gain is smaller because a read does not
+rebuild the path:
+
+| | two-way heap | four-way heap | and the other two |
+|---|---|---|---|
+| `perf/magma-list-pair-n7` | 21 s | 15 s | **14 s** |
+| `perf/shared-subterm` | 18 s | 10 s | **9 s** |
+| `perf/magma-list-pair-n21` | 273 s | 166 s | **163 s** |
+| `good/init-prelude` | 4 s | 4 s | **3 s** |
+
+So the heap was where the depth hurt, and the other two are worth a few
+percent each. The four that remain stand at: `perf/magma-list-deep-n36`
+past 900 s against a limit of 390, `perf/magma-list-deep-n21` and
+`perf/grind-ring-5` past 400 against 80 and 60, and `perf/fueled-chain`
+answered by neither kernel.

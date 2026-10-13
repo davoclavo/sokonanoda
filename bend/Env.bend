@@ -603,9 +603,13 @@ def Lookup.get(lk: Lookup) -> Decl:
 # determines the slot, so this cannot fail, and it is free: the declaration
 # carries its own name. It is the difference between a table that loses an
 # entry and one that answers under the wrong name.
+# The declarations, four ways at a time. Every constant of a reduction is
+# looked up here, so the depth is the hottest read in the kernel; four ways
+# halves it. `Idx.bend` has the measurement that chose four.
 type DTree is Data:
   DTip{}
-  DNode{v: Maybe<&2, Decl>, lo: DTree, hi: DTree}
+  DNode{
+    v: Maybe<&2, Decl>, k0: DTree, k1: DTree, k2: DTree, k3: DTree}
 
 # What the kernel carries everywhere: the declarations, and the export's own
 # expression table.
@@ -655,121 +659,145 @@ def Env.at(t: DTree, +i: Nat) -> Lookup:
   match t:
     case DTip{}:
       LMissing{}
-    case DNode{v, lo, hi}:
+    case DNode{v, k0, k1, k2, k3}:
       Env.found(v, i)
 
-# The declaration named `i`, or nothing. `stop` says the path ends at this
-# node and `b` says which half it takes otherwise.
-def Env.get(
-  n: Nat, stop: Bool, b: Bool, t: DTree, +i: Nat, +name: Nat
-) -> Lookup:
+# The declaration named `i`, or nothing. `w` says which of the four
+# children the path takes, and zero says it ends at this node.
+def Env.get(n: Nat, w: Nat, t: DTree, +i: Nat, +name: Nat) -> Lookup:
   match n:
     case 0n:
       LMissing{}
     case 1n+m:
-      match stop:
-        case True{}:
+      match w:
+        case 0n:
           Env.at(t, name)
-        case False{}:
-          match b:
-            case True{}:
+        case 1n+j0:
+          match j0:
+            case 0n:
               match t:
                 case DTip{}:
                   LMissing{}
-                case DNode{v, lo, hi}:
+                case DNode{v, k0, k1, k2, k3}:
                   Env.get(
-                    m,
-                    Tb.Table.here(Tb.Table.rest(i)),
-                    Tb.Table.low(Tb.Table.rest(i)),
-                    lo,
-                    Tb.Table.rest(i),
-                    name)
-            case False{}:
-              match t:
-                case DTip{}:
-                  LMissing{}
-                case DNode{v, lo, hi}:
-                  Env.get(
-                    m,
-                    Tb.Table.here(Tb.Table.rest(i)),
-                    Tb.Table.low(Tb.Table.rest(i)),
-                    hi,
-                    Tb.Table.rest(i),
-                    name)
+                    m, Tb.Table.way(Tb.Table.rest4(i)), k0,
+                    Tb.Table.rest4(i), name)
+            case 1n+j1:
+              match j1:
+                case 0n:
+                  match t:
+                    case DTip{}:
+                      LMissing{}
+                    case DNode{v, k0, k1, k2, k3}:
+                      Env.get(
+                        m, Tb.Table.way(Tb.Table.rest4(i)), k1,
+                        Tb.Table.rest4(i), name)
+                case 1n+j2:
+                  match j2:
+                    case 0n:
+                      match t:
+                        case DTip{}:
+                          LMissing{}
+                        case DNode{v, k0, k1, k2, k3}:
+                          Env.get(
+                            m, Tb.Table.way(Tb.Table.rest4(i)), k2,
+                            Tb.Table.rest4(i), name)
+                    case 1n+j3:
+                      match t:
+                        case DTip{}:
+                          LMissing{}
+                        case DNode{v, k0, k1, k2, k3}:
+                          Env.get(
+                            m, Tb.Table.way(Tb.Table.rest4(i)), k3,
+                            Tb.Table.rest4(i), name)
 
-def Env.put(
-  n: Nat, stop: Bool, b: Bool, t: DTree, +i: Nat, +d: Decl
-) -> DTree:
+def Env.put(n: Nat, w: Nat, t: DTree, +i: Nat, +d: Decl) -> DTree:
   match n:
     case 0n:
       t
     case 1n+m:
-      match stop:
-        case True{}:
+      match w:
+        case 0n:
           match t:
             case DTip{}:
-              DNode{Some{d}, DTip{}, DTip{}}
-            case DNode{o, lo, hi}:
-              DNode{Some{d}, lo, hi}
-        case False{}:
-          match b:
-            case True{}:
+              DNode{Some{d}, DTip{}, DTip{}, DTip{}, DTip{}}
+            case DNode{o, k0, k1, k2, k3}:
+              DNode{Some{d}, k0, k1, k2, k3}
+        case 1n+j0:
+          match j0:
+            case 0n:
               match t:
                 case DTip{}:
                   DNode{
                     None{},
                     Env.put(
-                      m,
-                      Tb.Table.here(Tb.Table.rest(i)),
-                      Tb.Table.low(Tb.Table.rest(i)),
-                      DTip{},
-                      Tb.Table.rest(i),
-                      d),
-                    DTip{}}
-                case DNode{o, lo, hi}:
+                      m, Tb.Table.way(Tb.Table.rest4(i)), DTip{},
+                      Tb.Table.rest4(i), d),
+                    DTip{}, DTip{}, DTip{}}
+                case DNode{o, k0, k1, k2, k3}:
                   DNode{
                     o,
                     Env.put(
-                      m,
-                      Tb.Table.here(Tb.Table.rest(i)),
-                      Tb.Table.low(Tb.Table.rest(i)),
-                      lo,
-                      Tb.Table.rest(i),
-                      d),
-                    hi}
-            case False{}:
-              match t:
-                case DTip{}:
-                  DNode{
-                    None{},
-                    DTip{},
-                    Env.put(
-                      m,
-                      Tb.Table.here(Tb.Table.rest(i)),
-                      Tb.Table.low(Tb.Table.rest(i)),
-                      DTip{},
-                      Tb.Table.rest(i),
-                      d)}
-                case DNode{o, lo, hi}:
-                  DNode{
-                    o,
-                    lo,
-                    Env.put(
-                      m,
-                      Tb.Table.here(Tb.Table.rest(i)),
-                      Tb.Table.low(Tb.Table.rest(i)),
-                      hi,
-                      Tb.Table.rest(i),
-                      d)}
+                      m, Tb.Table.way(Tb.Table.rest4(i)), k0,
+                      Tb.Table.rest4(i), d),
+                    k1, k2, k3}
+            case 1n+j1:
+              match j1:
+                case 0n:
+                  match t:
+                    case DTip{}:
+                      DNode{
+                        None{}, DTip{},
+                        Env.put(
+                          m, Tb.Table.way(Tb.Table.rest4(i)), DTip{},
+                          Tb.Table.rest4(i), d),
+                        DTip{}, DTip{}}
+                    case DNode{o, k0, k1, k2, k3}:
+                      DNode{
+                        o, k0,
+                        Env.put(
+                          m, Tb.Table.way(Tb.Table.rest4(i)), k1,
+                          Tb.Table.rest4(i), d),
+                        k2, k3}
+                case 1n+j2:
+                  match j2:
+                    case 0n:
+                      match t:
+                        case DTip{}:
+                          DNode{
+                            None{}, DTip{}, DTip{},
+                            Env.put(
+                              m, Tb.Table.way(Tb.Table.rest4(i)),
+                              DTip{}, Tb.Table.rest4(i), d),
+                            DTip{}}
+                        case DNode{o, k0, k1, k2, k3}:
+                          DNode{
+                            o, k0, k1,
+                            Env.put(
+                              m, Tb.Table.way(Tb.Table.rest4(i)), k2,
+                              Tb.Table.rest4(i), d),
+                            k3}
+                    case 1n+j3:
+                      match t:
+                        case DTip{}:
+                          DNode{
+                            None{}, DTip{}, DTip{}, DTip{},
+                            Env.put(
+                              m, Tb.Table.way(Tb.Table.rest4(i)),
+                              DTip{}, Tb.Table.rest4(i), d)}
+                        case DNode{o, k0, k1, k2, k3}:
+                          DNode{
+                            o, k0, k1, k2,
+                            Env.put(
+                              m, Tb.Table.way(Tb.Table.rest4(i)), k3,
+                              Tb.Table.rest4(i), d)}
 
-# Look up a name.
 def Env.find(+env: DTable, +i: Nat) -> Lookup:
   match env:
     case MkDT{+ds, ex}:
       Env.get(
         Tb.Table.bits(),
-        Tb.Table.here(Tb.Table.path(i)),
-        Tb.Table.low(Tb.Table.path(i)),
+        Tb.Table.way(Tb.Table.path(i)),
         ds,
         Tb.Table.path(i),
         i)
@@ -783,8 +811,7 @@ def Env.add(+env: DTable, +d: Decl) -> DTable:
       MkDT{
         Env.put(
           Tb.Table.bits(),
-          Tb.Table.here(Tb.Table.path(Decl.id(d))),
-          Tb.Table.low(Tb.Table.path(Decl.id(d))),
+          Tb.Table.way(Tb.Table.path(Decl.id(d))),
           ds,
           Tb.Table.path(Decl.id(d)),
           d),

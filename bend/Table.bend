@@ -51,6 +51,25 @@ def Table.low(+i: Nat) -> Bool:
 def Table.rest(+i: Nat) -> Nat:
   Ix.Idx.rest(i)
 
+# The same path read four ways at a time, which is what the heap, the
+# expression table and the declarations use. See `Idx.bend` for the
+# measurement that chose four.
+def Table.ways() -> Nat:
+  4n
+
+def Table.way_pick(stop: Bool, +i: Nat) -> Nat:
+  match stop:
+    case True{}:
+      0n
+    case False{}:
+      1n+Nat.mod(i, Table.ways())
+
+def Table.way(+i: Nat) -> Nat:
+  Table.way_pick(Nat.is_eq(i, 0n), i)
+
+def Table.rest4(+i: Nat) -> Nat:
+  Nat.div(i, Table.ways())
+
 def Table.path(+i: Nat) -> Nat:
   Ix.Idx.path(i)
 

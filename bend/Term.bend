@@ -97,9 +97,17 @@ type Term is Data:
 # This is a binary trie on the bits of the index, holding a value at every
 # node. It stands here rather than in `Table.bend` because `Term.subst` and
 # `Term.lift` must resolve a reference, and `Table.bend` imports this file.
+# The table of the export's expressions, four ways at a time.
+#
+# A reference is resolved by a read of this table, and reduction resolves
+# one at every step that meets a reference, so the depth is paid over and
+# over. Four ways halves it. `bend/Val.bend` has the measurement that chose
+# four: two million writes take 2.22 s two-way and 1.52 s four-way.
 type ETable is Data:
   ExTip{}
-  ExNode{v: Maybe<&2, Term>, lo: ETable, hi: ETable}
+  ExNode{
+    v: Maybe<&2, Term>, k0: ETable, k1: ETable, k2: ETable,
+    k3: ETable}
 
 def ETable.new() -> ETable:
   ExTip{}
@@ -117,92 +125,143 @@ def ETable.at(t: ETable) -> Term:
   match t:
     case ExTip{}:
       TUnk{}
-    case ExNode{v, lo, hi}:
+    case ExNode{v, k0, k1, k2, k3}:
       ETable.or_unk(v)
 
-def ETable.get(n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat) -> Term:
+def ETable.get(n: Nat, w: Nat, t: ETable, +i: Nat) -> Term:
   match n:
     case 0n:
       TUnk{}
     case 1n+m:
-      match stop:
-        case True{}:
+      match w:
+        case 0n:
           ETable.at(t)
-        case False{}:
-          match b:
-            case True{}:
+        case 1n+j0:
+          match j0:
+            case 0n:
               match t:
                 case ExTip{}:
                   TUnk{}
-                case ExNode{v, lo, hi}:
+                case ExNode{v, k0, k1, k2, k3}:
                   ETable.get(
-                    m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
-                    lo, Ix.Idx.rest(i))
-            case False{}:
-              match t:
-                case ExTip{}:
-                  TUnk{}
-                case ExNode{v, lo, hi}:
-                  ETable.get(
-                    m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
-                    hi, Ix.Idx.rest(i))
+                    m, Ix.Idx.way(Ix.Idx.rest4(i)), k0, Ix.Idx.rest4(i))
+            case 1n+j1:
+              match j1:
+                case 0n:
+                  match t:
+                    case ExTip{}:
+                      TUnk{}
+                    case ExNode{v, k0, k1, k2, k3}:
+                      ETable.get(
+                        m, Ix.Idx.way(Ix.Idx.rest4(i)), k1,
+                        Ix.Idx.rest4(i))
+                case 1n+j2:
+                  match j2:
+                    case 0n:
+                      match t:
+                        case ExTip{}:
+                          TUnk{}
+                        case ExNode{v, k0, k1, k2, k3}:
+                          ETable.get(
+                            m, Ix.Idx.way(Ix.Idx.rest4(i)), k2,
+                            Ix.Idx.rest4(i))
+                    case 1n+j3:
+                      match t:
+                        case ExTip{}:
+                          TUnk{}
+                        case ExNode{v, k0, k1, k2, k3}:
+                          ETable.get(
+                            m, Ix.Idx.way(Ix.Idx.rest4(i)), k3,
+                            Ix.Idx.rest4(i))
 
-def ETable.set(n: Nat, stop: Bool, b: Bool, t: ETable, +i: Nat, +v: Term) -> ETable:
+def ETable.set(n: Nat, w: Nat, t: ETable, +i: Nat, +v: Term) -> ETable:
   match n:
     case 0n:
       t
     case 1n+m:
-      match stop:
-        case True{}:
+      match w:
+        case 0n:
           match t:
             case ExTip{}:
-              ExNode{Some{v}, ExTip{}, ExTip{}}
-            case ExNode{o, lo, hi}:
-              ExNode{Some{v}, lo, hi}
-        case False{}:
-          match b:
-            case True{}:
+              ExNode{Some{v}, ExTip{}, ExTip{}, ExTip{}, ExTip{}}
+            case ExNode{o, k0, k1, k2, k3}:
+              ExNode{Some{v}, k0, k1, k2, k3}
+        case 1n+j0:
+          match j0:
+            case 0n:
               match t:
                 case ExTip{}:
                   ExNode{
                     None{},
                     ETable.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
-                      ExTip{}, Ix.Idx.rest(i), v),
-                    ExTip{}}
-                case ExNode{o, lo, hi}:
+                      m, Ix.Idx.way(Ix.Idx.rest4(i)), ExTip{},
+                      Ix.Idx.rest4(i), v),
+                    ExTip{}, ExTip{}, ExTip{}}
+                case ExNode{o, k0, k1, k2, k3}:
                   ExNode{
                     o,
                     ETable.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
-                      lo, Ix.Idx.rest(i), v),
-                    hi}
-            case False{}:
-              match t:
-                case ExTip{}:
-                  ExNode{
-                    None{},
-                    ExTip{},
-                    ETable.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
-                      ExTip{}, Ix.Idx.rest(i), v)}
-                case ExNode{o, lo, hi}:
-                  ExNode{
-                    o,
-                    lo,
-                    ETable.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)), Ix.Idx.low(Ix.Idx.rest(i)),
-                      hi, Ix.Idx.rest(i), v)}
+                      m, Ix.Idx.way(Ix.Idx.rest4(i)), k0,
+                      Ix.Idx.rest4(i), v),
+                    k1, k2, k3}
+            case 1n+j1:
+              match j1:
+                case 0n:
+                  match t:
+                    case ExTip{}:
+                      ExNode{
+                        None{}, ExTip{},
+                        ETable.set(
+                          m, Ix.Idx.way(Ix.Idx.rest4(i)), ExTip{},
+                          Ix.Idx.rest4(i), v),
+                        ExTip{}, ExTip{}}
+                    case ExNode{o, k0, k1, k2, k3}:
+                      ExNode{
+                        o, k0,
+                        ETable.set(
+                          m, Ix.Idx.way(Ix.Idx.rest4(i)), k1,
+                          Ix.Idx.rest4(i), v),
+                        k2, k3}
+                case 1n+j2:
+                  match j2:
+                    case 0n:
+                      match t:
+                        case ExTip{}:
+                          ExNode{
+                            None{}, ExTip{}, ExTip{},
+                            ETable.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), ExTip{},
+                              Ix.Idx.rest4(i), v),
+                            ExTip{}}
+                        case ExNode{o, k0, k1, k2, k3}:
+                          ExNode{
+                            o, k0, k1,
+                            ETable.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), k2,
+                              Ix.Idx.rest4(i), v),
+                            k3}
+                    case 1n+j3:
+                      match t:
+                        case ExTip{}:
+                          ExNode{
+                            None{}, ExTip{}, ExTip{}, ExTip{},
+                            ETable.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), ExTip{},
+                              Ix.Idx.rest4(i), v)}
+                        case ExNode{o, k0, k1, k2, k3}:
+                          ExNode{
+                            o, k0, k1, k2,
+                            ETable.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), k3,
+                              Ix.Idx.rest4(i), v)}
 
 def Term.read_ex(+t: ETable, +i: Nat) -> Term:
   ETable.get(
-    Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)), Ix.Idx.low(Ix.Idx.path(i)),
-    t, Ix.Idx.path(i))
+    Ix.Idx.bits(), Ix.Idx.way(Ix.Idx.path(i)), t, Ix.Idx.path(i))
 
 def Term.write_ex(+t: ETable, +i: Nat, +v: Term) -> ETable:
   ETable.set(
-    Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)), Ix.Idx.low(Ix.Idx.path(i)),
-    t, Ix.Idx.path(i), v)
+    Ix.Idx.bits(), Ix.Idx.way(Ix.Idx.path(i)), t, Ix.Idx.path(i), v)
 
 # Choose between two terms on a computed Bool.
 def Term.pick(b: Bool, x: Term, y: Term) -> Term:
