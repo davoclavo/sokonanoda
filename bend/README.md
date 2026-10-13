@@ -378,19 +378,29 @@ real conversion work.
 The tutorial subset is flattering. Across all 196 tests the arena ships in its
 tarball, 195 attempted and one too large to read:
 
-| | before the speed work | after the level rules | after the recursor | the term kernel | the value kernel |
-|---|---|---|---|---|---|
-| correct | 101 | 101 | 173 | 186 | **190** |
-| declined | 82 | 87 | 17 | 0 | **0** |
-| wrong | 0 | 0 | 0 | 0 | **0** |
-| error or timeout | 11 | 7 | 5 | 10 | **6** |
+| | before the speed work | after the level rules | after the recursor | the term kernel | the value kernel | with wide numbers |
+|---|---|---|---|---|---|---|
+| correct | 101 | 101 | 173 | 186 | 190 | **190** |
+| declined | 82 | 87 | 17 | 0 | 0 | **1** |
+| wrong | 0 | 0 | 0 | 0 | 0 | **0** |
+| error or timeout | 11 | 7 | 5 | 10 | 6 | **5** |
 
-**Every file it reads gets an answer, every answer is correct, and nothing is
-declined.** The six it does not answer are `init-prelude`,
-`perf/fueled-chain`, `perf/grind-ring-5` and three of the four
-`perf/magma-*` tests. Each of those spends its **whole** arena limit, from
-fifty seconds to three hundred and ninety, so no constant factor reaches
-any of them.
+**Every answer is correct, and one file declines.** The six it does not
+answer are `init-prelude`, `perf/fueled-chain`, `perf/grind-ring-5` and
+three of the four `perf/magma-*` tests, and the two kinds are now apart:
+
+- `good/init-prelude` **answers**, in 3.5 s of its fifty, and the answer is
+  `declined`. Of its 2106 declarations every one passes its own checks, and
+  three recursors are taken on trust: those of `Lean.Syntax`, a **nested**
+  inductive whose three motives eliminate `Syntax`, `List Syntax` and
+  `Array Syntax` together. `bend/Rec.bend` derives the recursor of one
+  inductive with one motive, so that block is the one thing between the
+  file and `accept`. `bend/trust.bend` is what names it.
+- the other five spend their **whole** limit, from fifty seconds to three
+  hundred and ninety. Four of them are one declaration each -- a
+  `countermodel` over `Fin n` that a decision procedure walks --  and
+  `perf/magma-list-deep-n21` checks 622 of its 623 declarations in 1.2 s
+  and spends the rest on the last one. No constant factor reaches them.
 
 The last column is the value kernel of `bend/Val.bend` and
 `bend/Vconv.bend`, which carries an environment and a heap instead of
@@ -653,6 +663,32 @@ That low-budget run is now the broadest check this kernel has. At a budget of
 300, **every one of the prelude's 1698 declarations either passes or runs out
 of budget, and none is rejected.**
 
+### And then read, rather than refused
+
+A number the kernel cannot hold is sound to decline and it costs the file an
+answer, so `bend/Big.bend` holds one: a list of digits in base 2^24, least
+significant first, where two digits multiply to less than 2^48 and a digit
+product is still an immediate. Comparison, sum, product and power are exact
+to six digits, which is 144 bits. Difference, quotient and remainder are not
+written for a wide number, because no file of the corpus asks for one.
+
+`Term.TBig` and `Val.VBig` are the wide literal, and the form is canonical:
+a number below `Bytes.nat_cap` is still a `TNat`, so the machine path of a
+native rule -- the hot one -- is untouched. The wide path runs when a side
+is wide, or when the machine result does not fit.
+
+The measurement that made the case: with every oversized number of
+`good/init-prelude` replaced by a small one, the whole file checks in 2.9 s.
+With the wide numbers it checks in 3.5 s, and what is left is a nested
+block's recursors. A recursor on a wide literal answers the unknown value,
+because a tower of successors that high is not a thing this kernel builds.
+
+Bend refuses a `Nat` past 2^48-1 rather than wrapping it, and that caught
+the first version of this: `Bool.and(small(ds), word(ds) < cap)` computes
+both sides, and the word of a three-digit number multiplies past the
+immediate and stops the run. Every width test is a `match` now, so the
+value is read only inside the arm that may read it.
+
 ## Never read a verdict off a term reduction gave up on
 
 `grind-ring-5` rejects at a fuel of 50 and declines at 500, which makes the
@@ -724,7 +760,22 @@ walks a declaration's type and value and looks each constant up. So
 the arena names, where before they were rejected by accident, because the
 unsafe body happens to be a forward reference to itself.
 
-### A nested block has more than one recursor
+### A nested block has more than one recursor, and none of them is derived
+
+`good/init-prelude` declines for this and nothing else. `bend/trust.bend`
+names the three recursors of `Lean.Syntax`: its line in the export says
+`numNested: 2`, lists one type with four constructors, and states three
+recursors of three motives and seven minors each, whose rules name
+`Lean.Syntax`'s own constructors, then `List.nil` and `List.cons`, then
+`Array.mk`. `Syntax.node` holds an `Array Syntax`, so Lean eliminates the
+three types together.
+
+`bend/Rec.bend` derives the recursor of one inductive with one motive.
+Deriving a nested block's means building the motives and minors of the
+auxiliary types from the nesting, and it is the piece of work between that
+file and `accept`.
+
+
 
 Lean gives a block with a nested inductive several eliminators, names them
 `I.rec_1`, `I.rec_2` and so on, and states more motives than the recursor
