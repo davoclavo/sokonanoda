@@ -1914,3 +1914,31 @@ percent each. The four that remain stand at: `perf/magma-list-deep-n36`
 past 900 s against a limit of 390, `perf/magma-list-deep-n21` and
 `perf/grind-ring-5` past 400 against 80 and 60, and `perf/fueled-chain`
 answered by neither kernel.
+
+### Where the time is now, and what is left of it
+<!-- 2026-10-13 -->
+
+A profile of `perf/magma-list-pair-n7` with every table four-way:
+
+| | share |
+|---|---|
+| `HTab.set`, the heap write | 36% |
+| `Val.go`, the loop itself | 16% |
+| `Val.arg_cell`, which allocates | 11% |
+| `Val.rigid_go`, the test that avoids allocating | 4% |
+| `Env.expr_at`, resolving a reference | 2% |
+
+So the heap write is still the single line, down from 44%. Skipping the
+weak write -- the memo a reader with delta off leaves -- changes neither
+`magma-list-pair-n7` (14 s) nor `perf/shared-subterm` (9 s), so it stays:
+it is free here and it earns its keep elsewhere.
+
+What is left for the four that do not answer is not a constant factor.
+`perf/magma-list-deep-n36` is 2.3x over its limit, `-n21` is 5x,
+`perf/grind-ring-5` is 7x, and `perf/fueled-chain` is answered by neither
+kernel. Each of the first three is one declaration: a `countermodel` over
+`Fin n` that a decision procedure walks, so the work is the evaluation
+itself. The levers that remain are an array-backed heap -- which needs the
+evaluator rewritten as an explicit stack machine, for about 1.4x more --
+and strictness: an argument that the callee always reduces needs no thunk
+at all, and a thunk is two writes and a read. Neither is a tuning.
