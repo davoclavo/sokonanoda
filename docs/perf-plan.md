@@ -1771,3 +1771,49 @@ taken on trust.
 The four at the bottom are one declaration each: a `countermodel` over
 `Fin n` that a decision procedure walks. `magma-list-deep-n21` checks 622
 of its 623 declarations in 1.2 s and spends the rest on the last one.
+
+## The last five, measured against their own limits
+<!-- 2026-10-12 -->
+
+With the nested recursors the score is 191 of 196. The five that remain,
+each timed to the end rather than to a cut-off:
+
+| file | limit | measured | over by |
+|---|---|---|---|
+| `perf/magma-list-pair-n21` | 260 s | **273 s** | 5% |
+| `perf/magma-list-deep-n21` | 80 s | over 600 s | 7× |
+| `perf/grind-ring-5` | 60 s | over 600 s | 10× |
+| `perf/magma-list-deep-n36` | 390 s | not timed | worse than n21 |
+| `perf/fueled-chain` | 50 s | neither kernel answers | — |
+
+So one of them is within a constant factor and the rest are not. The
+machine these numbers come from had a load average near ten, which is
+worth saying: a run of the same binary on the same file measured 280 s
+under a load of 130 and 273 s under a load of nine.
+
+### Four attempts at the five percent, all measured, none kept
+
+1. **A cascade of matches for the rule tests.** `Val.rule_kind` asks six
+   questions of every constant and a pick runs all six, so the tests became
+   one function each, asked in turn. `perf/magma-list-pair-n7` went from 21
+   s to over 90. The reason is the one that keeps turning up in this
+   language: the arm of a match that is not taken still has to be erased,
+   and erasing it costs what it holds -- here the environment, the spine
+   and the major premise, at every level of the cascade.
+2. **A short-circuit length test.** Every rule asks whether the spine holds
+   two or three arguments and `Val.sp_len` answered by walking all of it.
+   `Val.sp_at_least` stops where the answer is known. 21 s against 20: the
+   walk was not the cost.
+3. **The empty environment for a reference's cell.** A reference carries a
+   **shift**, so the expression it stands for is not closed, and reading it
+   in the empty environment makes every variable unknown. 21 s to over 90,
+   and the answers would have been wrong as well.
+4. **The profile, again.** `HTab.set` and its continuations are 44% of the
+   samples on `perf/magma-list-pair-n7` and `Val.arg_cell` is 12%. The
+   write down the trie rebuilds a path of about twenty nodes and frees as
+   many, and a cheaper structure needs a mutable array -- which Bend has,
+   as `Array<T>`, and which is a `Type`: affine, one use. The kernel builds
+   both branches of every pick and each branch carries a heap, so an
+   affine heap would have to be threaded through a rewrite of every one of
+   them. That is the next real piece of work on this file, and it is a
+   rewrite rather than a tuning.
