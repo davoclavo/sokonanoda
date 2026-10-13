@@ -41,6 +41,8 @@ def Count.nodes(t: T.Term, +acc: Nat) -> Nat:
       Count.nodes(ty, Count.nodes(v, Count.nodes(bd, 1n+acc)))
     case T.TNat{v, m, z, c}:
       1n+acc
+    case T.TStr{sn, bs}:
+      1n+acc
     case T.TUnk{}:
       1n+acc
     case T.TProj{tn, idx, st}:

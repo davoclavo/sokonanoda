@@ -279,6 +279,10 @@ def Vconv.same_go(
             case W.VNat{v1, m1, z1, s1} W.VNat{v2, m2, z2, s2}:
               Vconv.same_go(
                 f, env, hp, Vconv.same_cont(Nat.is_eq(v1, v2), rest))
+            case W.VStr{n1, b1} W.VStr{n2, b2}:
+              Vconv.same_go(
+                f, env, hp,
+                Vconv.same_cont(T.Term.bytes_same(b1, b2), rest))
             case W.VSort{x} W.VSort{y}:
               Vconv.same_go(
                 f, env, hp,
@@ -416,6 +420,8 @@ def Vconv.maybe_proof(v: W.Val) -> Bool:
       False{}
     case W.VNat{n, nm, zr, sc}:
       False{}
+    case W.VStr{sn, bs}:
+      False{}
     case W.VUnk{}:
       False{}
     case o:
@@ -431,6 +437,15 @@ def Vconv.rigid(
       MkSH{Vconv.of(L.Level.eq(x, y)), hp}
     case W.VNat{v1, m1, z1, s1} W.VNat{v2, m2, z2, s2}:
       MkSH{Vconv.of(Nat.is_eq(v1, v2)), hp}
+    # Two string literals are equal when their bytes are. A literal against
+    # anything else is not known: this kernel cannot expand it to the
+    # constructor application it stands for, so it cannot say they differ.
+    case W.VStr{n1, b1} W.VStr{n2, b2}:
+      MkSH{Vconv.of(T.Term.bytes_same(b1, b2)), hp}
+    case W.VStr{n1, b1} y:
+      MkSH{SUnk{}, hp}
+    case x W.VStr{n2, b2}:
+      MkSH{SUnk{}, hp}
     case W.VUnk{} y:
       MkSH{SUnk{}, hp}
     case x W.VUnk{}:

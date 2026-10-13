@@ -212,6 +212,8 @@ def Conv.same_step(+env: E.DTable, a: T.Term, b: T.Term) -> SameStep:
         Bool.and(Nat.is_eq(n1, n2), Nat.is_eq(i1, i2)), s1, s2)
     case T.TNat{v1, m1, z1, s1} T.TNat{v2, m2, z2, s2}:
       Conv.same_of(Nat.is_eq(v1, v2))
+    case T.TStr{n1, b1} T.TStr{n2, b2}:
+      Conv.same_of(T.Term.bytes_same(b1, b2))
     case T.TLet{t1, v1, b1} T.TLet{t2, v2, b2}:
       SNext{[MkTT{t1, t2}, MkTT{v1, v2}, MkTT{b1, b2}]}
     case T.TUnk{} T.TUnk{}:
@@ -319,6 +321,16 @@ def Conv.structural(
         ctx, s1, s2)
     case T.TNat{v1, m1, z1, s1} T.TNat{v2, m2, z2, s2}:
       Conv.step_of(Nat.is_eq(v1, v2))
+    # Two string literals are equal when their bytes are, and a literal
+    # against anything else is not known. It is opaque: this kernel cannot
+    # expand it to the constructor application it stands for, so it cannot
+    # say that the two are different either.
+    case T.TStr{n1, b1} T.TStr{n2, b2}:
+      Conv.step_of(T.Term.bytes_same(b1, b2))
+    case T.TStr{n1, b1} y:
+      SUnk{}
+    case x T.TStr{n2, b2}:
+      SUnk{}
     case T.TNat{+v1, +m1, +z1, +s1} y:
       SMore{[MkPair{ctx, V.Eval.lit_ctor(T.TNat{v1, m1, z1, s1}), y}]}
     case x T.TNat{+v2, +m2, +z2, +s2}:

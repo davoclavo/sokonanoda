@@ -781,7 +781,11 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
             E.Decl.is_def(d),
             Eval.whnf(f, env, Eval.dr(env, Eval.unfold_decl(d, ls)), sp),
             Eval.pick_t(
-              T.Term.is_unk(mw),
+              # A string literal is opaque, so a rule that needs its parts
+              # answers the unknown term rather than standing stuck. A
+              # comparison against a stuck neutral says no, and no is the
+              # wrong answer here.
+              Bool.or(T.Term.is_unk(mw), T.Term.is_str(mw)),
               T.TUnk{},
               Eval.pick_t(
               Eval.can_iota(d, sp, mw),
@@ -807,6 +811,8 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
             f, env, Eval.dr(env, T.Term.inst_at(E.Env.tab(env), bd, v)), sp)
         case T.TNat{v, nm, zr, sc}:
           Eval.rebuild(sp, T.TNat{v, nm, zr, sc})
+        case T.TStr{+sn, +bs}:
+          Eval.rebuild(sp, T.TStr{sn, bs})
         case T.TUnk{}:
           T.TUnk{}
         case T.TRef{+i, +k, m}:
@@ -817,7 +823,7 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
         case T.TProj{tn, +idx, st}:
           +sw = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, st), Nil{}))
           Eval.pick_t(
-            T.Term.is_unk(sw),
+            Bool.or(T.Term.is_unk(sw), T.Term.is_str(sw)),
             T.TUnk{},
             Eval.pick_t(
               Eval.proj_ready(env, idx, sw),

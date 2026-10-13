@@ -31,6 +31,23 @@ type Term is Data:
   # `Nat.zero` and `Nat.succ`, which let a literal be written as a
   # constructor application when a recursor or a comparison needs one.
   TNat{v: Nat, nm: Nat, zr: Nat, sc: Nat}
+  # A `String` literal, with the name the export gives the type `String`.
+  #
+  # Lean's own kernel expands one to the constructor application it stands
+  # for when a rule needs its parts. That form is not available here: in the
+  # Lean this corpus was exported from, `String` is a structure over a
+  # `ByteArray` with a proof that the bytes are valid UTF-8, so its
+  # constructor takes a proof and a kernel cannot write one. There is no
+  # `String.mk` in any export of the corpus.
+  #
+  # So the literal is a term of its own, and an opaque one. Its type is
+  # `String`, two literals are equal when their bytes are, and anything that
+  # needs its parts -- a projection of it, a recursor on it -- answers the
+  # unknown term. A file that computes with a string therefore declines,
+  # which is the answer this kernel is entitled to, and a file that only
+  # names one goes through: `String.instInhabited` is `Inhabited.mk String
+  # ""`, and it is where two of the magma files stopped.
+  TStr{sn: Nat, bs: List<&2, U32>}
   # The term reduction gives back when it runs out of budget.
   #
   # Running out is not an answer. A kernel that treats it as one reports
@@ -211,6 +228,37 @@ def Term.is_unk(t: Term) -> Bool:
 # leaves this term behind, so the answer is how to tell a term that was read
 # back whole from one that was cut off. Out of budget answers yes, which is
 # the safe side: a verdict is never read off a term reduction gave up on.
+# Two string literals hold the same bytes.
+def Term.bytes_same(xs: List<&2, U32>, ys: List<&2, U32>) -> Bool:
+  match xs ys:
+    case Nil{} Nil{}:
+      True{}
+    case Con{x, xr} Con{y, yr}:
+      Bool.and(U32.is_eq(x, y), Term.bytes_same(xr, yr))
+    case x y:
+      False{}
+
+def Term.is_str(t: Term) -> Bool:
+  match t:
+    case TStr{sn, bs}:
+      True{}
+    case o:
+      False{}
+
+def Term.str_name(t: Term) -> Nat:
+  match t:
+    case TStr{+sn, bs}:
+      sn
+    case o:
+      0n
+
+def Term.str_bytes(t: Term) -> List<&2, U32>:
+  match t:
+    case TStr{sn, +bs}:
+      bs
+    case o:
+      Nil{}
+
 def Term.any_unk(+fuel: Nat, t: Term) -> Bool:
   match fuel:
     case 0n:
@@ -224,6 +272,8 @@ def Term.any_unk(+fuel: Nat, t: Term) -> Bool:
         case TSort{l}:
           False{}
         case TNat{v, nm, zr, sc}:
+          False{}
+        case TStr{sn, bs}:
           False{}
         case TConst{n, ls}:
           False{}
@@ -328,6 +378,8 @@ def Term.pars_ok(t: Term, +n: Nat) -> Bool:
         Term.pars_ok(bd, n))
     case TNat{v, m, z, c}:
       True{}
+    case TStr{sn, bs}:
+      True{}
     case TUnk{}:
       True{}
     case TProj{tn, idx, st}:
@@ -362,6 +414,8 @@ def Term.has_free(t: Term, +d: Nat) -> Bool:
         Term.has_free(bd, 1n+d))
     case TNat{v, m, z, c}:
       False{}
+    case TStr{sn, bs}:
+      False{}
     case TUnk{}:
       False{}
     case TProj{tn, idx, st}:
@@ -394,6 +448,8 @@ def Term.has_bvar(t: Term, +d: Nat) -> Bool:
         Bool.or(Term.has_bvar(ty, d), Term.has_bvar(v, d)),
         Term.has_bvar(bd, 1n+d))
     case TNat{v, m, z, c}:
+      False{}
+    case TStr{sn, bs}:
       False{}
     case TUnk{}:
       False{}
@@ -560,6 +616,8 @@ def Term.lift_go(
             Term.lift_go(f, ex, bd, Term.lift_act_of(bd, 1n+cut), d, 1n+cut)}
         case TNat{v, m, z, c}:
           TNat{v, m, z, c}
+        case TStr{+sn, +bs}:
+          TStr{sn, bs}
         case TUnk{}:
           TUnk{}
         case TProj{+tn, +idx, +st}:
@@ -661,6 +719,8 @@ def Term.subst_go(
             Term.subst_go(f, ex, bd, Term.subst_act_of(bd, 1n+cut), v, 1n+cut)}
         case TNat{n, m, z, c}:
           TNat{n, m, z, c}
+        case TStr{+sn, +bs}:
+          TStr{sn, bs}
         case TUnk{}:
           TUnk{}
         case TProj{+tn, +idx, +st}:
@@ -731,6 +791,8 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TLet{Term.remap_levels(ty, ps), Term.remap_levels(v, ps), Term.remap_levels(bd, ps)}
     case TNat{v, m, z, c}:
       TNat{v, m, z, c}
+    case TStr{sn, bs}:
+      TStr{sn, bs}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:
@@ -758,6 +820,8 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TLet{Term.subst_levels(ty, vs), Term.subst_levels(v, vs), Term.subst_levels(bd, vs)}
     case TNat{v, m, z, c}:
       TNat{v, m, z, c}
+    case TStr{sn, bs}:
+      TStr{sn, bs}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:

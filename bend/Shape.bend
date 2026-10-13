@@ -247,6 +247,8 @@ def Shape.infer(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, t: T.Term) -
           Shape.infer(f, env, ctx, T.Term.inst_at(E.Env.tab(env), bd, v))
         case T.TNat{+v, +nm, +zr, +sc}:
           SOk{T.TConst{nm, Nil{}}}
+        case T.TStr{+sn, bs}:
+          SOk{T.TConst{sn, Nil{}}}
         case T.TUnk{}:
           SBad{}
         case T.TRef{+i, +k, m}:

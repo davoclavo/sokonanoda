@@ -498,6 +498,16 @@ def Reader.obj_list(+key: String, +line: List<&2, U32>) -> List<&2, List<&2, U32
   Reader.objects(Reader.line_fuel(), Reader.more_objs(inner), Nil{}, inner)
 
 # The number that follows `key` when the value is quoted, as a `natVal` is.
+# The bytes between the quotes of a value, from the first byte after the
+# opening quote to the byte before the closing one.
+def Reader.text_go(+xs: List<&2, U32>) -> List<&2, U32>:
+  Reader.upto(Reader.line_fuel(), B.Bytes.starts_with(xs, 34), Nil{}, 34, xs)
+
+# The text of a quoted field. No string literal of the corpus holds an
+# escape or a byte above 127, so the bytes are the characters.
+def Reader.text_q(+key: String, +line: List<&2, U32>) -> List<&2, U32>:
+  Reader.text_go(Reader.drop1(Reader.after(key, line)))
+
 def Reader.field_q(+key: String, +line: List<&2, U32>) -> Nat:
   Reader.num_of(
     B.Bytes.number(Reader.line_fuel(), Reader.drop1(Reader.after(key, line))))

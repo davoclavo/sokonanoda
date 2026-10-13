@@ -649,6 +649,8 @@ def Infer.go(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, c: IC) -> Res:
               T.TSort{L.Level.mk_imax(Infer.sort_level(ts), Infer.sort_level(bs))})
           case T.TNat{+v, +nm, +zr, +sc}:
             ROk{T.TConst{nm, Nil{}}}
+          case T.TStr{+sn, bs}:
+            ROk{T.TConst{sn, Nil{}}}
           case T.TUnk{}:
             RUnk{}
           case T.TRef{+i, +k, m}:

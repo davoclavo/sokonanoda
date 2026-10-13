@@ -46,10 +46,23 @@ type Val is Data:
   VPi{ty: Val, bd: T.Term, en: List<&2, Val>}
   VSort{l: L.Level}
   VNat{v: Nat, nm: Nat, zr: Nat, sc: Nat}
+  # A `String` literal, with the name of the type `String`. It is opaque:
+  # see `Term.TStr`.
+  VStr{sn: Nat, bs: List<&2, U32>}
   # An argument waiting in a heap slot, not yet reduced.
   VSlot{n: Nat}
   # Reduction gave up. Every verdict reads this as "do not know".
   VUnk{}
+
+# Is this value a string literal? It is opaque, so a rule that would read
+# its parts answers the unknown value instead of standing stuck: a stuck
+# neutral compares unequal, and that would be a wrong answer.
+def Val.is_str(v: Val) -> Bool:
+  match v:
+    case VStr{sn, bs}:
+      True{}
+    case o:
+      False{}
 
 # Is this value a slot of the heap, not yet read?
 def Val.is_slot(v: Val) -> Bool:
@@ -798,6 +811,7 @@ type RuleK is Data:
   RIota{}
   RQuot{}
   RSucc{}
+  RUnk{}
   RNone{}
 
 def Val.pick_k(b: Bool, x: RuleK, y: RuleK) -> RuleK:
@@ -821,7 +835,9 @@ def Val.rule_kind(
         Val.can_iota(d, sp, mw), RIota{},
         Val.pick_k(
           Val.quot_ready(env, d, sp, mw), RQuot{},
-          Val.pick_k(Val.succ_ready(d, sp), RSucc{}, RNone{})))))
+          Val.pick_k(
+            Val.succ_ready(d, sp), RSucc{},
+            Val.pick_k(Val.is_str(mw), RUnk{}, RNone{}))))))
 
 # What reduction does next, and the spine it does it to.
 type Next is Data:
@@ -867,6 +883,8 @@ def Val.next_of(
             Val.nat_zr(Val.sp_nth(0n, sp)),
             Val.nat_sc(Val.sp_nth(0n, sp))}},
         Val.sp_drop(1n, sp)}
+    case RUnk{}:
+      MkNx{CVal{VUnk{}}, Nil{}}
     case RNone{}:
       MkNx{CVal{VNe{HConst{n, ls}, Nil{}}}, sp}
 
@@ -893,14 +911,17 @@ def Val.proj_ctrl(
   +cw : Val = Val.lit_ctor(sv)
   +di : E.Decl = E.Lookup.get(E.Env.find(env, Val.head_name(cw)))
   Val.pick_c(
-    Bool.and(
-      E.Decl.is_ctor(di),
-      Nat.is_lt(
-        Nat.add(E.Decl.ctor_np(di), idx),
-        Val.sp_len(Val.args(cw), 0n))),
-    CVal{
-      Val.sp_nth(Nat.add(idx, E.Decl.ctor_np(di)), Val.args(cw))},
-    CVal{VNe{HProj{tn, idx}, [sv]}})
+    Val.is_str(sv),
+    CVal{VUnk{}},
+    Val.pick_c(
+      Bool.and(
+        E.Decl.is_ctor(di),
+        Nat.is_lt(
+          Nat.add(E.Decl.ctor_np(di), idx),
+          Val.sp_len(Val.args(cw), 0n))),
+      CVal{
+        Val.sp_nth(Nat.add(idx, E.Decl.ctor_np(di)), Val.args(cw))},
+      CVal{VNe{HProj{tn, idx}, [sv]}}))
 
 # The argument of an application, and of a let.
 #
@@ -1034,6 +1055,8 @@ def Val.arg_cell(+env: E.DTable, +hp: Hp, +t: T.Term, +en: List<&2, Val>) -> VR:
       MkVR{VSort{l}, hp}
     case T.TNat{v, nm, zr, sc}:
       MkVR{VNat{v, nm, zr, sc}, hp}
+    case T.TStr{+sn, +bs}:
+      MkVR{VStr{sn, bs}, hp}
     case T.TUnk{}:
       MkVR{VUnk{}, hp}
     case T.TConst{+n, +ls}:
@@ -1084,6 +1107,8 @@ def Val.go(
               MkVR{VSort{l}, hp}
             case VNat{n, nm, zr, sc}:
               MkVR{VNat{n, nm, zr, sc}, hp}
+            case VStr{sn, bs}:
+              MkVR{VStr{sn, bs}, hp}
             case VSlot{+k}:
               # Read a slot, which is where call by need happens. A cell
               # that holds a value gives it. A cell that holds a term
@@ -1131,6 +1156,8 @@ def Val.go(
               Val.go(f, env, dl, hp, CVal{VSort{l}}, sp)
             case T.TNat{v, nm, zr, sc}:
               Val.go(f, env, dl, hp, CVal{VNat{v, nm, zr, sc}}, sp)
+            case T.TStr{+sn, +bs}:
+              Val.go(f, env, dl, hp, CVal{VStr{sn, bs}}, sp)
             case T.TUnk{}:
               MkVR{VUnk{}, hp}
             case T.TLam{+ty, +bd}:
@@ -1507,6 +1534,8 @@ def Val.quote_go(
               T.TSort{l}
             case VNat{n, nm, zr, sc}:
               T.TNat{n, nm, zr, sc}
+            case VStr{sn, bs}:
+              T.TStr{sn, bs}
             case VSlot{+k}:
               # A slot reduces here, and the answer is read back in its
               # place.
