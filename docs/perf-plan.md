@@ -1817,3 +1817,38 @@ under a load of 130 and 273 s under a load of nine.
    affine heap would have to be threaded through a rewrite of every one of
    them. That is the next real piece of work on this file, and it is a
    rewrite rather than a tuning.
+
+### The array is thirteen times faster, and it may not be duplicated
+<!-- 2026-10-12 -->
+
+Two million writes, timed against each other:
+
+| | writes | time |
+|---|---|---|
+| the heap's trie, as `Val.bend` writes it | 2,000,000 | **2.50 s** |
+| Bend's own `Array<Nat>`, depth 21 | 2,000,000 | **0.19 s** |
+
+Thirteen times. The trie rebuilds a path of about twenty nodes per write
+and frees as many; `Array.set` swaps a leaf in place.
+
+Two things had to be checked first, and both came back the other way from
+the guess:
+
+- **`Nat.div` is not unary.** The base library defines `Nat.divmod` by
+  counting down, which would make every level of the trie cost the index
+  rather than its logarithm. Ten thousand halvings of a million take under
+  a second, so the compiler lowers it to a machine operation and the trie
+  is logarithmic as intended. The 44% is the number of writes, not the cost
+  of one.
+- **An `Array` may not be marked reusable.** `+a: Array<T>` is refused:
+  "+a can be used many times, so its type must be Data". The heap travels
+  as `+hp` through every step of `Val.go`, and every pick that carries one
+  builds both branches, so an array-backed heap has to be threaded
+  **linearly**: every read hands the array back, and every choice between
+  two heaps becomes a match that builds one.
+
+That is about fifty sites across `Val.bend` and `Vconv.bend`, and it is
+what the README's own list calls "Array for scale". At 1.7x overall --
+44% of the time becoming 3% -- it reaches `perf/magma-list-pair-n21`, which
+is 5% over its limit, and no further: the other four are a factor of seven
+and up.
