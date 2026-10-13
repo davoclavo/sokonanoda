@@ -204,9 +204,16 @@ type HCell is Data:
   HWeak{v: Val, t: T.Term, en: List<&2, Val>}
   HDone{v: Val}
 
+# The trie the heap's cells live in, four ways at a time.
+#
+# A write rebuilds the path, so the depth is what it costs: two million
+# writes take 2.22 s through a two-way trie and 1.52 s through this one.
+# Eight ways is 1.48 s and sixteen is 1.71, so four is where it settles.
+# `Idx.way` says which child, and zero says the descent has arrived.
 type HTab is Data:
   HTip{}
-  HNode{v: Maybe<&2, HCell>, lo: HTab, hi: HTab}
+  HNode{
+    v: Maybe<&2, HCell>, k0: HTab, k1: HTab, k2: HTab, k3: HTab}
 
 type Hp is Data:
   MkHp{cells: HTab, nx: Nat}
@@ -231,99 +238,150 @@ def HTab.at(t: HTab) -> HCell:
   match t:
     case HTip{}:
       HDone{VUnk{}}
-    case HNode{v, lo, hi}:
+    case HNode{v, k0, k1, k2, k3}:
       HTab.or_none(v)
 
-def HTab.get(n: Nat, stop: Bool, b: Bool, t: HTab, +i: Nat) -> HCell:
+def HTab.get(n: Nat, w: Nat, t: HTab, +i: Nat) -> HCell:
   match n:
     case 0n:
       HDone{VUnk{}}
     case 1n+m:
-      match stop:
-        case True{}:
+      match w:
+        case 0n:
           HTab.at(t)
-        case False{}:
-          match b:
-            case True{}:
+        case 1n+j0:
+          match j0:
+            case 0n:
               match t:
                 case HTip{}:
                   HDone{VUnk{}}
-                case HNode{v, lo, hi}:
+                case HNode{v, k0, k1, k2, k3}:
                   HTab.get(
-                    m, Ix.Idx.here(Ix.Idx.rest(i)),
-                    Ix.Idx.low(Ix.Idx.rest(i)), lo, Ix.Idx.rest(i))
-            case False{}:
-              match t:
-                case HTip{}:
-                  HDone{VUnk{}}
-                case HNode{v, lo, hi}:
-                  HTab.get(
-                    m, Ix.Idx.here(Ix.Idx.rest(i)),
-                    Ix.Idx.low(Ix.Idx.rest(i)), hi, Ix.Idx.rest(i))
+                    m, Ix.Idx.way(Ix.Idx.rest4(i)), k0,
+                    Ix.Idx.rest4(i))
+            case 1n+j1:
+              match j1:
+                case 0n:
+                  match t:
+                    case HTip{}:
+                      HDone{VUnk{}}
+                    case HNode{v, k0, k1, k2, k3}:
+                      HTab.get(
+                        m, Ix.Idx.way(Ix.Idx.rest4(i)), k1,
+                        Ix.Idx.rest4(i))
+                case 1n+j2:
+                  match j2:
+                    case 0n:
+                      match t:
+                        case HTip{}:
+                          HDone{VUnk{}}
+                        case HNode{v, k0, k1, k2, k3}:
+                          HTab.get(
+                            m, Ix.Idx.way(Ix.Idx.rest4(i)), k2,
+                            Ix.Idx.rest4(i))
+                    case 1n+j3:
+                      match t:
+                        case HTip{}:
+                          HDone{VUnk{}}
+                        case HNode{v, k0, k1, k2, k3}:
+                          HTab.get(
+                            m, Ix.Idx.way(Ix.Idx.rest4(i)), k3,
+                            Ix.Idx.rest4(i))
 
-def HTab.set(
-  n: Nat, stop: Bool, b: Bool, t: HTab, +i: Nat, +v: HCell
-) -> HTab:
+def HTab.set(n: Nat, w: Nat, t: HTab, +i: Nat, +v: HCell) -> HTab:
   match n:
     case 0n:
       t
     case 1n+m:
-      match stop:
-        case True{}:
+      match w:
+        case 0n:
           match t:
             case HTip{}:
-              HNode{Some{v}, HTip{}, HTip{}}
-            case HNode{o, lo, hi}:
-              HNode{Some{v}, lo, hi}
-        case False{}:
-          match b:
-            case True{}:
+              HNode{Some{v}, HTip{}, HTip{}, HTip{}, HTip{}}
+            case HNode{o, k0, k1, k2, k3}:
+              HNode{Some{v}, k0, k1, k2, k3}
+        case 1n+j0:
+          match j0:
+            case 0n:
               match t:
                 case HTip{}:
                   HNode{
                     None{},
                     HTab.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)),
-                      Ix.Idx.low(Ix.Idx.rest(i)), HTip{}, Ix.Idx.rest(i), v),
-                    HTip{}}
-                case HNode{o, lo, hi}:
+                      m, Ix.Idx.way(Ix.Idx.rest4(i)), HTip{},
+                      Ix.Idx.rest4(i), v),
+                    HTip{}, HTip{}, HTip{}}
+                case HNode{o, k0, k1, k2, k3}:
                   HNode{
                     o,
                     HTab.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)),
-                      Ix.Idx.low(Ix.Idx.rest(i)), lo, Ix.Idx.rest(i), v),
-                    hi}
-            case False{}:
-              match t:
-                case HTip{}:
-                  HNode{
-                    None{},
-                    HTip{},
-                    HTab.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)),
-                      Ix.Idx.low(Ix.Idx.rest(i)), HTip{}, Ix.Idx.rest(i), v)}
-                case HNode{o, lo, hi}:
-                  HNode{
-                    o,
-                    lo,
-                    HTab.set(
-                      m, Ix.Idx.here(Ix.Idx.rest(i)),
-                      Ix.Idx.low(Ix.Idx.rest(i)), hi, Ix.Idx.rest(i), v)}
+                      m, Ix.Idx.way(Ix.Idx.rest4(i)), k0,
+                      Ix.Idx.rest4(i), v),
+                    k1, k2, k3}
+            case 1n+j1:
+              match j1:
+                case 0n:
+                  match t:
+                    case HTip{}:
+                      HNode{
+                        None{}, HTip{},
+                        HTab.set(
+                          m, Ix.Idx.way(Ix.Idx.rest4(i)), HTip{},
+                          Ix.Idx.rest4(i), v),
+                        HTip{}, HTip{}}
+                    case HNode{o, k0, k1, k2, k3}:
+                      HNode{
+                        o, k0,
+                        HTab.set(
+                          m, Ix.Idx.way(Ix.Idx.rest4(i)), k1,
+                          Ix.Idx.rest4(i), v),
+                        k2, k3}
+                case 1n+j2:
+                  match j2:
+                    case 0n:
+                      match t:
+                        case HTip{}:
+                          HNode{
+                            None{}, HTip{}, HTip{},
+                            HTab.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), HTip{},
+                              Ix.Idx.rest4(i), v),
+                            HTip{}}
+                        case HNode{o, k0, k1, k2, k3}:
+                          HNode{
+                            o, k0, k1,
+                            HTab.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), k2,
+                              Ix.Idx.rest4(i), v),
+                            k3}
+                    case 1n+j3:
+                      match t:
+                        case HTip{}:
+                          HNode{
+                            None{}, HTip{}, HTip{}, HTip{},
+                            HTab.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), HTip{},
+                              Ix.Idx.rest4(i), v)}
+                        case HNode{o, k0, k1, k2, k3}:
+                          HNode{
+                            o, k0, k1, k2,
+                            HTab.set(
+                              m, Ix.Idx.way(Ix.Idx.rest4(i)), k3,
+                              Ix.Idx.rest4(i), v)}
 
 def Hp.cell(+h: Hp, +i: Nat) -> HCell:
   match h:
     case MkHp{+cs, nx}:
       HTab.get(
-        Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)),
-        Ix.Idx.low(Ix.Idx.path(i)), cs, Ix.Idx.path(i))
+        Ix.Idx.bits(), Ix.Idx.way(Ix.Idx.path(i)), cs, Ix.Idx.path(i))
 
 def Hp.put(+h: Hp, +i: Nat, +v: HCell) -> Hp:
   match h:
     case MkHp{+cs, +nx}:
       MkHp{
         HTab.set(
-          Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(i)),
-          Ix.Idx.low(Ix.Idx.path(i)), cs, Ix.Idx.path(i), v),
+          Ix.Idx.bits(), Ix.Idx.way(Ix.Idx.path(i)), cs,
+          Ix.Idx.path(i), v),
         nx}
 
 # Write a cell only when there is something to write.
@@ -350,8 +408,8 @@ def Hp.alloc(+h: Hp, +t: T.Term, +en: List<&2, Val>) -> Hp:
     case MkHp{+cs, +nx}:
       MkHp{
         HTab.set(
-          Ix.Idx.bits(), Ix.Idx.here(Ix.Idx.path(nx)),
-          Ix.Idx.low(Ix.Idx.path(nx)), cs, Ix.Idx.path(nx), HRaw{t, en}),
+          Ix.Idx.bits(), Ix.Idx.way(Ix.Idx.path(nx)), cs,
+          Ix.Idx.path(nx), HRaw{t, en}),
         1n+nx}
 
 def HCell.is_done(c: HCell) -> Bool:

@@ -1852,3 +1852,43 @@ what the README's own list calls "Array for scale". At 1.7x overall --
 44% of the time becoming 3% -- it reaches `perf/magma-list-pair-n21`, which
 is 5% over its limit, and no further: the other four are a factor of seven
 and up.
+
+### Four ways instead of two, and the array that could not be used
+<!-- 2026-10-13 -->
+
+The heap's trie was two-way. A write rebuilds the path, so the depth is
+what it costs, and two million writes measure:
+
+| trie | time |
+|---|---|
+| two-way | 2.22 s |
+| **four-way** | **1.52 s** |
+| eight-way | 1.48 s |
+| sixteen-way | 1.71 s |
+
+Four is where it settles: half the depth for a node with twice the
+children, and past that the node costs more than the level saves. The
+kernel's heap is four-way now, and nothing else changed:
+
+| | before | after |
+|---|---|---|
+| `perf/magma-list-pair-n7` | 21 s | **15 s** |
+| `perf/shared-subterm` | 18 s | **10 s** |
+| `perf/magma-list-pair-n21` | 273 s | **166 s**, against a limit of 260 |
+
+Bend's own `Array` is thirteen times faster than the two-way trie per
+write, and it cannot be used. An `Array` is a `Type`: `+a` is refused with
+"+a can be used many times, so its type must be Data", so the heap would
+have to be threaded linearly -- and a linear heap means every reduction
+step answers a pair, which the step after it has to take apart.
+**Bend cannot destructure a computed value**: `(a, b) = f(x)` is refused
+with "a match cannot scrutinize a computed value: give it its own def",
+and a def that takes the pair apart and then carries on would have to call
+the evaluator again, which is the mutual recursion the language forbids.
+So an array-backed heap needs the evaluator rewritten as an explicit
+machine with its own stack, which is a different piece of work from this
+one.
+
+Duplication is not the cost, by the way: the same two million writes with
+the trie duplicated at every step, the way `+hp` duplicates it, take 2.61 s
+against 2.20 s. It is the writes.
