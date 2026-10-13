@@ -30,6 +30,7 @@ import ./Level.bend as L
 import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
+import ./Big.bend as G
 import ./Shape.bend as S
 import ./Ans.bend as A
 
@@ -214,6 +215,8 @@ def Conv.same_step(+env: E.DTable, a: T.Term, b: T.Term) -> SameStep:
       Conv.same_of(Nat.is_eq(v1, v2))
     case T.TStr{n1, b1} T.TStr{n2, b2}:
       Conv.same_of(T.Term.bytes_same(b1, b2))
+    case T.TBig{d1, m1, z1, s1} T.TBig{d2, m2, z2, s2}:
+      Conv.same_of(G.Big.eq(d1, d2))
     case T.TLet{t1, v1, b1} T.TLet{t2, v2, b2}:
       SNext{[MkTT{t1, t2}, MkTT{v1, v2}, MkTT{b1, b2}]}
     case T.TUnk{} T.TUnk{}:
@@ -321,6 +324,21 @@ def Conv.structural(
         ctx, s1, s2)
     case T.TNat{v1, m1, z1, s1} T.TNat{v2, m2, z2, s2}:
       Conv.step_of(Nat.is_eq(v1, v2))
+    # Two wide literals are equal when their digits are, and a wide
+    # literal against a machine one when the digits are the word. A wide
+    # literal against anything else is not known: a tower of successors
+    # that high is not a thing this kernel builds, so it cannot say the two
+    # are different either.
+    case T.TBig{d1, m1, z1, s1} T.TBig{d2, m2, z2, s2}:
+      Conv.step_of(G.Big.eq(d1, d2))
+    case T.TBig{+d1, m1, z1, s1} T.TNat{+v2, m2, z2, s2}:
+      Conv.step_of(G.Big.eq(d1, G.Big.of_nat(G.Big.room(), v2)))
+    case T.TNat{+v1, m1, z1, s1} T.TBig{+d2, m2, z2, s2}:
+      Conv.step_of(G.Big.eq(G.Big.of_nat(G.Big.room(), v1), d2))
+    case T.TBig{d1, m1, z1, s1} y:
+      SUnk{}
+    case x T.TBig{d2, m2, z2, s2}:
+      SUnk{}
     # Two string literals are equal when their bytes are, and a literal
     # against anything else is not known. It is opaque: this kernel cannot
     # expand it to the constructor application it stands for, so it cannot

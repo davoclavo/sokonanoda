@@ -80,6 +80,8 @@ def Show.term(+fuel: Nat, t: T.Term) -> String:
           Nat.show(v)
         case T.TStr{sn, bs}:
           "<string>"
+        case T.TBig{ds, nm, zr, sc}:
+          "<wide>"
         case T.TUnk{}:
           "?"
         case T.TRef{+i, +k, m}:

@@ -21,6 +21,7 @@ import ./Level.bend as L
 import ./Term.bend as T
 import ./Env.bend as E
 import ./Table.bend as Tb
+import ./Big.bend as G
 
 # The parser's state: the two tables with their counts, and the declarations
 # so far, also newest first.
@@ -522,6 +523,57 @@ def Parse.lit_term(+v: Nat, +nt: Nat, +zr: Nat, +sc: Nat) -> T.Term:
     T.TNat{v, nt, zr, sc},
     T.TUnk{})
 
+# A decimal number, read digit by digit into a wide number.
+#
+# The reader's own number stops at `Bytes.nat_cap`, and a literal at or
+# above it used to be the unknown term. The digits are read here instead,
+# so `18446744073709551616` is the number it says.
+def Parse.big_go(
+  fuel: Nat, acc: G.Big, bs: List<&2, U32>
+) -> G.Big:
+  match fuel:
+    case 0n:
+      G.BBad{}
+    case 1n+(+f):
+      match bs:
+        case Nil{}:
+          acc
+        case Con{+c, r}:
+          Parse.big_go(
+            f,
+            G.Big.digit10(
+              G.Big.ds_of(acc), Nat.sub(U32.to_nat(c), 48n)),
+            r)
+
+# The term of a wide number: a machine word where it fits, the digits where
+# it does not, and the unknown term where even the digits run out.
+def Parse.big_term(
+  b: G.Big, +nt: Nat, +zr: Nat, +sc: Nat
+) -> T.Term:
+  match b:
+    case G.BBad{}:
+      T.TUnk{}
+    case G.BOk{+ds}:
+      T.Term.pick(
+        G.Big.fits_word(ds, B.Bytes.nat_cap()),
+        T.TNat{G.Big.small_word(ds), nt, zr, sc},
+        T.TBig{ds, nt, zr, sc})
+
+# How many decimal digits a literal may have. Six digits of base 2^24 is
+# 144 bits, which is 44 decimal digits, and the reader stops well before
+# the arithmetic would.
+def Parse.big_cap() -> Nat:
+  60n
+
+def Parse.lit_of_line(
+  +nt: Nat, +zr: Nat, +sc: Nat, +line: List<&2, U32>
+) -> T.Term:
+  Parse.big_term(
+    Parse.big_go(
+      Parse.big_cap(), G.BOk{Nil{}},
+      R.Reader.text_q("natVal", line)),
+    nt, zr, sc)
+
 # A string literal. The id of `String` must have gone by, and one that has
 # not leaves the literal unknown, which is what says that nothing may be
 # concluded from it.
@@ -545,7 +597,7 @@ def Parse.ex_natval(+st: PState, h: Bool, +line: List<&2, U32>) -> T.Term:
     case MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn}:
       match h:
         case True{}:
-          Parse.lit_term(R.Reader.field_q("natVal", line), nt, zr, sc)
+          Parse.lit_of_line(nt, zr, sc, line)
         case False{}:
           Parse.ex_strval(
             MkPS{nl, lv, ne, ex, ds, nt, zr, sc, pm, bl, yes, no, rc, eqn, sh, sz, sn},

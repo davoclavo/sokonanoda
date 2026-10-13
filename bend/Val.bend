@@ -25,6 +25,7 @@ import ./Level.bend as L
 import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
+import ./Big.bend as G
 import ./Idx.bend as Ix
 
 # What a head that cannot reduce is.
@@ -49,6 +50,8 @@ type Val is Data:
   # A `String` literal, with the name of the type `String`. It is opaque:
   # see `Term.TStr`.
   VStr{sn: Nat, bs: List<&2, U32>}
+  # A `Nat` literal that a machine word does not hold. See `Term.TBig`.
+  VBig{ds: List<&2, Nat>, nm: Nat, zr: Nat, sc: Nat}
   # An argument waiting in a heap slot, not yet reduced.
   VSlot{n: Nat}
   # Reduction gave up. Every verdict reads this as "do not know".
@@ -57,6 +60,20 @@ type Val is Data:
 # Is this value a string literal? It is opaque, so a rule that would read
 # its parts answers the unknown value instead of standing stuck: a stuck
 # neutral compares unequal, and that would be a wrong answer.
+def Val.is_big(v: Val) -> Bool:
+  match v:
+    case VBig{ds, nm, zr, sc}:
+      True{}
+    case o:
+      False{}
+
+def Val.big_ds_of(v: Val) -> List<&2, Nat>:
+  match v:
+    case VBig{+ds, nm, zr, sc}:
+      ds
+    case o:
+      Nil{}
+
 def Val.is_str(v: Val) -> Bool:
   match v:
     case VStr{sn, bs}:
@@ -664,31 +681,83 @@ def Val.prim_at(+d: E.Decl, +sp: List<&2, Val>) -> Bool:
     Bool.not(Nat.is_eq(E.Decl.prim_op(d), 0n)),
     Nat.is_le(2n, Val.sp_len(sp, 0n)))
 
+# A literal of either form, and its digits.
+def Val.is_lit(+v: Val) -> Bool:
+  Bool.or(Val.is_nat(v), Val.is_big(v))
+
+def Val.lit_ds(v: Val) -> List<&2, Nat>:
+  match v:
+    case VNat{+n, nm, zr, sc}:
+      G.Big.of_nat(G.Big.room(), n)
+    case VBig{+ds, nm, zr, sc}:
+      ds
+    case o:
+      Nil{}
+
 def Val.prim_ready(+d: E.Decl, +sp: List<&2, Val>) -> Bool:
   Bool.and(
     Val.prim_at(d, sp),
     Bool.and(
-      Val.is_nat(Val.sp_nth(0n, sp)), Val.is_nat(Val.sp_nth(1n, sp))))
+      Val.is_lit(Val.sp_nth(0n, sp)), Val.is_lit(Val.sp_nth(1n, sp))))
+
+# A wide result, read as the narrowest form that holds it.
+def Val.big_res(b: G.Big, +nm: Nat, +zr: Nat, +sc: Nat) -> Val:
+  match b:
+    case G.BBad{}:
+      VUnk{}
+    case G.BOk{+ds}:
+      Val.pick(
+        G.Big.fits_word(ds, V.Eval.num_cap()),
+        VNat{G.Big.small_word(ds), nm, zr, sc},
+        VBig{ds, nm, zr, sc})
+
+# The number a native rule answers: the machine one while it fits, the wide
+# one as soon as it does not. The test is a `match` and not a pick, because
+# a pick runs both and the wide path allocates digits for a number a word
+# already held.
+def Val.prim_num_val(
+  fits: Bool, +op: Nat, +a: Val, +b: Val, +nm: Nat, +zr: Nat, +sc: Nat
+) -> Val:
+  match fits:
+    case True{}:
+      VNat{
+        V.Eval.prim_num(op, Val.nat_of(a), Val.nat_of(b)), nm, zr, sc}
+    case False{}:
+      Val.big_res(
+        V.Eval.big_op(op, Val.lit_ds(a), Val.lit_ds(b), Val.nat_of(b)),
+        nm, zr, sc)
+
+def Val.cmp_val(
+  wide: Bool, +op: Nat, +a: Val, +b: Val
+) -> Bool:
+  match wide:
+    case True{}:
+      V.Eval.big_cmp(op, Val.lit_ds(a), Val.lit_ds(b))
+    case False{}:
+      V.Eval.prim_bool(op, Val.nat_of(a), Val.nat_of(b))
 
 # What a primitive answers: a number, or one of the two names a comparison
 # answers with.
 def Val.prim_val(+d: E.Decl, +sp: List<&2, Val>, +nm: Nat, +zr: Nat, +sc: Nat) -> Val:
-  +x : Nat = Val.nat_of(Val.sp_nth(0n, sp))
-  +y : Nat = Val.nat_of(Val.sp_nth(1n, sp))
+  +a : Val = Val.sp_nth(0n, sp)
+  +b : Val = Val.sp_nth(1n, sp)
+  +wide : Bool = Bool.or(Val.is_big(a), Val.is_big(b))
   Val.pick(
     V.Eval.prim_cmp(E.Decl.prim_op(d)),
     VNe{
       HConst{
         V.Eval.pick_nat(
-          V.Eval.prim_bool(E.Decl.prim_op(d), x, y),
+          Val.cmp_val(wide, E.Decl.prim_op(d), a, b),
           E.Decl.prim_yes(d),
           E.Decl.prim_no(d)),
         Nil{}},
       Nil{}},
-    Val.pick(
-      V.Eval.prim_fits(E.Decl.prim_op(d), x, y),
-      VNat{V.Eval.prim_num(E.Decl.prim_op(d), x, y), nm, zr, sc},
-      VUnk{}))
+    Val.prim_num_val(
+      Bool.and(
+        Bool.not(wide),
+        V.Eval.prim_fits(
+          E.Decl.prim_op(d), Val.nat_of(a), Val.nat_of(b))),
+      E.Decl.prim_op(d), a, b, nm, zr, sc))
 
 def Val.nat_name(v: Val) -> Nat:
   match v:
@@ -837,7 +906,9 @@ def Val.rule_kind(
           Val.quot_ready(env, d, sp, mw), RQuot{},
           Val.pick_k(
             Val.succ_ready(d, sp), RSucc{},
-            Val.pick_k(Val.is_str(mw), RUnk{}, RNone{}))))))
+            Val.pick_k(
+            Bool.or(Val.is_str(mw), Val.is_big(mw)), RUnk{},
+            RNone{}))))))
 
 # What reduction does next, and the spine it does it to.
 type Next is Data:
@@ -911,7 +982,7 @@ def Val.proj_ctrl(
   +cw : Val = Val.lit_ctor(sv)
   +di : E.Decl = E.Lookup.get(E.Env.find(env, Val.head_name(cw)))
   Val.pick_c(
-    Val.is_str(sv),
+    Bool.or(Val.is_str(sv), Val.is_big(sv)),
     CVal{VUnk{}},
     Val.pick_c(
       Bool.and(
@@ -1057,6 +1128,8 @@ def Val.arg_cell(+env: E.DTable, +hp: Hp, +t: T.Term, +en: List<&2, Val>) -> VR:
       MkVR{VNat{v, nm, zr, sc}, hp}
     case T.TStr{+sn, +bs}:
       MkVR{VStr{sn, bs}, hp}
+    case T.TBig{+ds, +nm, +zr, +sc}:
+      MkVR{VBig{ds, nm, zr, sc}, hp}
     case T.TUnk{}:
       MkVR{VUnk{}, hp}
     case T.TConst{+n, +ls}:
@@ -1109,6 +1182,8 @@ def Val.go(
               MkVR{VNat{n, nm, zr, sc}, hp}
             case VStr{sn, bs}:
               MkVR{VStr{sn, bs}, hp}
+            case VBig{ds, nm, zr, sc}:
+              MkVR{VBig{ds, nm, zr, sc}, hp}
             case VSlot{+k}:
               # Read a slot, which is where call by need happens. A cell
               # that holds a value gives it. A cell that holds a term
@@ -1158,6 +1233,8 @@ def Val.go(
               Val.go(f, env, dl, hp, CVal{VNat{v, nm, zr, sc}}, sp)
             case T.TStr{+sn, +bs}:
               Val.go(f, env, dl, hp, CVal{VStr{sn, bs}}, sp)
+            case T.TBig{+ds, +nm, +zr, +sc}:
+              Val.go(f, env, dl, hp, CVal{VBig{ds, nm, zr, sc}}, sp)
             case T.TUnk{}:
               MkVR{VUnk{}, hp}
             case T.TLam{+ty, +bd}:
@@ -1536,6 +1613,8 @@ def Val.quote_go(
               T.TNat{n, nm, zr, sc}
             case VStr{sn, bs}:
               T.TStr{sn, bs}
+            case VBig{ds, nm, zr, sc}:
+              T.TBig{ds, nm, zr, sc}
             case VSlot{+k}:
               # A slot reduces here, and the answer is read back in its
               # place.

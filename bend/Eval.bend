@@ -23,6 +23,7 @@ import Base
 import ./Level.bend as L
 import ./Term.bend as T
 import ./Env.bend as E
+import ./Big.bend as G
 
 # Choose between two terms on a computed Bool.
 def Eval.pick_t(b: Bool, x: T.Term, y: T.Term) -> T.Term:
@@ -498,6 +499,24 @@ def Eval.nat_val(t: T.Term) -> Nat:
     case x:
       0n
 
+# The digits of a literal, whichever of the two forms it wears.
+def Eval.big_ds(t: T.Term) -> List<&2, Nat>:
+  match t:
+    case T.TNat{+v, nm, zr, sc}:
+      G.Big.of_nat(G.Big.room(), v)
+    case T.TBig{+ds, nm, zr, sc}:
+      ds
+    case o:
+      Nil{}
+
+# Is this term a wide literal?
+def Eval.is_big(t: T.Term) -> Bool:
+  match t:
+    case T.TBig{ds, nm, zr, sc}:
+      True{}
+    case o:
+      False{}
+
 # Is this term a literal?
 def Eval.is_nat(t: T.Term) -> Bool:
   match t:
@@ -526,6 +545,34 @@ def Eval.nat_sc(t: T.Term) -> Nat:
     case T.TNat{v, nm, zr, sc}:
       sc
     case x:
+      0n
+
+# The three names a literal carries, in either form.
+def Eval.lit_name(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, +nm, zr, sc}:
+      nm
+    case T.TBig{ds, +nm, zr, sc}:
+      nm
+    case o:
+      0n
+
+def Eval.lit_zr(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, nm, +zr, sc}:
+      zr
+    case T.TBig{ds, nm, +zr, sc}:
+      zr
+    case o:
+      0n
+
+def Eval.lit_sc(t: T.Term) -> Nat:
+  match t:
+    case T.TNat{v, nm, zr, +sc}:
+      sc
+    case T.TBig{ds, nm, zr, +sc}:
+      sc
+    case o:
       0n
 
 # A literal as a constructor application: zero, or the successor of one less.
@@ -573,6 +620,18 @@ def Eval.mul_pick(ok: Bool, +a: Nat, +b: Nat) -> Nat:
 
 # A product, or the cap. The test is a division, so the product is formed only
 # when it fits.
+# The term of a wide result: a machine word where it fits, the digits where
+# they fit, and the unknown term where neither does.
+def Eval.big_res(b: G.Big, +nm: Nat, +zr: Nat, +sc: Nat) -> T.Term:
+  match b:
+    case G.BBad{}:
+      T.TUnk{}
+    case G.BOk{+ds}:
+      Eval.pick_t(
+        G.Big.fits_word(ds, Eval.num_cap()),
+        T.TNat{G.Big.small_word(ds), nm, zr, sc},
+        T.TBig{ds, nm, zr, sc})
+
 def Eval.mul_cap(+a: Nat, +b: Nat) -> Nat:
   Eval.mul_pick(
     Bool.or(
@@ -652,8 +711,56 @@ def Eval.pick_b(b: Bool, x: Bool, y: Bool) -> Bool:
       y
 
 # The answer of a comparing op.
+# A power, unless the exponent is past what any base could fit.
+def Eval.pow_pick(ok: Bool, +xs: List<&2, Nat>, +e: Nat) -> G.Big:
+  match ok:
+    case True{}:
+      G.Big.pow(Nat.add(e, 1n), xs, e, G.BOk{[1n]})
+    case False{}:
+      G.BBad{}
+
+# The native rules over wide numbers.
+#
+# The machine path above stays where it was, and this is what the kernel
+# falls back on: either side wide, or a machine result that does not fit.
+# Comparison, sum, product and power are exact up to the cap of digits.
+# Difference, quotient and remainder are not written for wide numbers --
+# the corpus asks for none -- so they answer the unknown term, which says
+# that nothing may be concluded.
+def Eval.big_op(
+  +op: Nat, xs: List<&2, Nat>, ys: List<&2, Nat>, +e: Nat
+) -> G.Big:
+  match op:
+    case 1n:
+      G.Big.add(xs, ys)
+    case 3n:
+      G.Big.mul(xs, ys)
+    case 8n:
+      Eval.pow_pick(Nat.is_le(e, G.Big.exp_cap()), xs, e)
+    case o:
+      G.BBad{}
+
+# Which of the two comparisons, over wide numbers.
+def Eval.big_cmp(
+  +op: Nat, +xs: List<&2, Nat>, +ys: List<&2, Nat>
+) -> Bool:
+  Eval.pick_b(Nat.is_eq(op, 6n), G.Big.eq(xs, ys), G.Big.le(xs, ys))
+
 def Eval.prim_bool(+op: Nat, +x: Nat, +y: Nat) -> Bool:
   Eval.pick_b(Nat.is_eq(op, 6n), Nat.is_eq(x, y), Nat.is_le(x, y))
+
+# Which comparison to run: the machine one while both sides fit a word, the
+# wide one as soon as one does not. The test is a `match` and not a pick,
+# because a pick runs both and the wide one allocates the digits of a
+# number that a word already held.
+def Eval.cmp_pick(
+  wide: Bool, +op: Nat, +x: T.Term, +y: T.Term
+) -> Bool:
+  match wide:
+    case True{}:
+      Eval.big_cmp(op, Eval.big_ds(x), Eval.big_ds(y))
+    case False{}:
+      Eval.prim_bool(op, Eval.nat_val(x), Eval.nat_val(y))
 
 # Is this declaration one the kernel computes, with two arguments to work on?
 def Eval.prim_at(+d: E.Decl, +sp: List<&2, T.Term>) -> Bool:
@@ -671,23 +778,34 @@ def Eval.prim_arg(+d: E.Decl, +sp: List<&2, T.Term>, +i: Nat) -> T.Term:
 
 # Can a native rule fire? The declaration must carry one, the spine must hold
 # at least two arguments, and both must have reduced to literals.
+def Eval.is_lit(+t: T.Term) -> Bool:
+  Bool.or(Eval.is_nat(t), Eval.is_big(t))
+
 def Eval.prim_ready(
   +d: E.Decl, +sp: List<&2, T.Term>, +x: T.Term, +y: T.Term
 ) -> Bool:
   Bool.and(
     Eval.prim_at(d, sp),
-    Bool.and(Eval.is_nat(x), Eval.is_nat(y)))
+    Bool.and(Eval.is_lit(x), Eval.is_lit(y)))
 
 # The answer, with whatever followed the two arguments still applied. A sort
 # when the rule cannot fire, because a branch of `Eval.pick_t` is evaluated
 # whether or not it is chosen and the caller reduces this.
 # The number, or the unknown term when it does not fit.
+# The machine result where it fits, and the wide one where it does not.
+#
+# `fits` is false in two cases: a result past what an immediate holds, and
+# either side wide, where `Eval.nat_val` answered zero and the machine
+# number means nothing. Both want the same answer.
 def Eval.prim_fit_term(
   fits: Bool, +op: Nat, +x: T.Term, +y: T.Term
 ) -> T.Term:
   match fits:
     case False{}:
-      T.TUnk{}
+      Eval.big_res(
+        Eval.big_op(
+          op, Eval.big_ds(x), Eval.big_ds(y), Eval.nat_val(y)),
+        Eval.lit_name(x), Eval.lit_zr(x), Eval.lit_sc(x))
     case True{}:
       T.TNat{
         Eval.prim_num(op, Eval.nat_val(x), Eval.nat_val(y)),
@@ -706,14 +824,17 @@ def Eval.prim_term(
         Eval.prim_cmp(E.Decl.prim_op(d)),
         T.TConst{
           Eval.pick_nat(
-            Eval.prim_bool(
-              E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y)),
+            Eval.cmp_pick(
+              Bool.or(Eval.is_big(x), Eval.is_big(y)),
+              E.Decl.prim_op(d), x, y),
             E.Decl.prim_yes(d),
             E.Decl.prim_no(d)),
           Nil{}},
         Eval.prim_fit_term(
-          Eval.prim_fits(
-            E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y)),
+          Bool.and(
+            Bool.not(Bool.or(Eval.is_big(x), Eval.is_big(y))),
+            Eval.prim_fits(
+              E.Decl.prim_op(d), Eval.nat_val(x), Eval.nat_val(y))),
           E.Decl.prim_op(d), x, y))),
     T.TSort{L.LZero{}})
 
@@ -785,7 +906,9 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
               # answers the unknown term rather than standing stuck. A
               # comparison against a stuck neutral says no, and no is the
               # wrong answer here.
-              Bool.or(T.Term.is_unk(mw), T.Term.is_str(mw)),
+              Bool.or(
+                T.Term.is_unk(mw),
+                Bool.or(T.Term.is_str(mw), T.Term.is_big(mw))),
               T.TUnk{},
               Eval.pick_t(
               Eval.can_iota(d, sp, mw),
@@ -813,6 +936,8 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
           Eval.rebuild(sp, T.TNat{v, nm, zr, sc})
         case T.TStr{+sn, +bs}:
           Eval.rebuild(sp, T.TStr{sn, bs})
+        case T.TBig{+ds, +nm, +zr, +sc}:
+          Eval.rebuild(sp, T.TBig{ds, nm, zr, sc})
         case T.TUnk{}:
           T.TUnk{}
         case T.TRef{+i, +k, m}:
@@ -823,7 +948,9 @@ def Eval.whnf(+fuel: Nat, +env: E.DTable, t: T.Term, +sp: List<&2, T.Term>) -> T
         case T.TProj{tn, +idx, st}:
           +sw = Eval.lit_ctor(Eval.whnf(f, env, Eval.dr(env, st), Nil{}))
           Eval.pick_t(
-            Bool.or(T.Term.is_unk(sw), T.Term.is_str(sw)),
+            Bool.or(
+              T.Term.is_unk(sw),
+              Bool.or(T.Term.is_str(sw), T.Term.is_big(sw))),
             T.TUnk{},
             Eval.pick_t(
               Eval.proj_ready(env, idx, sw),

@@ -651,6 +651,8 @@ def Infer.go(+fuel: Nat, +env: E.DTable, +ctx: List<&2, T.Term>, c: IC) -> Res:
             ROk{T.TConst{nm, Nil{}}}
           case T.TStr{+sn, bs}:
             ROk{T.TConst{sn, Nil{}}}
+          case T.TBig{ds, +nm, zr, sc}:
+            ROk{T.TConst{nm, Nil{}}}
           case T.TUnk{}:
             RUnk{}
           case T.TRef{+i, +k, m}:

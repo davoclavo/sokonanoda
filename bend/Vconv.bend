@@ -22,6 +22,7 @@ import ./Term.bend as T
 import ./Env.bend as E
 import ./Eval.bend as V
 import ./Val.bend as W
+import ./Big.bend as G
 import ./Shape.bend as H
 import ./Conv.bend as C
 import ./Ans.bend as A
@@ -283,6 +284,9 @@ def Vconv.same_go(
               Vconv.same_go(
                 f, env, hp,
                 Vconv.same_cont(T.Term.bytes_same(b1, b2), rest))
+            case W.VBig{d1, m1, z1, s1} W.VBig{d2, m2, z2, s2}:
+              Vconv.same_go(
+                f, env, hp, Vconv.same_cont(G.Big.eq(d1, d2), rest))
             case W.VSort{x} W.VSort{y}:
               Vconv.same_go(
                 f, env, hp,
@@ -422,6 +426,8 @@ def Vconv.maybe_proof(v: W.Val) -> Bool:
       False{}
     case W.VStr{sn, bs}:
       False{}
+    case W.VBig{ds, nm, zr, sc}:
+      False{}
     case W.VUnk{}:
       False{}
     case o:
@@ -437,6 +443,22 @@ def Vconv.rigid(
       MkSH{Vconv.of(L.Level.eq(x, y)), hp}
     case W.VNat{v1, m1, z1, s1} W.VNat{v2, m2, z2, s2}:
       MkSH{Vconv.of(Nat.is_eq(v1, v2)), hp}
+    # Two wide numbers are equal when their digits are, and a wide number
+    # against a machine one when the digits are the word. Against anything
+    # else it is not known: a tower of successors that high is not a thing
+    # this kernel builds.
+    case W.VBig{d1, m1, z1, s1} W.VBig{d2, m2, z2, s2}:
+      MkSH{Vconv.of(G.Big.eq(d1, d2)), hp}
+    case W.VBig{+d1, m1, z1, s1} W.VNat{+v2, m2, z2, s2}:
+      MkSH{
+        Vconv.of(G.Big.eq(d1, G.Big.of_nat(G.Big.room(), v2))), hp}
+    case W.VNat{+v1, m1, z1, s1} W.VBig{+d2, m2, z2, s2}:
+      MkSH{
+        Vconv.of(G.Big.eq(G.Big.of_nat(G.Big.room(), v1), d2)), hp}
+    case W.VBig{d1, m1, z1, s1} y:
+      MkSH{SUnk{}, hp}
+    case x W.VBig{d2, m2, z2, s2}:
+      MkSH{SUnk{}, hp}
     # Two string literals are equal when their bytes are. A literal against
     # anything else is not known: this kernel cannot expand it to the
     # constructor application it stands for, so it cannot say they differ.

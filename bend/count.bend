@@ -43,6 +43,8 @@ def Count.nodes(t: T.Term, +acc: Nat) -> Nat:
       1n+acc
     case T.TStr{sn, bs}:
       1n+acc
+    case T.TBig{ds, nm, zr, sc}:
+      1n+acc
     case T.TUnk{}:
       1n+acc
     case T.TProj{tn, idx, st}:

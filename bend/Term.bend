@@ -48,6 +48,15 @@ type Term is Data:
   # names one goes through: `String.instInhabited` is `Inhabited.mk String
   # ""`, and it is where two of the magma files stopped.
   TStr{sn: Nat, bs: List<&2, U32>}
+  # A `Nat` literal that a machine word does not hold, as a list of digits
+  # in base 2^24. See `bend/Big.bend` for why there is one: the prelude
+  # writes `18446744073709551616`, and a Bend `Nat` stops at 2^48-1.
+  #
+  # The form is canonical. A number that fits below `Bytes.nat_cap` is a
+  # `TNat` and never this, so the two forms are never two spellings of one
+  # number -- but the comparison does not rely on that, it compares the
+  # digits with the word.
+  TBig{ds: List<&2, Nat>, nm: Nat, zr: Nat, sc: Nat}
   # The term reduction gives back when it runs out of budget.
   #
   # Running out is not an answer. A kernel that treats it as one reports
@@ -238,9 +247,25 @@ def Term.bytes_same(xs: List<&2, U32>, ys: List<&2, U32>) -> Bool:
     case x y:
       False{}
 
+def Term.is_big(t: Term) -> Bool:
+  match t:
+    case TBig{ds, nm, zr, sc}:
+      True{}
+    case o:
+      False{}
+
+def Term.big_ds(t: Term) -> List<&2, Nat>:
+  match t:
+    case TBig{+ds, nm, zr, sc}:
+      ds
+    case o:
+      Nil{}
+
 def Term.is_str(t: Term) -> Bool:
   match t:
     case TStr{sn, bs}:
+      True{}
+    case TBig{ds, nm, zr, sc}:
       True{}
     case o:
       False{}
@@ -274,6 +299,8 @@ def Term.any_unk(+fuel: Nat, t: Term) -> Bool:
         case TNat{v, nm, zr, sc}:
           False{}
         case TStr{sn, bs}:
+          False{}
+        case TBig{ds, nm, zr, sc}:
           False{}
         case TConst{n, ls}:
           False{}
@@ -380,6 +407,8 @@ def Term.pars_ok(t: Term, +n: Nat) -> Bool:
       True{}
     case TStr{sn, bs}:
       True{}
+    case TBig{ds, nm, zr, sc}:
+      True{}
     case TUnk{}:
       True{}
     case TProj{tn, idx, st}:
@@ -416,6 +445,8 @@ def Term.has_free(t: Term, +d: Nat) -> Bool:
       False{}
     case TStr{sn, bs}:
       False{}
+    case TBig{ds, nm, zr, sc}:
+      False{}
     case TUnk{}:
       False{}
     case TProj{tn, idx, st}:
@@ -450,6 +481,8 @@ def Term.has_bvar(t: Term, +d: Nat) -> Bool:
     case TNat{v, m, z, c}:
       False{}
     case TStr{sn, bs}:
+      False{}
+    case TBig{ds, nm, zr, sc}:
       False{}
     case TUnk{}:
       False{}
@@ -618,6 +651,8 @@ def Term.lift_go(
           TNat{v, m, z, c}
         case TStr{+sn, +bs}:
           TStr{sn, bs}
+        case TBig{+ds, +nm, +zr, +sc}:
+          TBig{ds, nm, zr, sc}
         case TUnk{}:
           TUnk{}
         case TProj{+tn, +idx, +st}:
@@ -721,6 +756,8 @@ def Term.subst_go(
           TNat{n, m, z, c}
         case TStr{+sn, +bs}:
           TStr{sn, bs}
+        case TBig{+ds, +nm, +zr, +sc}:
+          TBig{ds, nm, zr, sc}
         case TUnk{}:
           TUnk{}
         case TProj{+tn, +idx, +st}:
@@ -793,6 +830,8 @@ def Term.remap_levels(t: Term, +ps: List<&2, Nat>) -> Term:
       TNat{v, m, z, c}
     case TStr{sn, bs}:
       TStr{sn, bs}
+    case TBig{ds, nm, zr, sc}:
+      TBig{ds, nm, zr, sc}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:
@@ -822,6 +861,8 @@ def Term.subst_levels(t: Term, +vs: List<&2, L.Level>) -> Term:
       TNat{v, m, z, c}
     case TStr{sn, bs}:
       TStr{sn, bs}
+    case TBig{ds, nm, zr, sc}:
+      TBig{ds, nm, zr, sc}
     case TUnk{}:
       TUnk{}
     case TProj{tn, idx, st}:
